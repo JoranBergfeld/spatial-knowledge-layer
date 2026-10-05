@@ -16,7 +16,7 @@ Terms here are used as written there.
 ## Layout
 
 ```
-packages/core     record models, the stores' DDL (and later the clearance rules), shared with the service
+packages/core     record models, the stores' DDL and the clearance rules, shared with the service
 packages/ingest   the ingestion CLI, its own package and its own image
 ```
 
@@ -38,7 +38,9 @@ pull/query.overpassql   the query text
 pull/source.json        where the pull came from
 osm/spaces.jsonl        the containment tree, one space per line
 osm/spans.jsonl         spaces covering more floors than the one they hang from
-manifest.json           input hashes, what produced each part, counts
+osm/edges.jsonl         the circulation edges: one way through a door, with its clearance
+osm/visible_spaces.jsonl  what exists for each persona: visitor, staff, maintenance
+manifest.json           input hashes, what produced each part, counts, the sourced-clearance share
 ```
 
 Run it again and it reuses the stored pull and writes the same bytes. `--refetch`
@@ -89,6 +91,9 @@ then writes, then checks what it wrote:
 - every space has one parent, which is a space of the snapshot
 - every ancestor path is its parent's path plus its parent
 - every span names spaces of the snapshot
+- every edge names spaces of the snapshot
+- every visible space is a space of the snapshot, and its parent is visible too
+- the visible sets nest: visitor within staff within maintenance
 - the OSM schema holds no seed rows
 - each table holds as many rows as the manifest says
 
@@ -111,6 +116,10 @@ parts of the bundle, and the manifest does not list them.
 
 ## The rules
 
+The clearance and visibility rules live in `packages/core/src/spatial_core/clearance.py`,
+since the service imports them too. There are no per-element overrides: a rule that
+gets a room wrong is fixed by changing the rule.
+
 Every derived value in a bundle names the rule that made it. The rules are plain
 functions under `packages/ingest/src/spatial_ingest/rules/`, each with its own tests.
 
@@ -122,6 +131,11 @@ functions under `packages/ingest/src/spatial_ingest/rules/`, each with its own t
 | `floor-from-level-tags@1` | A building gets one floor per level its rooms name. Nobody maps floors as elements on this campus. |
 | `level-parse@1` | Reads `level`: `;` lists, `a-b` ranges, half levels. A space hangs from its lowest floor and spans the rest. |
 | `room-label@1` | The sourced name (one the name filter left untouched), or else the building's number (or name) plus the room number: "50.34 room 107". No rule, no label, and the space is marked unaddressable. |
+| `edges-from-doors@1` | A node tagged `door` or `entrance` joins the room-tier spaces whose outline holds it, one edge each way. On one outline only, it opens from outside. |
+| `clearance-from-access@1` | `yes`, `permissive`, `customers` are visitor. `private`, `no`, `delivery`, `permit`, `emergency` are staff. Any other value fails closed to maintenance. The raw tag is kept beside it. |
+| `clearance-authored-default@1` | Untagged corridors and areas, and untagged rooms of a public function (toilets, auditorium, classroom, seminar room, hall, library, stairs, elevator, entrance), are visitor. Any other untagged room is staff. Flagged as an authored default, and never over a tag. Doors and spaces above the room tier get no default. |
+| `edge-clearance@1` | An edge takes the stricter of its door's tag and the clearance of the space it enters. An untagged door constrains nothing. |
+| `visible-by-edges@1` | A space is visible to a persona when an edge it clears enters the space, or, with no edge entering, by the space's own clearance. Its ancestors are visible with it. |
 | `strip-person-names@1` | Removes academic titles with the name after them, and the capitalised words after Büro, Sekretariat, Labor or AG. Runs over names and descriptions. Rooms named after someone are left alone. |
 
 Things that are rough or just not done yet:
@@ -135,6 +149,10 @@ Things that are rough or just not done yet:
   the room number.
 - A room inside the site but in no building polygon hangs from the site and cannot be
   addressed by number.
+- A building with no rooms and no `access` tag is entered by no edge, so no persona sees it.
+  Entrances on a building outline make edges only where a room's outline holds them too.
+- A door node shared by spaces on different levels joins them. The door's `level` is not
+  checked against theirs.
 
 ## Develop
 

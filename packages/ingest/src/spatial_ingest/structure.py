@@ -15,9 +15,18 @@ from shapely import STRtree, unary_union
 from shapely.geometry import mapping
 from shapely.geometry.base import BaseGeometry
 
-from spatial_core.records import Ancestor, RecordProvenance, Space, Span, Value, ValueProvenance
+from spatial_core import clearance
+from spatial_core.records import (
+    Ancestor,
+    Edge,
+    RecordProvenance,
+    Space,
+    Span,
+    Value,
+    ValueProvenance,
+)
 from spatial_ingest.osm import Element, OsmData
-from spatial_ingest.rules import labels, levels, names, tiers
+from spatial_ingest.rules import doors, labels, levels, names, tiers
 from spatial_ingest.venue import Venue
 
 # Sourced tags copied onto a space as attributes. Name, ref and level have fields
@@ -55,7 +64,9 @@ TREE_RULES = (
     tiers.FLOOR_RULE,
     levels.RULE,
 )
-RULES = (*TREE_RULES, labels.RULE, names.RULE)
+CLEARANCE_RULES = (clearance.ACCESS_RULE, clearance.DEFAULT_RULE)
+EDGE_RULES = (doors.RULE, *CLEARANCE_RULES, clearance.EDGE_RULE)
+RULES = (*TREE_RULES, labels.RULE, names.RULE, *CLEARANCE_RULES)
 
 
 class StructureError(Exception):
@@ -66,6 +77,7 @@ class StructureError(Exception):
 class Structure:
     spaces: tuple[Space, ...]
     spans: tuple[Span, ...]
+    edges: tuple[Edge, ...]
     counts: dict[str, Any]
 
 
@@ -110,9 +122,13 @@ def _sourced(name: Value | None) -> str | None:
 
 class _Join:
     def __init__(self, osm: OsmData, venue: Venue) -> None:
+        self.osm = osm
         self.venue = venue
         self.spaces: dict[str, Space] = {}
         self.spans: list[Span] = []
+        self.edges: list[Edge] = []
+        # Room-tier space id -> the nodes of its outline, for finding its doors.
+        self.outlines: dict[str, set[int]] = {}
         self.counts: Counter[str] = Counter()
         self.site_area = self._site_area(osm)
         self.site_id = f"site:{venue.id}"
@@ -137,6 +153,7 @@ class _Join:
         self._index = STRtree([building.polygon for building in self.buildings])
         for element in kept[tiers.ROOM]:
             self._add_room(element)
+        self._add_edges()
 
     def _site_area(self, osm: OsmData) -> BaseGeometry:
         parts = []
@@ -211,6 +228,7 @@ class _Join:
             addressable=label is not None,
             attributes=self._attributes(element),
             outline=_outline(element.geometry),
+            clearance=clearance.space_clearance(tags),
         )
         self._add(space)
         assert element.geometry is not None
@@ -295,8 +313,46 @@ class _Join:
                 levels=Value.derived(";".join(occupied), levels.RULE) if occupied else None,
                 attributes=self._attributes(element),
                 outline=_outline(element.geometry),
+                clearance=clearance.space_clearance(tags),
             )
         )
+        self.outlines[space_id] = self._outline_nodes(element)
+
+    def _outline_nodes(self, element: Element) -> set[int]:
+        if element.type == "way":
+            return set(self.osm.ways[element.id].nodes)
+        if element.type == "relation":
+            return {
+                node
+                for member in self.osm.relations[element.id].members
+                if member.type == "way" and member.ref in self.osm.ways
+                for node in self.osm.ways[member.ref].nodes
+            }
+        return set()
+
+    def _add_edges(self) -> None:
+        door_nodes = [node for node, tags in self.osm.node_tags.items() if doors.is_door(tags)]
+        joined = doors.joins(door_nodes, self.outlines)
+        self.counts["doors_on_no_space"] = len(door_nodes) - len(joined)
+        for node, space_ids in joined.items():
+            door = f"node/{node}"
+            door_clearance = clearance.door_clearance(self.osm.node_tags[node])
+            for from_id, to_id in doors.passages(space_ids):
+                entered = self.spaces[to_id].clearance
+                # Every room-tier space has a clearance, tagged or defaulted.
+                assert entered is not None
+                self.edges.append(
+                    Edge(
+                        id=f"{door}:{from_id or 'outside'}>{to_id}",
+                        door=door,
+                        from_id=from_id,
+                        to_id=to_id,
+                        door_clearance=door_clearance,
+                        clearance=clearance.edge_clearance(door_clearance, entered),
+                        provenance=ValueProvenance.DERIVED,
+                        rule=doors.RULE,
+                    )
+                )
 
     def result(self) -> Structure:
         spaces = tuple(self.spaces[space_id] for space_id in sorted(self.spaces))
@@ -316,8 +372,11 @@ class _Join:
             "skipped_without_geometry",
         ):
             counts[key] = self.counts[key]
+        counts["edges"] = len(self.edges)
+        counts["doors_on_no_space"] = self.counts["doors_on_no_space"]
         spans = tuple(sorted(self.spans, key=lambda span: (span.space_id, span.floor_id)))
-        return Structure(spaces, spans, counts)
+        edges = tuple(sorted(self.edges, key=lambda edge: edge.id))
+        return Structure(spaces, spans, edges, counts)
 
 
 def build_structure(osm: OsmData, venue: Venue) -> Structure:

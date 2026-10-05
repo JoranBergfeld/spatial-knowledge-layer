@@ -105,7 +105,7 @@ def stores(database_url: str, date: str) -> dict[str, list[Any]]:
     stem = "snap_" + date.replace("-", "")
     dumped = {}
     for schema in (stem, f"{stem}_osm", f"{stem}_seed"):
-        for table in ("spaces", "spans"):
+        for table in ("spaces", "spans", "edges", "visible_spaces"):
             rows = query(
                 database_url,
                 f"SELECT row_to_json(t)::text AS r FROM {schema}.{table} t ORDER BY r",
@@ -160,6 +160,14 @@ def test_a_clean_load_writes_the_schema_pair_and_does_not_promote(
     for record in read_jsonl(built / "osm" / "spaces.jsonl"):
         assert by_id[record["id"]] == record
     assert stored["snap_20260915.spans"] == read_jsonl(built / "osm" / "spans.jsonl")
+    edges = sorted(read_jsonl(built / "osm" / "edges.jsonl"), key=lambda edge: edge["id"])
+    assert sorted(stored["snap_20260915.edges"], key=lambda edge: edge["id"]) == edges
+    personas = [entry["persona"] for entry in stored["snap_20260915.visible_spaces"]]
+    assert {persona: personas.count(persona) for persona in set(personas)} == {
+        "visitor": 8,
+        "staff": 26,
+        "maintenance": 28,
+    }
 
 
 def test_each_run_leaves_its_log_beside_the_bundle(bundle: Bundle, database_url: str) -> None:
@@ -240,6 +248,41 @@ BREAKAGES: dict[str, tuple[Callable[[Path], None], str]] = {
             ],
         ),
         "spans name spaces of the snapshot: fails for osm:way/1004 -> floor:way/100:7",
+    ),
+    "visible sets that do not nest": (
+        lambda b: rewrite(
+            b,
+            "osm/visible_spaces.jsonl",
+            [
+                entry
+                for entry in read_jsonl(b / "osm" / "visible_spaces.jsonl")
+                if (entry["persona"], entry["space_id"]) != ("staff", "osm:way/2001")
+            ],
+        ),
+        "the visible sets nest: fails for visitor osm:way/2001",
+    ),
+    "a visible space whose parent is not": (
+        lambda b: rewrite(
+            b,
+            "osm/visible_spaces.jsonl",
+            [
+                entry
+                for entry in read_jsonl(b / "osm" / "visible_spaces.jsonl")
+                if (entry["persona"], entry["space_id"]) != ("maintenance", "floor:way/100:2")
+            ],
+        ),
+        "a visible space's parent is visible: fails for maintenance osm:way/1009",
+    ),
+    "an edge into a space that is not there": (
+        lambda b: rewrite(
+            b,
+            "osm/edges.jsonl",
+            [
+                {**edge, "to_id": "osm:way/9999"} if edge["door"] == "node/1104" else edge
+                for edge in read_jsonl(b / "osm" / "edges.jsonl")
+            ],
+        ),
+        "edges name spaces of the snapshot: fails for node/1104:outside>osm:way/1001",
     ),
     "a part that does not match its manifest": (
         lambda b: (b / "osm" / "spans.jsonl").write_text(""),

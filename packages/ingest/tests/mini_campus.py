@@ -4,7 +4,7 @@ Coordinates are a grid: one unit is 0.0001 degrees. Three part polygons (9001-90
 make up the site, as the three outer ways of the KIT relation do on the real one.
 
     Part 1 (0,0)-(40,40)
-      A  way 100   50.34 "Informatik"            rooms 1001-1009
+      A  way 100   50.34 "Informatik"            rooms 1001-1009, doors 1101-1105
       B  way 200   "Kollegiengebäude am Zirkel"  rooms 2001-2002, no number
       C  rel 300   30.10, with a courtyard       room 3001, and 3002 out in the courtyard
       D  way 400   no number, no name            room 4001
@@ -14,6 +14,17 @@ make up the site, as the three outer ways of the KIT relation do on the real one
       F  way 600   20.30                         no rooms
     Between the parts, inside the bounding box
       G  way 700   99.99                         room 7001, not Campus Süd
+
+Clearance, with the doors of building A:
+
+    1006  corridor, untagged: visitor     1101 entrance from outside, untagged
+    1005  room, untagged: staff           1102 between 1005 and 1006, untagged
+    1002  auditorium, untagged: visitor   1103 from outside, access=private
+    1001  access=private: staff           1104 from outside, access=yes
+    1004  stairs, untagged: visitor       1105 door=no, so not a door
+    1009  access=staff_only: maintenance, an unrecognised value
+    2001  access=customers: visitor
+    and door 1106 on no outline at all
 """
 
 from __future__ import annotations
@@ -67,6 +78,26 @@ class _Osm:
             element["tags"] = dict(tags)
         self.ways.append(element)
 
+    def door(self, node_id: int, x: float, y: float, ways: tuple[int, ...], **tags: str) -> None:
+        """A door node, made a vertex of each way's outline on the side it sits on."""
+        self.node(x, y, node_id=node_id, **tags)
+        at = (_lon(x), _lat(y))
+        located = {node["id"]: (node["lon"], node["lat"]) for node in self.nodes}
+        for way in self.ways:
+            if way["id"] not in ways:
+                continue
+            nodes = way["nodes"]
+            for index in range(len(nodes) - 1):
+                (x0, y0), (x1, y1) = located[nodes[index]], located[nodes[index + 1]]
+                on_side = (x0 == x1 == at[0] and min(y0, y1) < at[1] < max(y0, y1)) or (
+                    y0 == y1 == at[1] and min(x0, x1) < at[0] < max(x0, x1)
+                )
+                if on_side:
+                    nodes.insert(index + 1, node_id)
+                    break
+            else:
+                raise ValueError(f"door {node_id} is not on the outline of way {way['id']}")
+
     def multipolygon(self, rel_id: int, outer: int, inner: int, **tags: str) -> None:
         members = [
             {"type": "way", "ref": outer, "role": "outer"},
@@ -97,22 +128,48 @@ def mini_campus() -> _Osm:
         description=f"Leitung Dr. {PERSON}",
     )
     osm.rect(1001, 3, 3, 6, 6, indoor="room", ref="107", level="1", access="private")
-    osm.rect(1002, 7, 3, 10, 6, indoor="room", ref="001", level="0", name="Gaede-Hörsaal")
+    osm.rect(
+        1002,
+        7,
+        3,
+        10,
+        6,
+        indoor="room",
+        ref="001",
+        level="0",
+        name="Gaede-Hörsaal",
+        room="auditorium",
+    )
     osm.rect(
         1003, 3, 7, 6, 10, indoor="room", ref="108", level="1", name=f"Büro Prof. Dr. {PERSON}"
     )
     osm.rect(1004, 11, 3, 13, 6, indoor="room", ref="T1", level="0-2", room="stairs")
-    osm.rect(1005, 7, 7, 10, 10, indoor="room", level="0")
+    osm.rect(1005, 7, 7, 10, 11, indoor="room", level="0")
     osm.rect(1006, 3, 11, 13, 12, indoor="corridor", level="0")
     osm.node(15, 15, node_id=1007, indoor="room", ref="109", level="1")
     osm.rect(1008, 14, 3, 16, 6, indoor="room", ref="110")
     osm.rect(
-        1009, 3, 13, 6, 16, indoor="room", ref="111", level="2", description=f"Prof. Dr. {PERSON}"
+        1009,
+        3,
+        13,
+        6,
+        16,
+        indoor="room",
+        ref="111",
+        level="2",
+        description=f"Prof. Dr. {PERSON}",
+        access="staff_only",
     )
     osm.rect(800, 7, 13, 10, 13.2, indoor="wall", level="0")
+    osm.door(1101, 3, 11.5, (1006,), entrance="main", level="0")
+    osm.door(1102, 8.5, 11, (1005, 1006), door="hinged", level="0")
+    osm.door(1103, 8.5, 3, (1002,), door="yes", level="0", access="private")
+    osm.door(1104, 4.5, 3, (1001,), door="yes", level="1", access="yes")
+    osm.door(1105, 13, 4.5, (1004,), door="no")
+    osm.node(30, 35, node_id=1106, door="yes")
 
     osm.rect(200, 22, 2, 38, 18, building="yes", name="Kollegiengebäude am Zirkel")
-    osm.rect(2001, 23, 3, 26, 6, indoor="room", ref="107", level="1")
+    osm.rect(2001, 23, 3, 26, 6, indoor="room", ref="107", level="1", access="customers")
     osm.rect(2002, 27, 3, 30, 6, indoor="room", ref="102;202", level="1")
 
     osm.rect(301, 2, 22, 18, 38)
