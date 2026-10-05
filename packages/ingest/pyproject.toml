@@ -9,6 +9,7 @@ dependencies = [
     "shapely>=2.0",
     # pyosmium. Only the regional extract fallback needs it.
     "osmium>=4.0",
+    "psycopg[binary]>=3.2",
 ]
 
 [project.scripts]
