@@ -3,6 +3,8 @@
 # Image for the ingestion CLI. It holds the pipeline and nothing of the service.
 #
 #     docker run --rm -v "$PWD/bundles:/bundles" <image> build --date 2026-09-15 --out /bundles
+#     docker run --rm -v "$PWD/bundles:/bundles" -e SPATIAL_DATABASE_URL <image> \
+#         load --date 2026-09-15 --out /bundles
 #
 # Built and pushed to GHCR by .github/workflows/publish-ingest-image.yml.
 FROM python:3.12-slim

@@ -4,9 +4,10 @@ A retrieval system that answers questions about a physical place: its structure,
 assets installed in it, and the documents anchored to both. The demo venue is KIT
 Campus Süd, from OpenStreetMap.
 
-So far there is one runnable thing here: `ingest build`, which turns a pinned
-OpenStreetMap pull into a snapshot bundle holding the venue's structure. Load, promote,
-the seed inventory, documents and the service itself are later issues.
+So far ingestion is what runs here: `ingest build` turns a pinned OpenStreetMap pull into
+a snapshot bundle holding the venue's structure, `ingest load` writes a bundle into
+Postgres and checks it, and `ingest promote` makes a loaded snapshot current. The seed
+inventory, documents and the service itself are later issues.
 
 The spec and the glossary live in the site's repository
 ([spec](https://github.com/JoranBergfeld/personal-website/issues/73), `CONTEXT.md`).
@@ -15,7 +16,7 @@ Terms here are used as written there.
 ## Layout
 
 ```
-packages/core     record models (and later the clearance rules) shared with the service
+packages/core     record models, the stores' DDL (and later the clearance rules), shared with the service
 packages/ingest   the ingestion CLI, its own package and its own image
 ```
 
@@ -53,6 +54,61 @@ uv run ingest build --date 2026-09-15 --extract karlsruhe-regbez-260915.osm.pbf
 
 `bundles/` is gitignored. The pull is private and never committed.
 
+## Load and promote
+
+The layer has a Postgres database of its own on the site's instance. Ingestion owns its
+DDL (`packages/core/src/spatial_core/ddl/`) and applies it on every run; nothing else
+migrates it. Create the database once, owned by ingestion's login, which also needs
+`CREATEROLE` to make the service's role:
+
+```
+CREATE ROLE ingest LOGIN CREATEROLE PASSWORD '...';
+CREATE DATABASE spatial OWNER ingest;
+```
+
+Then, with `SPATIAL_DATABASE_URL` (or `--database-url`) naming that login:
+
+```
+uv run ingest load --date 2026-09-15      # write bundles/2026-09-15 and check it
+uv run ingest promote --date 2026-09-15   # make it current
+uv run ingest promote --date 2026-09-08   # roll back: the same command, the previous date
+```
+
+Load writes a snapshot as three schemas (ADR 0001 in the site's repository):
+
+```
+snap_20260915_osm    the bundle's osm/ half: sourced from OSM or derived by a rule (ODbL)
+snap_20260915_seed   the bundle's seed/ half: generated data (empty until the seed inventory)
+snap_20260915        views joining the two, which is all the service reads
+```
+
+It first checks each part against the sha256 in the manifest and parses every record,
+then writes, then checks what it wrote:
+
+- the tree has exactly one root
+- every space has one parent, which is a space of the snapshot
+- every ancestor path is its parent's path plus its parent
+- every span names spaces of the snapshot
+- the OSM schema holds no seed rows
+- each table holds as many rows as the manifest says
+
+A snapshot that fails any of them is recorded as failed in `control.snapshots` and
+`promote` refuses it. Its schemas stay, for looking at. Loading the same bundle again
+rebuilds the schemas from scratch, so it yields the same stores.
+
+Load never moves the current-snapshot pointer (`control.current_snapshot`, one row), and
+it refuses to reload the current or the previous snapshot, since conversations may be
+held on either. Promote is one update of that row: the snapshot it names becomes current
+and the one it replaces becomes previous. The next load drops every snapshot older than
+both; snapshots loaded but not yet promoted stay until they are older than both too.
+
+The service gets a login that is a member of `spatial_reader`. That role can read
+`control` and the views schemas and nothing else; it cannot write anywhere. Ingestion's
+login owns every object and is the only one that writes.
+
+Each load and promote also writes its log to `bundles/<date>/runs/`. The logs are not
+parts of the bundle, and the manifest does not list them.
+
 ## The rules
 
 Every derived value in a bundle names the rule that made it. The rules are plain
@@ -83,10 +139,13 @@ Things that are rough or just not done yet:
 ## Develop
 
 ```
-uv run pytest
+SPATIAL_TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/postgres uv run pytest
 uv run ruff check . && uv run ruff format --check .
 uv run mypy
 ```
+
+The load and promote tests need a Postgres superuser URL in `SPATIAL_TEST_DATABASE_URL`
+and make a database of their own per test. Without it they skip, except in CI.
 
 ## Data
 
