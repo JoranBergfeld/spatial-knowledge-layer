@@ -1,0 +1,58 @@
+name: publish-ingest-image
+
+# Build the ingestion image and push it to GHCR on every push to main.
+# Mirrors publish-image.yml in JoranBergfeld/azure-documentation-ragas-pipeline.
+# The service gets an image of its own once it exists.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: publish-ingest-image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    name: build + push · ghcr.io
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # push to GHCR with GITHUB_TOKEN, no PAT needed.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}-ingest
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=,format=short
+          labels: |
+            org.opencontainers.image.title=spatial-knowledge-layer-ingest
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.description=Ingestion CLI for the spatial knowledge layer
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.ingest
+          push: true
+          platforms: linux/amd64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

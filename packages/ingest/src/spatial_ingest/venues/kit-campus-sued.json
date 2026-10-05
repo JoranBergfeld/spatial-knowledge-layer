@@ -1,0 +1,7 @@
+{
+  "id": "kit-campus-sued",
+  "site_name": "KIT Campus Süd",
+  "bbox": [49.0091, 8.4057, 49.0186, 8.4226],
+  "part_ways": [134631687, 503569364, 503569365],
+  "overpass_url": "https://overpass-api.de/api/interpreter"
+}

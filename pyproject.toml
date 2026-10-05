@@ -1,0 +1,45 @@
+[project]
+name = "spatial-knowledge-layer"
+version = "0.1.0"
+description = "Workspace root. The deployables live under packages/."
+requires-python = ">=3.12"
+dependencies = []
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.uv.sources]
+spatial-core = { workspace = true }
+spatial-ingest = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "spatial-core",
+    "spatial-ingest",
+    "pytest",
+    "ruff",
+    "mypy",
+    "types-shapely",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["packages"]
+addopts = "--import-mode=importlib"
+pythonpath = ["packages/ingest/tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["packages/*/src", "packages/ingest/tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
+files = ["packages/core/src", "packages/ingest/src"]
