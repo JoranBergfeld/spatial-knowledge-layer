@@ -107,6 +107,12 @@ def test_untagged_spaces_above_the_room_tier_get_no_clearance() -> None:
     assert space_clearance({"building": "yes", "access": "private"}) == from_access("private")
 
 
+@pytest.mark.parametrize("indoor", ["room", "corridor", "area"])
+def test_a_building_that_also_carries_an_indoor_tag_gets_no_room_default(indoor: str) -> None:
+    assert space_clearance({"building": "university", "indoor": indoor}) is None
+    assert space_clearance({"building": "no", "indoor": indoor}) is not None
+
+
 def test_doors_get_no_default() -> None:
     assert door_clearance({"door": "hinged"}) is None
     assert door_clearance({"door": "yes", "access": "no"}) == from_access("no")

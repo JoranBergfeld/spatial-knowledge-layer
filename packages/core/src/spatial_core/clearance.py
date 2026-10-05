@@ -93,6 +93,9 @@ def space_clearance(tags: Mapping[str, str]) -> Clearance | None:
     """
     if "access" in tags:
         return from_access(tags["access"])
+    # A building tag wins over an indoor one, as it does for the tier.
+    if tags.get("building", "no") != "no":
+        return None
     indoor = tags.get("indoor")
     if indoor in _CIRCULATION:
         return _default(Persona.VISITOR)
