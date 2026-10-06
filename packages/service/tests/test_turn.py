@@ -391,6 +391,86 @@ def test_a_tool_rejecting_its_arguments_buys_a_recovery() -> None:
     ]
 
 
+def test_a_second_plan_that_gives_up_is_not_a_repair() -> None:
+    unsupported = json.dumps({"shape": "unsupported", "mentions": [], "steps": []})
+
+    turn = ask("visitor", "Where is the Audimax?", repaired_by("not a plan", unsupported))
+
+    assert (turn["kind"], turn["cause"]) == ("abstention", "unsupported-question")
+    assert turn["recovery"] == "unrepaired"
+    assert [c["purpose"] for c in turn["llm_calls"]] == ["planning", "recovery"]
+    v2 = turn["trace"]["plans"][1]
+    assert (v2["verdict"], v2["trigger"], v2["steps"]) == ("accepted", None, [])
+
+
+def test_a_step_added_at_the_front_is_one_change_not_every_step_after_it() -> None:
+    # The first plan reads a container step it never wrote.
+    second = json.loads(where("Informatik", "107"))
+    first = {
+        **second,
+        "mentions": second["mentions"][1:],
+        "constraints": [],
+        "steps": second["steps"][1:],
+    }
+
+    turn = ask(
+        "visitor",
+        "Where is room 107 in the Informatik building?",
+        repaired_by(json.dumps(first), json.dumps(second)),
+    )
+
+    assert (turn["kind"], turn["recovery"]) == ("answer", "repaired")
+    v1, v2 = turn["trace"]["plans"]
+    assert v1["trigger"]["kind"] == "unbound-reference"
+    assert v2["changes"] == [
+        {"op": "add", "path": "/mentions/0", "before": None, "after": second["mentions"][0]},
+        {"op": "add", "path": "/constraints/0", "before": None, "after": second["constraints"][0]},
+        {"op": "add", "path": "/steps/0", "before": None, "after": second["steps"][0]},
+    ]
+
+
+def test_a_step_dropped_from_the_front_is_one_change_not_every_step_after_it() -> None:
+    # The first plan resolves a place that feeds nothing.
+    first = json.loads(where("Informatik", "Audimax"))
+    first["constraints"] = []
+    del first["steps"][1]["within"]
+    second = {**first, "mentions": first["mentions"][1:], "steps": first["steps"][1:]}
+
+    turn = ask(
+        "visitor", "Where is the Audimax?", repaired_by(json.dumps(first), json.dumps(second))
+    )
+
+    assert (turn["kind"], turn["recovery"]) == ("answer", "repaired")
+    v1, v2 = turn["trace"]["plans"]
+    assert v1["trigger"]["kind"] == "plan-invalid"
+    assert v2["changes"] == [
+        {"op": "remove", "path": "/mentions/0", "before": first["mentions"][0], "after": None},
+        {"op": "remove", "path": "/steps/0", "before": first["steps"][0], "after": None},
+    ]
+
+
+def test_steps_whose_ids_changed_order_are_diffed_by_position() -> None:
+    first = json.loads(where("Informatik", "107"))
+    first["steps"].reverse()
+
+    turn = ask(
+        "visitor",
+        "Where is room 107 in the Informatik building?",
+        repaired_by(json.dumps(first), where("Informatik", "107")),
+    )
+
+    assert (turn["kind"], turn["recovery"]) == ("answer", "repaired")
+    changes = turn["trace"]["plans"][1]["changes"]
+    assert [(c["op"], c["path"]) for c in changes] == [
+        ("replace", "/steps/0/id"),
+        ("replace", "/steps/0/mention"),
+        ("remove", "/steps/0/within"),
+        ("replace", "/steps/1/id"),
+        ("replace", "/steps/1/mention"),
+        ("add", "/steps/1/within"),
+    ]
+
+
 @pytest.mark.parametrize("persona", [p.value for p in PERSONAS])
 def test_whether_a_turn_recovers_never_depends_on_what_the_persona_sees(persona: str) -> None:
     # The Serverraum is beyond a visitor and staff, and not beyond maintenance. Were

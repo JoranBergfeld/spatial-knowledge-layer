@@ -52,9 +52,10 @@ class RecoveryOutcome(StrEnum):
 
     # The first plan ran without a trigger.
     NOT_NEEDED = "not-needed"
-    # The first plan raised a trigger and the second ran without one.
+    # The first plan raised a trigger and the second ran its steps without one.
     REPAIRED = "repaired"
-    # The second plan raised a trigger too, or the recovery call failed.
+    # The second plan raised a trigger too, or ran nothing because it called the
+    # question unsupported, or the recovery call failed.
     UNREPAIRED = "unrepaired"
 
 
@@ -68,7 +69,13 @@ class PlanChange(_Model):
 
 
 def diff(before: Any, after: Any, path: str = "") -> list[PlanChange]:
-    """What changed from ``before`` to ``after``, both JSON values, in document order."""
+    """What changed from ``before`` to ``after``, both JSON values, in document order.
+
+    Lists of objects that each carry an ``id`` (steps, mentions) are matched by it,
+    so a step added or dropped at the front is one change and not every step after
+    it. What a list lost comes first, at its old index; the rest sits at its new
+    one. Any other list, and one whose shared ids changed order, goes by position.
+    """
     if before == after:
         return []
     if isinstance(before, dict) and isinstance(after, dict):
@@ -84,6 +91,20 @@ def diff(before: Any, after: Any, path: str = "") -> list[PlanChange]:
         return changes
     if isinstance(before, list) and isinstance(after, list):
         changes = []
+        old, new = _by_id(before), _by_id(after)
+        if old is not None and new is not None and _same_order(old, new):
+            for index, key in enumerate(old):
+                if key not in new:
+                    changes.append(
+                        PlanChange(op="remove", path=f"{path}/{index}", before=before[index])
+                    )
+            for index, key in enumerate(new):
+                at = f"{path}/{index}"
+                if key not in old:
+                    changes.append(PlanChange(op="add", path=at, after=after[index]))
+                else:
+                    changes.extend(diff(old[key], new[key], at))
+            return changes
         for index in range(max(len(before), len(after))):
             at = f"{path}/{index}"
             if index >= len(after):
@@ -94,6 +115,21 @@ def diff(before: Any, after: Any, path: str = "") -> list[PlanChange]:
                 changes.extend(diff(before[index], after[index], at))
         return changes
     return [PlanChange(op="replace", path=path, before=before, after=after)]
+
+
+def _by_id(items: list[Any]) -> dict[str, Any] | None:
+    """A list's items under their ids, when each is an object with one of its own."""
+    keyed: dict[str, Any] = {}
+    for item in items:
+        if not isinstance(item, dict) or not isinstance(item.get("id"), str):
+            return None
+        keyed[item["id"]] = item
+    return keyed if len(keyed) == len(items) else None
+
+
+def _same_order(old: dict[str, Any], new: dict[str, Any]) -> bool:
+    """Whether the ids two lists share come in the same order in both."""
+    return [k for k in old if k in new] == [k for k in new if k in old]
 
 
 def _escape(key: str) -> str:

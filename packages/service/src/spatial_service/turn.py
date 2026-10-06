@@ -184,7 +184,7 @@ class Turn(_Model):
     state: ConversationState
     trace: Trace
     llm_calls: list[LlmCall]
-    # Whether this turn needed a second plan, and whether that one ran.
+    # Whether this turn needed a second plan, and whether that one ran its steps.
     recovery: RecoveryOutcome = RecoveryOutcome.NOT_NEEDED
 
 
@@ -330,7 +330,9 @@ class TurnService:
             turn.recovery = RecoveryOutcome.UNREPAIRED
             second = await self._attempt(turn, request.question, venue, first)
             if second.trigger is None:
-                turn.recovery = RecoveryOutcome.REPAIRED
+                # A second plan with nothing to run is the model giving up, not a repair.
+                if second.execution is not None:
+                    turn.recovery = RecoveryOutcome.REPAIRED
                 return await self._settle(turn, request.question, venue, second)
         except LlmUnavailable as error:
             return turn.unavailable(error)

@@ -236,12 +236,14 @@ A turn is one of four kinds:
 
 Every turn carries its trace, the new conversation state, each model call's token usage
 with the deployment that served it, and `recovery`: `not-needed`, `repaired` or
-`unrepaired`, so the repair rate is a count over turns. The trace holds the shape, the
+`unrepaired`, so the repair rate is a count over turns. A second plan that calls the
+question unsupported runs nothing, so it counts as `unrepaired`. The trace holds the shape, the
 step and call caps, what was resolved and how, the provenance of every label in the
 answer, and any authored default clearance among them, and under `plans` each version
 of the plan: as the model wrote it, its verdict and reasons, each step it ran with its
 result ids, the trigger it raised, and for the second version its changes against the
-first as JSON Pointer paths.
+first as JSON Pointer paths. Steps and mentions are matched by id, so one added or
+dropped at the front shows as one change.
 
 A conversation keeps the persona and snapshot it began with, and is refused once its
 snapshot is neither current nor previous. State a client sends back is cut down to what
