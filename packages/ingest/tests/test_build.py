@@ -263,7 +263,12 @@ def test_the_manifest_records_input_hashes_and_what_produced_each_part(bundle: P
     assert recorded["inputs"]["venue"]["definition"]["part_ways"] == [9001, 9002, 9003]
     assert len(recorded["inputs"]["venue"]["sha256"]) == 64
     assert "strip-person-names@1" not in recorded["parts"]["osm/spans.jsonl"]["produced_by"]
-    assert sorted(recorded["parts"]) == ["osm/spaces.jsonl", "osm/spans.jsonl"]
+    assert sorted(recorded["parts"]) == [
+        "osm/edges.jsonl",
+        "osm/spaces.jsonl",
+        "osm/spans.jsonl",
+        "osm/visible_spaces.jsonl",
+    ]
     for name, part in recorded["parts"].items():
         assert part["sha256"] == sha256(bundle / name)
         assert part["records"] == len(read_jsonl(bundle / name))
@@ -315,7 +320,12 @@ def test_a_regional_extract_cut_down_to_the_box_gives_the_same_structure(
 
     fallback = tmp_path / "fallback" / DATE
     assert len(overpass.queries) == 1  # only the first bundle's pull
-    for part in ("osm/spaces.jsonl", "osm/spans.jsonl"):
+    for part in (
+        "osm/spaces.jsonl",
+        "osm/spans.jsonl",
+        "osm/edges.jsonl",
+        "osm/visible_spaces.jsonl",
+    ):
         assert (fallback / part).read_bytes() == (bundle / part).read_bytes()
 
 
@@ -339,3 +349,121 @@ def test_the_cut_down_extract_is_pinned_the_same_way(venue_file: Path, tmp_path:
     cut = from_osm_file(out / DATE / "pull" / "extract.osm.pbf")
     assert 100 in cut.ways
     assert 880 not in cut.ways
+
+
+def edges(bundle: Path) -> dict[str, dict[str, Any]]:
+    return {edge["id"]: edge for edge in read_jsonl(bundle / "osm" / "edges.jsonl")}
+
+
+def visible(bundle: Path) -> dict[str, set[str]]:
+    sets: dict[str, set[str]] = {"visitor": set(), "staff": set(), "maintenance": set()}
+    for entry in read_jsonl(bundle / "osm" / "visible_spaces.jsonl"):
+        sets[entry["persona"]].add(entry["space_id"])
+    return sets
+
+
+def test_the_circulation_edges_are_built_from_the_doors_in_the_pull(bundle: Path) -> None:
+    built = edges(bundle)
+
+    assert sorted(built) == [
+        "node/1101:outside>osm:way/1006",
+        "node/1102:osm:way/1005>osm:way/1006",
+        "node/1102:osm:way/1006>osm:way/1005",
+        "node/1103:outside>osm:way/1002",
+        "node/1104:outside>osm:way/1001",
+    ]
+    inward = built["node/1102:osm:way/1006>osm:way/1005"]
+    assert inward["door"] == "node/1102"
+    assert (inward["from_id"], inward["to_id"]) == ("osm:way/1006", "osm:way/1005")
+    assert (inward["provenance"], inward["rule"]) == ("derived", "edges-from-doors@1")
+    assert built["node/1101:outside>osm:way/1006"]["from_id"] is None
+    assert manifest(bundle)["counts"]["edges"] == 5
+    # A door on no outline joins nothing.
+    assert manifest(bundle)["counts"]["doors_on_no_space"] == 1
+
+
+def test_an_edge_takes_the_stricter_of_its_door_and_the_space_it_enters(bundle: Path) -> None:
+    built = edges(bundle)
+
+    def cleared(edge_id: str) -> tuple[str, str | None]:
+        clearance = built[edge_id]["clearance"]
+        return clearance["persona"], clearance["access"]
+
+    # A yes door never opens a private room, and the raw tag that decided is kept.
+    assert cleared("node/1104:outside>osm:way/1001") == ("staff", "private")
+    assert built["node/1104:outside>osm:way/1001"]["door_clearance"]["access"] == "yes"
+    # A private door closes a room whose own default is visitor.
+    assert cleared("node/1103:outside>osm:way/1002") == ("staff", "private")
+    # An untagged door constrains nothing: the edge takes the space it enters.
+    assert built["node/1102:osm:way/1006>osm:way/1005"]["door_clearance"] is None
+    assert cleared("node/1102:osm:way/1006>osm:way/1005") == ("staff", None)
+    assert cleared("node/1102:osm:way/1005>osm:way/1006") == ("visitor", None)
+    assert built["node/1102:osm:way/1005>osm:way/1006"]["clearance"]["authored_default"]
+
+
+def test_space_clearance_is_read_from_access_tags_or_flagged_as_an_authored_default(
+    bundle: Path,
+) -> None:
+    tree = spaces(bundle)
+
+    assert tree["osm:way/1001"]["clearance"] == {
+        "persona": "staff",
+        "access": "private",
+        "rule": "clearance-from-access@1",
+        "authored_default": False,
+    }
+    assert tree["osm:way/2001"]["clearance"]["persona"] == "visitor"  # customers
+    # An unrecognised value fails closed, and the raw tag is kept beside it.
+    assert tree["osm:way/1009"]["clearance"]["persona"] == "maintenance"
+    assert tree["osm:way/1009"]["clearance"]["access"] == "staff_only"
+    assert tree["osm:way/1006"]["clearance"] == {
+        "persona": "visitor",
+        "access": None,
+        "rule": "clearance-authored-default@1",
+        "authored_default": True,
+    }
+    assert tree["osm:way/1002"]["clearance"]["persona"] == "visitor"  # an auditorium
+    assert tree["osm:way/1005"]["clearance"]["persona"] == "staff"
+    # Above the room tier an untagged space has no clearance of its own.
+    assert tree["osm:way/100"]["clearance"] is None
+    assert tree["floor:way/100:0"]["clearance"] is None
+
+
+def test_each_persona_gets_its_visible_set_and_the_sets_nest(bundle: Path) -> None:
+    sets = visible(bundle)
+
+    assert sets["visitor"] == {
+        "site:mini-campus",
+        "osm:way/100",
+        "floor:way/100:0",
+        "osm:way/1006",  # entered from outside through an untagged entrance
+        "osm:way/1004",  # no edge, so its own clearance: stairs are visitor
+        "osm:way/200",
+        "floor:way/200:1",
+        "osm:way/2001",
+    }
+    # Behind a door that admits staff, whatever the room's own clearance.
+    assert "osm:way/1002" in sets["staff"] - sets["visitor"]
+    assert "osm:way/1005" in sets["staff"] - sets["visitor"]
+    assert sets["visitor"] <= sets["staff"] <= sets["maintenance"]
+    # Only maintenance reaches 1009, and the floor it sits on comes with it.
+    assert sets["maintenance"] - sets["staff"] == {"osm:way/1009", "floor:way/100:2"}
+    # A building with no rooms and no tag is entered by nothing.
+    assert set(spaces(bundle)) - sets["maintenance"] == {"osm:way/600"}
+
+
+def test_the_manifest_records_the_share_of_rooms_whose_clearance_is_sourced(
+    bundle: Path,
+) -> None:
+    recorded = manifest(bundle)
+
+    assert recorded["clearance"] == {
+        "rooms": 14,
+        "rooms_sourced": 3,
+        "sourced_share": 0.2143,
+        "unrecognised_access": 1,
+        "visible_spaces": {"visitor": 8, "staff": 26, "maintenance": 28},
+    }
+    produced_by = recorded["parts"]["osm/visible_spaces.jsonl"]["produced_by"]
+    assert "visible-by-edges@1" in produced_by
+    assert "edge-clearance@1" in recorded["parts"]["osm/edges.jsonl"]["produced_by"]

@@ -71,6 +71,47 @@ INVARIANTS = (
         """,
     ),
     Invariant(
+        "edges name spaces of the snapshot",
+        """
+        SELECT edge.id FROM {views}.edges edge
+        WHERE NOT EXISTS (SELECT FROM {views}.spaces WHERE id = edge.to_id)
+            OR (edge.from_id IS NOT NULL
+                AND NOT EXISTS (SELECT FROM {views}.spaces WHERE id = edge.from_id))
+        """,
+    ),
+    Invariant(
+        "visible sets name spaces of the snapshot",
+        """
+        SELECT visible.persona || ' ' || visible.space_id FROM {views}.visible_spaces visible
+        WHERE NOT EXISTS (SELECT FROM {views}.spaces WHERE id = visible.space_id)
+        """,
+    ),
+    Invariant(
+        "a visible space's parent is visible",
+        """
+        SELECT visible.persona || ' ' || visible.space_id FROM {views}.visible_spaces visible
+        JOIN {views}.spaces space ON space.id = visible.space_id
+        WHERE space.parent_id IS NOT NULL AND NOT EXISTS (
+            SELECT FROM {views}.visible_spaces parent
+            WHERE parent.persona = visible.persona AND parent.space_id = space.parent_id
+        )
+        """,
+    ),
+    Invariant(
+        "the visible sets nest",
+        # Visitor within staff within maintenance.
+        """
+        SELECT narrower.persona || ' ' || narrower.space_id
+        FROM {views}.visible_spaces narrower
+        JOIN (VALUES ('visitor', 'staff'), ('staff', 'maintenance')) AS chain (persona, wider)
+            ON chain.persona = narrower.persona
+        WHERE NOT EXISTS (
+            SELECT FROM {views}.visible_spaces wider
+            WHERE wider.persona = chain.wider AND wider.space_id = narrower.space_id
+        )
+        """,
+    ),
+    Invariant(
         "the OSM schema holds no seed rows",
         f"""
         SELECT id FROM {{osm}}.spaces

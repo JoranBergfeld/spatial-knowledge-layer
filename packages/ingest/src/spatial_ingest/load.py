@@ -27,7 +27,7 @@ from psycopg import sql
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel, ValidationError
 
-from spatial_core.records import Space, Span
+from spatial_core.records import Edge, Space, Span, VisibleSpace
 from spatial_core.stores import snapshot_schemas
 from spatial_ingest import db, invariants
 from spatial_ingest.build import MANIFEST_FILE
@@ -35,7 +35,12 @@ from spatial_ingest.build import MANIFEST_FILE
 log = logging.getLogger(__name__)
 
 # Which record each table holds. Both halves of a bundle have the same tables.
-TABLES: dict[str, type[BaseModel]] = {"spaces": Space, "spans": Span}
+TABLES: dict[str, type[BaseModel]] = {
+    "spaces": Space,
+    "spans": Span,
+    "edges": Edge,
+    "visible_spaces": VisibleSpace,
+}
 HALVES = ("osm", "seed")
 
 

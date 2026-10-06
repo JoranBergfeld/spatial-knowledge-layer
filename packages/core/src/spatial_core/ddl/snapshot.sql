@@ -33,7 +33,9 @@ CREATE TABLE {osm}.spaces (
     addressable       boolean NOT NULL,
     levels            jsonb,
     attributes        jsonb NOT NULL,
-    outline           jsonb
+    outline           jsonb,
+    -- {{persona, access, rule, authored_default}}: the raw tag beside what it mapped to.
+    clearance         jsonb
 );
 CREATE INDEX ON {osm}.spaces (parent_id);
 
@@ -45,8 +47,31 @@ CREATE TABLE {osm}.spans (
     PRIMARY KEY (space_id, floor_id)
 );
 
+-- The circulation edges: one row per way through a door. An edge is sourced or
+-- derived, never seed, but the seed half has the table so the views stay uniform.
+CREATE TABLE {osm}.edges (
+    id              text PRIMARY KEY,
+    door            text NOT NULL,
+    from_id         text,
+    to_id           text NOT NULL,
+    door_clearance  jsonb,
+    clearance       jsonb NOT NULL,
+    provenance      text NOT NULL CHECK (provenance IN ('sourced', 'derived')),
+    rule            text NOT NULL
+);
+CREATE INDEX ON {osm}.edges (to_id);
+
+-- What exists for each persona: one set per persona, computed at build.
+CREATE TABLE {osm}.visible_spaces (
+    persona  text NOT NULL CHECK (persona IN ('visitor', 'staff', 'maintenance')),
+    space_id text NOT NULL,
+    PRIMARY KEY (persona, space_id)
+);
+
 CREATE TABLE {seed}.spaces (LIKE {osm}.spaces INCLUDING ALL);
 CREATE TABLE {seed}.spans (LIKE {osm}.spans INCLUDING ALL);
+CREATE TABLE {seed}.edges (LIKE {osm}.edges INCLUDING ALL);
+CREATE TABLE {seed}.visible_spaces (LIKE {osm}.visible_spaces INCLUDING ALL);
 
 -- The seed half carries no spaces yet. Once it holds assets, they join the OSM
 -- spaces by id here.
@@ -59,6 +84,16 @@ CREATE VIEW {views}.spans AS
     SELECT * FROM {osm}.spans
     UNION ALL
     SELECT * FROM {seed}.spans;
+
+CREATE VIEW {views}.edges AS
+    SELECT * FROM {osm}.edges
+    UNION ALL
+    SELECT * FROM {seed}.edges;
+
+CREATE VIEW {views}.visible_spaces AS
+    SELECT * FROM {osm}.visible_spaces
+    UNION ALL
+    SELECT * FROM {seed}.visible_spaces;
 
 GRANT USAGE ON SCHEMA {views} TO {reader};
 GRANT SELECT ON ALL TABLES IN SCHEMA {views} TO {reader};
