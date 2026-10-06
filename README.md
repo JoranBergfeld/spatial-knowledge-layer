@@ -4,10 +4,11 @@ A retrieval system that answers questions about a physical place: its structure,
 assets installed in it, and the documents anchored to both. The demo venue is KIT
 Campus Süd, from OpenStreetMap.
 
-So far ingestion is what runs here: `ingest build` turns a pinned OpenStreetMap pull into
-a snapshot bundle holding the venue's structure, `ingest load` writes a bundle into
-Postgres and checks it, and `ingest promote` makes a loaded snapshot current. The seed
-inventory, documents and the service itself are later issues.
+Ingestion runs here: `ingest build` turns a pinned OpenStreetMap pull into a snapshot
+bundle holding the venue's structure, `ingest load` writes a bundle into Postgres and
+checks it, and `ingest promote` makes a loaded snapshot current. The service answers
+one kind of question so far, "where is room X". The seed inventory and documents are
+later issues.
 
 The spec and the glossary live in the site's repository
 ([spec](https://github.com/JoranBergfeld/personal-website/issues/73), `CONTEXT.md`).
@@ -18,9 +19,10 @@ Terms here are used as written there.
 ```
 packages/core     record models, the stores' DDL and the clearance rules, shared with the service
 packages/ingest   the ingestion CLI, its own package and its own image
+packages/service  the turn service: FastAPI on Microsoft Agent Framework, reading the stores
 ```
 
-The service will be a third package. Its image will hold no pipeline code.
+The service holds no pipeline code and imports nothing from `packages/ingest`.
 
 ## Build a snapshot
 
@@ -154,6 +156,74 @@ Things that are rough or just not done yet:
 - A door node shared by spaces on different levels joins them. The door's `level` is not
   checked against theirs.
 
+## The service
+
+One operation, `POST /turn`. It takes a persona, a snapshot (none means the current
+one), the conversation's prior state and a question, and returns a turn:
+
+```
+{"persona": "visitor", "snapshot": null, "state": null, "question": "Where is 50.34 room 107?"}
+```
+
+```
+uv run spatial-service
+```
+
+It reads its configuration from the environment:
+
+```
+SPATIAL_SERVICE_DATABASE_URL     a login in spatial_reader; the service refuses one that can write
+AZURE_OPENAI_ENDPOINT            the Azure OpenAI resource
+AZURE_OPENAI_API_KEY             its key
+AZURE_OPENAI_API_VERSION         optional, 2024-10-21 by default
+SPATIAL_PLANNING_DEPLOYMENT      the deployment that plans
+SPATIAL_COMPOSITION_DEPLOYMENT   the deployment that composes, which must be a different one
+SPATIAL_LLM_TIMEOUT_SECONDS      optional, 30 by default
+```
+
+A turn is three stages, and only the first and last call a model:
+
+- **Plan.** The planning deployment returns a plan (`packages/service/src/spatial_service/plan.py`):
+  the question's shape, the place mentions in it, `within` constraints between them,
+  and a flat ordered list of typed tool steps. A step may work within the ids an
+  earlier step produced. The plan is checked in code before any tool runs. Persona and
+  snapshot are not arguments a plan can carry: the host binds them.
+- **Execute.** The steps run in order with no model call between them. The one tool,
+  `resolve_place`, only ever sees the persona's visible set in that snapshot. It tries
+  an exact label, then a building and room number parsed the way `room-label@1` builds
+  labels ("50.34 room 107", "50.34/107", "room 107 in 50.34"), then a number alone,
+  then the words of a name. Spaces without a label are never answers.
+- **Compose.** The composing deployment is told the facts by reference (`{f1}`, `{f2}`)
+  with their tiers, never their labels or ids. It returns segments that cite them; the
+  host fills each placeholder from its fact. Output with a digit anywhere outside a
+  placeholder is rejected whole.
+
+**The step cap is four.** The one supported shape needs a step per place mention, and
+the longest chain worth reading in one question is three deep ("room 107 on level 1 of
+50.34"), plus one to spare. A plan over the cap is rejected, not truncated, since a
+shortened plan answers a different question.
+
+A turn is one of four kinds:
+
+| Kind | When |
+| --- | --- |
+| `answer` | Every step resolved one place and the composition passed its checks. |
+| `clarification` | A step matched several places, or the mention was a bare room number, which is never a label. The candidates are all visible to the persona, at most six. The state carries them, and the next turn's planner sees their labels. |
+| `abstention` | `no-such-place` when nothing the persona can see matches. A place beyond clearance and a place that does not exist give the same abstention, and the same trace but for the words asked. Also `unsupported-question`, `plan-rejected` and `composition-rejected`. |
+| `unavailable` | A model could not be reached. HTTP 503, no answer, and the prior state back unchanged. |
+
+Every turn carries its trace (the shape, the plan, each step's result ids, what was
+resolved and how, the provenance of every label in the answer, and any authored default
+clearance among them), the new conversation state, and each model call's token usage
+with the deployment that served it.
+
+A conversation keeps the persona and snapshot it began with, and is refused once its
+snapshot is neither current nor previous. State a client sends back is cut down to what
+the persona can see before anything reads it.
+
+Still to come: one question shape, one tool, and clarifications and abstentions are
+worded by the host rather than composed.
+
 ## Develop
 
 ```
@@ -162,8 +232,10 @@ uv run ruff check . && uv run ruff format --check .
 uv run mypy
 ```
 
-The load and promote tests need a Postgres superuser URL in `SPATIAL_TEST_DATABASE_URL`
-and make a database of their own per test. Without it they skip, except in CI.
+The load and promote tests, and the service's store tests, need a Postgres superuser URL
+in `SPATIAL_TEST_DATABASE_URL` and make databases of their own. Without it they skip,
+except in CI. The turn tests run against a fixture snapshot in memory and a scripted
+model, and need neither.
 
 ## Data
 

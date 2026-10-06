@@ -14,11 +14,13 @@ members = ["packages/*"]
 [tool.uv.sources]
 spatial-core = { workspace = true }
 spatial-ingest = { workspace = true }
+spatial-service = { workspace = true }
 
 [dependency-groups]
 dev = [
     "spatial-core",
     "spatial-ingest",
+    "spatial-service",
     "pytest",
     "ruff",
     "mypy",
@@ -28,12 +30,12 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["packages"]
 addopts = "--import-mode=importlib"
-pythonpath = ["packages/ingest/tests"]
+pythonpath = ["packages/ingest/tests", "packages/service/tests"]
 
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-src = ["packages/*/src", "packages/ingest/tests"]
+src = ["packages/*/src", "packages/ingest/tests", "packages/service/tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
@@ -42,4 +44,4 @@ select = ["E", "F", "I", "UP", "B"]
 python_version = "3.12"
 strict = true
 plugins = ["pydantic.mypy"]
-files = ["packages/core/src", "packages/ingest/src"]
+files = ["packages/core/src", "packages/ingest/src", "packages/service/src"]
