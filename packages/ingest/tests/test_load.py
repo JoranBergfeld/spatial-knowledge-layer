@@ -23,7 +23,7 @@ from psycopg.conninfo import make_conninfo
 from spatial_core.stores import READER_ROLE
 from spatial_ingest.build import MANIFEST_FILE
 from spatial_ingest.cli import main
-from spatial_ingest.load import load
+from spatial_ingest.load import TABLES, load
 
 ADMIN_URL_ENV = "SPATIAL_TEST_DATABASE_URL"
 SERVICE_ROLE = "spatial_test_service"
@@ -105,7 +105,7 @@ def stores(database_url: str, date: str) -> dict[str, list[Any]]:
     stem = "snap_" + date.replace("-", "")
     dumped = {}
     for schema in (stem, f"{stem}_osm", f"{stem}_seed"):
-        for table in ("spaces", "spans", "edges", "visible_spaces"):
+        for table in TABLES:
             rows = query(
                 database_url,
                 f"SELECT row_to_json(t)::text AS r FROM {schema}.{table} t ORDER BY r",
@@ -130,6 +130,14 @@ def rewrite(bundle: Path, part: str, records: list[dict[str, Any]]) -> None:
         "produced_by": ["a test"],
     }
     (bundle / MANIFEST_FILE).write_text(json.dumps(manifest))
+
+
+def edit(bundle: Path, part: str, record_id: str, **changes: Any) -> None:
+    records = read_jsonl(bundle / part)
+    for record in records:
+        if record["id"] == record_id:
+            record.update(changes)
+    rewrite(bundle, part, records)
 
 
 def edit_space(bundle: Path, space_id: str, **changes: Any) -> None:
@@ -168,6 +176,21 @@ def test_a_clean_load_writes_the_schema_pair_and_does_not_promote(
         "staff": 26,
         "maintenance": 28,
     }
+    # The inventory: generated records in the seed schema, the sourced fire assets
+    # in the OSM one, and the views joining them.
+    for half in ("osm", "seed"):
+        for table in ("asset_types", "assets", "maintenance_tasks", "service_events"):
+            expected = (
+                read_jsonl(built / half / f"{table}.jsonl")
+                if (built / half / f"{table}.jsonl").exists()
+                else []
+            )
+            assert len(stored[f"snap_20260915_{half}.{table}"]) == len(expected), (half, table)
+    assert len(stored["snap_20260915_osm.assets"]) == 3
+    assert len(stored["snap_20260915_seed.assets"]) > 100
+    assets = {asset["id"]: asset for asset in stored["snap_20260915.assets"]}
+    for record in read_jsonl(built / "seed" / "assets.jsonl"):
+        assert assets[record["id"]] == record
 
 
 def test_each_run_leaves_its_log_beside_the_bundle(bundle: Bundle, database_url: str) -> None:
@@ -284,6 +307,90 @@ BREAKAGES: dict[str, tuple[Callable[[Path], None], str]] = {
         ),
         "edges name spaces of the snapshot: fails for node/1104:outside>osm:way/1001",
     ),
+    "an asset in a space that is not there": (
+        lambda b: edit(b, "seed/assets.jsonl", first_seed_asset(b), space_id="osm:way/9999"),
+        "every asset sits in exactly one space: fails for seed:asset:",
+    ),
+    "an asset in both halves of the pair": (
+        lambda b: rewrite(
+            b,
+            "osm/assets.jsonl",
+            [
+                *read_jsonl(b / "osm" / "assets.jsonl"),
+                {
+                    **read_jsonl(b / "seed" / "assets.jsonl")[0],
+                    "record_provenance": "sourced",
+                    "space_id": "osm:way/200",
+                },
+            ],
+        ),
+        "every asset sits in exactly one space: fails for seed:asset:",
+    ),
+    "an asset of a type that is not there": (
+        lambda b: edit(b, "seed/assets.jsonl", first_seed_asset(b), type_id="seed:type:nothing"),
+        "every asset is of a type of the snapshot: fails for seed:asset:",
+    ),
+    "a generated record in the OSM schema": (
+        lambda b: edit(b, "osm/assets.jsonl", "osm:asset:node/1201", record_provenance="seed"),
+        "the OSM schema holds no seed rows: fails for osm:asset:node/1201",
+    ),
+    "a sourced record in the seed schema": (
+        lambda b: edit(
+            b, "seed/asset_types.jsonl", "seed:type:door-leaf", record_provenance="sourced"
+        ),
+        "the seed schema holds only seed rows: fails for seed:type:door-leaf",
+    ),
+    "a generated edge": (
+        lambda b: rewrite(
+            b,
+            "seed/edges.jsonl",
+            [{**read_jsonl(b / "osm" / "edges.jsonl")[0], "id": "seed:edge"}],
+        ),
+        "the seed schema holds no edges: fails for seed:edge",
+    ),
+    "a door asset bound to no door": (
+        lambda b: edit(
+            b,
+            "seed/assets.jsonl",
+            "seed:asset:node/1101:door-leaf",
+            door="node/9999",
+        ),
+        "a door asset is bound to a door of the snapshot: fails for seed:asset:node/1101",
+    ),
+    "a service event on an asset that is not there": (
+        lambda b: rewrite(
+            b,
+            "seed/service_events.jsonl",
+            [
+                {**event, "asset_id": "seed:asset:nothing"} if index == 0 else event
+                for index, event in enumerate(read_jsonl(b / "seed" / "service_events.jsonl"))
+            ],
+        ),
+        "tasks and events name what they belong to: fails for seed:event:",
+    ),
+    "a visitor shown staff equipment": (
+        lambda b: rewrite(
+            b,
+            "seed/visible_assets.jsonl",
+            [
+                *read_jsonl(b / "seed" / "visible_assets.jsonl"),
+                {"persona": "visitor", "asset_id": "seed:asset:osm:way/1002:projector:1"},
+            ],
+        ),
+        "a visible asset's type is cleared and its space is visible: "
+        "fails for visitor seed:asset:osm:way/1002:projector:1",
+    ),
+    "a type visible with no visible asset": (
+        lambda b: rewrite(
+            b,
+            "seed/visible_asset_types.jsonl",
+            [
+                *read_jsonl(b / "seed" / "visible_asset_types.jsonl"),
+                {"persona": "visitor", "type_id": "seed:type:projector"},
+            ],
+        ),
+        "a type is visible only through a visible asset: fails for visitor seed:type:projector",
+    ),
     "a part that does not match its manifest": (
         lambda b: (b / "osm" / "spans.jsonl").write_text(""),
         "osm/spans.jsonl does not match the sha256 in the manifest",
@@ -293,6 +400,11 @@ BREAKAGES: dict[str, tuple[Callable[[Path], None], str]] = {
         "osm/spans.jsonl line 1",
     ),
 }
+
+
+def first_seed_asset(bundle: Path) -> str:
+    asset_id: str = read_jsonl(bundle / "seed" / "assets.jsonl")[0]["id"]
+    return asset_id
 
 
 @pytest.mark.parametrize("breakage", list(BREAKAGES))
@@ -434,10 +546,19 @@ def test_the_service_role_reads_the_views_and_writes_nothing(
         assert row == ("snap_20260915",)
         count = conn.execute("SELECT count(*) FROM snap_20260915.spaces").fetchone()
         assert count == (29,)
+        catalogue = conn.execute(
+            "SELECT attribute, assets FROM snap_20260915.attribute_catalogue"
+            " WHERE type_id = 'osm:type:fire_extinguisher'"
+        ).fetchall()
+        assert catalogue == [("fire_extinguisher:type", 1)]
+        for view in ("asset_types", "assets", "maintenance_tasks", "service_events"):
+            row = conn.execute(f"SELECT count(*) FROM snap_20260915.{view}".encode()).fetchone()
+            assert row is not None and row[0] > 0, view
 
         for statement in (
             "SELECT count(*) FROM snap_20260915_osm.spaces",
             "SELECT count(*) FROM snap_20260915_seed.spaces",
+            "SELECT count(*) FROM snap_20260915_seed.assets",
             "UPDATE control.current_snapshot SET snapshot = NULL",
             "DELETE FROM control.snapshots",
             "CREATE TABLE snap_20260915.mine (id int)",

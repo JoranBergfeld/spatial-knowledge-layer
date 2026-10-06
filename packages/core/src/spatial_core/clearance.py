@@ -13,6 +13,12 @@ misclassifies something is fixed by changing the rule.
     visible-by-edges@1             a space is visible when a permitted edge enters
                                    it, or by its own clearance when no edge does,
                                    and its ancestors are visible with it
+    clearance-from-omniclass@1     an asset type's OmniClass Table 23 code to the
+                                   lowest persona it admits, by its longest listed
+                                   prefix; an unlisted code fails closed
+    visible-assets@1               an asset is visible when its type is cleared and
+                                   its space is visible; a type only through a
+                                   visible asset
 
 The rules interpret whom the venue admits the public to. They never claim to know
 who really holds a key.
@@ -20,14 +26,17 @@ who really holds a key.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Mapping
 
-from spatial_core.records import PERSONAS, Clearance, Edge, Persona, Space
+from spatial_core.records import PERSONAS, Asset, AssetType, Clearance, Edge, Persona, Space
 
 ACCESS_RULE = "clearance-from-access@1"
 DEFAULT_RULE = "clearance-authored-default@1"
 EDGE_RULE = "edge-clearance@1"
 VISIBLE_RULE = "visible-by-edges@1"
+TYPE_RULE = "clearance-from-omniclass@1"
+ASSET_VISIBLE_RULE = "visible-assets@1"
 
 # The published mapping. Any value not listed fails closed to maintenance.
 ACCESS: Mapping[str, Persona] = {
@@ -67,6 +76,22 @@ PUBLIC_FUNCTIONS: frozenset[tuple[str, str]] = frozenset(
     }
 )
 _CIRCULATION = {"corridor", "area"}
+
+# The published mapping over OmniClass Table 23 (Products), by code prefix. A code
+# takes its longest listed prefix. What a visitor meets in a room it may enter is
+# visitor; equipment people work with is staff; what keeps the building running is
+# maintenance. Any code with no listed prefix fails closed to maintenance.
+OMNICLASS: Mapping[str, Persona] = {
+    "23-17 11": Persona.VISITOR,  # doors
+    "23-21": Persona.VISITOR,  # furnishings, fixtures and equipment
+    "23-25": Persona.STAFF,  # medical and laboratory equipment
+    "23-29": Persona.VISITOR,  # fire and life safety equipment
+    "23-31": Persona.MAINTENANCE,  # plumbing equipment
+    "23-33": Persona.MAINTENANCE,  # HVAC equipment
+    "23-35": Persona.MAINTENANCE,  # electrical and lighting equipment
+    "23-37": Persona.STAFF,  # information and communication equipment
+}
+_TABLE_23 = re.compile(r"23-\d{2}( \d{2}){1,5}")
 
 
 def from_access(value: str) -> Clearance:
@@ -110,6 +135,24 @@ def door_clearance(tags: Mapping[str, str]) -> Clearance | None:
     return from_access(tags["access"]) if "access" in tags else None
 
 
+def _code_digits(code: str) -> str:
+    return code.replace("-", "").replace(" ", "")
+
+
+def type_clearance(code: str) -> Clearance:
+    """An asset type's clearance from its Table 23 code. Unrecognised codes fail closed.
+
+    A code that is not of the Table 23 form ("23-21 19 13") is unrecognised too.
+    """
+    persona = UNRECOGNISED
+    if _TABLE_23.fullmatch(code):
+        digits = _code_digits(code)
+        listed = [p for p in OMNICLASS if digits.startswith(_code_digits(p))]
+        if listed:
+            persona = OMNICLASS[max(listed, key=len)]
+    return Clearance(persona=persona, access=code, rule=TYPE_RULE, authored_default=False)
+
+
 def stricter(first: Clearance, second: Clearance) -> Clearance:
     """The more restrictive of two. On a tie, the sourced one, so it is not flagged a default."""
     if first.persona.rank != second.persona.rank:
@@ -148,3 +191,32 @@ def visible_sets(spaces: Iterable[Space], edges: Iterable[Edge]) -> dict[Persona
                 visible.update(ancestor.id for ancestor in space.ancestor_path)
         sets[persona] = frozenset(visible)
     return sets
+
+
+def visible_assets(
+    assets: Iterable[Asset],
+    types: Iterable[AssetType],
+    spaces: Mapping[Persona, frozenset[str]],
+) -> tuple[dict[Persona, frozenset[str]], dict[Persona, frozenset[str]]]:
+    """The assets, then the asset types, that exist for each persona.
+
+    An asset is visible when the persona clears its type and its space is in the
+    persona's visible set. A type is visible only through a visible asset, so a
+    type with nothing a persona can see does not exist for them. Like the space
+    sets, these nest.
+    """
+    by_id = {kind.id: kind for kind in types}
+    asset_sets: dict[Persona, frozenset[str]] = {}
+    type_sets: dict[Persona, frozenset[str]] = {}
+    listed = list(assets)
+    for persona in PERSONAS:
+        seen = [
+            asset
+            for asset in listed
+            if asset.type_id in by_id
+            and persona.clears(by_id[asset.type_id].clearance)
+            and asset.space_id in spaces[persona]
+        ]
+        asset_sets[persona] = frozenset(asset.id for asset in seen)
+        type_sets[persona] = frozenset(asset.type_id for asset in seen)
+    return asset_sets, type_sets

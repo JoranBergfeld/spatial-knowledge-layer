@@ -1,0 +1,836 @@
+{
+  "version": 1,
+  "seed": 6,
+  "door_type": "door-leaf",
+  "bench": {
+    "fill_rates": {
+      "serial_number": 0.64,
+      "installation_date": 0.81
+    },
+    "service_event_fill_rate": 0.7
+  },
+  "sourced_type_jobs": {
+    "fire_extinguisher": [
+      {
+        "name": "Inspect fire extinguisher",
+        "category": "PM",
+        "frequency": 24,
+        "frequency_unit": "month",
+        "duration": 0.25,
+        "duration_unit": "hour",
+        "description": "Check the pressure, seal and mounting, and record the inspection.",
+        "resource_names": "Fire safety technician"
+      }
+    ],
+    "fire_blanket": [
+      {
+        "name": "Inspect fire blanket",
+        "category": "PM",
+        "frequency": 12,
+        "frequency_unit": "month",
+        "duration": 0.1,
+        "duration_unit": "hour",
+        "description": "Check the container and the release tapes.",
+        "resource_names": "Fire safety technician"
+      }
+    ],
+    "fire_hose": [
+      {
+        "name": "Inspect fire hose reel",
+        "category": "PM",
+        "frequency": 12,
+        "frequency_unit": "month",
+        "duration": 0.5,
+        "duration_unit": "hour",
+        "description": "Unroll, check for damage and test the flow.",
+        "resource_names": "Fire safety technician"
+      }
+    ],
+    "fire_alarm_box": [
+      {
+        "name": "Test manual call point",
+        "category": "PM",
+        "frequency": 12,
+        "frequency_unit": "month",
+        "duration": 0.1,
+        "duration_unit": "hour",
+        "description": "Activate with the test key and confirm the alarm reaches the panel.",
+        "resource_names": "Fire safety technician"
+      }
+    ],
+    "fire_hydrant": [
+      {
+        "name": "Inspect fire hydrant",
+        "category": "PM",
+        "frequency": 12,
+        "frequency_unit": "month",
+        "duration": 0.5,
+        "duration_unit": "hour",
+        "description": "Check access, the cap and the flow.",
+        "resource_names": "Fire safety technician"
+      }
+    ]
+  },
+  "types": {
+    "door-leaf": {
+      "name": "Internal door leaf",
+      "manufacturer": "Demo Door Systems",
+      "model": "DDS-100",
+      "omniclass": "23-17 11 13",
+      "warranty_parts_years": 10,
+      "warranty_labor_years": 2,
+      "expected_life_years": 30,
+      "layout": null,
+      "jobs": [
+        {
+          "name": "Check door closer and hinges",
+          "category": "PM",
+          "frequency": 12,
+          "frequency_unit": "month",
+          "duration": 0.25,
+          "duration_unit": "hour",
+          "description": "Check the closer, hinges and latch, and adjust.",
+          "resource_names": "Carpenter"
+        }
+      ]
+    },
+    "office-desk": {
+      "name": "Office desk",
+      "manufacturer": "Demo Office Furniture",
+      "model": "DOF-D160",
+      "omniclass": "23-21 19 13",
+      "warranty_parts_years": 5,
+      "warranty_labor_years": 2,
+      "expected_life_years": 15,
+      "layout": "grid",
+      "jobs": [
+        {
+          "name": "Inspect desk frame",
+          "category": "PM",
+          "frequency": 24,
+          "frequency_unit": "month",
+          "duration": 0.25,
+          "duration_unit": "hour",
+          "description": "Check the frame, height adjustment and cable tray."
+        }
+      ]
+    },
+    "office-chair": {
+      "name": "Office chair",
+      "manufacturer": "Demo Office Furniture",
+      "model": "DOF-C20",
+      "omniclass": "23-21 19 15",
+      "warranty_parts_years": 5,
+      "warranty_labor_years": 2,
+      "expected_life_years": 10,
+      "layout": "grid",
+      "jobs": [
+        {
+          "name": "Inspect gas lift and castors",
+          "category": "PM",
+          "frequency": 12,
+          "frequency_unit": "month",
+          "duration": 0.25,
+          "duration_unit": "hour",
+          "description": "Check the gas lift, castors and armrests."
+        }
+      ]
+    },
+    "bookshelf": {
+      "name": "Bookshelf",
+      "manufacturer": "Demo Office Furniture",
+      "model": "DOF-S90",
+      "omniclass": "23-21 19 17",
+      "warranty_parts_years": 5,
+      "warranty_labor_years": 2,
+      "expected_life_years": 20,
+      "layout": "perimeter",
+      "jobs": [
+        {
+          "name": "Check wall fixing",
+          "category": "PM",
+          "frequency": 24,
+          "frequency_unit": "month",
+          "duration": 0.25,
+          "duration_unit": "hour",
+          "description": "Check the wall fixing and shelf supports."
+        }
+      ]
+    },
+    "seminar-table": {
+      "name": "Seminar table",
+      "manufacturer": "Demo Office Furniture",
+      "model": "DOF-T120",
+      "omniclass": "23-21 19 19",
+      "warranty_parts_years": 5,
+      "warranty_labor_years": 2,
+      "expected_life_years": 15,
+      "layout": "grid",
+      "jobs": [
+        {
+          "name": "Inspect table frame",
+          "category": "PM",
+          "frequency": 24,
+          "frequency_unit": "month",
+          "duration": 0.25,
+          "duration_unit": "hour",
+          "description": "Check the frame and the folding mechanism."
+        }
+      ]
+    },
+    "stacking-chair": {
+      "name": "Stacking chair",
+      "manufacturer": "Demo Office Furniture",
+      "model": "DOF-C10",
+      "omniclass": "23-21 19 21",
+      "warranty_parts_years": 3,
+      "warranty_labor_years": 1,
+      "expected_life_years": 10,
+      "layout": "grid",
+      "jobs": [
+        {
+          "name": "Inspect chair",
+          "category": "PM",
+          "frequency": 24,
+          "frequency_unit": "month",
+          "duration": 0.1,
+          "duration_unit": "hour",
+          "description": "Check the frame, glides and seat."
+        }
+      ]
+    },
+    "auditorium-seat": {
+      "name": "Auditorium seat",
+      "manufacturer": "Demo Office Furniture",
+      "model": "DOF-A50",
+      "omniclass": "23-21 19 23",
+      "warranty_parts_years": 10,
+      "warranty_labor_years": 2,
+      "expected_life_years": 25,
+      "layout": "grid",
+      "jobs": [
+        {
+          "name": "Inspect tip-up seat",
+          "category": "PM",
+          "frequency": 12,
+          "frequency_unit": "month",
+          "duration": 0.1,
+          "duration_unit": "hour",
+          "description": "Check the tip-up mechanism and the writing tablet."
+        }
+      ]
+    },
+    "shelving-unit": {
+      "name": "Storage shelving",
+      "manufacturer": "Demo Office Furniture",
+      "model": "DOF-R200",
+      "omniclass": "23-21 19 25",
+      "warranty_parts_years": 5,
+      "warranty_labor_years": 2,
+      "expected_life_years": 20,
+      "layout": "grid",
+      "jobs": [
+        {
+          "name": "Check shelving load and fixing",
+          "category": "PM",
+          "frequency": 12,
+          "frequency_unit": "month",
+          "duration": 0.25,
+          "duration_unit": "hour",
+          "description": "Check the load signs, fixing and shelf supports."
+        }
+      ]
+    },
+    "whiteboard": {
+      "name": "Whiteboard",
+      "manufacturer": "Demo Visual Systems",
+      "model": "DVS-W200",
+      "omniclass": "23-21 23 11",
+      "warranty_parts_years": 5,
+      "warranty_labor_years": 1,
+      "expected_life_years": 12,
+      "layout": "perimeter",
+      "jobs": [
+        {
+          "name": "Clean and check fixing",
+          "category": "PM",
+          "frequency": 12,
+          "frequency_unit": "month",
+          "duration": 0.25,
+          "duration_unit": "hour",
+          "description": "Deep clean the surface and check the wall fixing."
+        }
+      ]
+    },
+    "notice-board": {
+      "name": "Notice board",
+      "manufacturer": "Demo Visual Systems",
+      "model": "DVS-N100",
+      "omniclass": "23-21 23 13",
+      "warranty_parts_years": 5,
+      "warranty_labor_years": 1,
+      "expected_life_years": 15,
+      "layout": "perimeter",
+      "jobs": [
+        {
+          "name": "Check fixing",
+          "category": "PM",
+          "frequency": 24,
+          "frequency_unit": "month",
+          "duration": 0.1,
+          "duration_unit": "hour",
+          "description": "Check the wall fixing and the glazing."
+        }
+      ]
+    },
+    "hand-dryer": {
+      "name": "Hand dryer",
+      "manufacturer": "Demo Sanitary",
+      "model": "DSN-H1",
+      "omniclass": "23-21 27 11",
+      "warranty_parts_years": 3,
+      "warranty_labor_years": 1,
+      "expected_life_years": 10,
+      "layout": "perimeter",
+      "jobs": [
+        {
+          "name": "Clean hand dryer filter",
+          "category": "PM",
+          "frequency": 6,
+          "frequency_unit": "month",
+          "duration": 0.25,
+          "duration_unit": "hour",
+          "description": "Clean the air filter and the drip tray.",
+          "resource_names": "Cleaning"
+        }
+      ]
+    },
+    "refrigerator": {
+      "name": "Refrigerator",
+      "manufacturer": "Demo Appliances",
+      "model": "DAP-R300",
+      "omniclass": "23-21 31 11",
+      "warranty_parts_years": 2,
+      "warranty_labor_years": 2,
+      "expected_life_years": 12,
+      "layout": "perimeter",
+      "jobs": [
+        {
+          "name": "Defrost and clean refrigerator",
+          "category": "PM",
+          "frequency": 6,
+          "frequency_unit": "month",
+          "duration": 0.5,
+          "duration_unit": "hour",
+          "description": "Defrost, clean and check the door seal.",
+          "resource_names": "Cleaning"
+        }
+      ]
+    },
+    "dishwasher": {
+      "name": "Dishwasher",
+      "manufacturer": "Demo Appliances",
+      "model": "DAP-D60",
+      "omniclass": "23-21 31 13",
+      "warranty_parts_years": 2,
+      "warranty_labor_years": 2,
+      "expected_life_years": 10,
+      "layout": "perimeter",
+      "jobs": [
+        {
+          "name": "Clean dishwasher filter",
+          "category": "PM",
+          "frequency": 3,
+          "frequency_unit": "month",
+          "duration": 0.25,
+          "duration_unit": "hour",
+          "description": "Clean the filter and check the spray arms.",
+          "resource_names": "Cleaning"
+        }
+      ]
+    },
+    "fume-cupboard": {
+      "name": "Fume cupboard",
+      "manufacturer": "Demo Lab Equipment",
+      "model": "DLE-F150",
+      "omniclass": "23-25 31 11",
+      "warranty_parts_years": 5,
+      "warranty_labor_years": 2,
+      "expected_life_years": 20,
+      "layout": "perimeter",
+      "jobs": [
+        {
+          "name": "Test fume cupboard face velocity",
+          "category": "PM",
+          "frequency": 12,
+          "frequency_unit": "month",
+          "duration": 1.0,
+          "duration_unit": "hour",
+          "description": "Measure the face velocity and check the alarm.",
+          "resource_names": "Laboratory technician"
+        }
+      ]
+    },
+    "lab-bench": {
+      "name": "Laboratory bench",
+      "manufacturer": "Demo Lab Equipment",
+      "model": "DLE-B300",
+      "omniclass": "23-25 31 13",
+      "warranty_parts_years": 10,
+      "warranty_labor_years": 2,
+      "expected_life_years": 25,
+      "layout": "grid",
+      "jobs": [
+        {
+          "name": "Inspect laboratory bench",
+          "category": "PM",
+          "frequency": 12,
+          "frequency_unit": "month",
+          "duration": 0.25,
+          "duration_unit": "hour",
+          "description": "Check the worktop, services and the frame.",
+          "resource_names": "Laboratory technician"
+        }
+      ]
+    },
+    "projector": {
+      "name": "Ceiling projector",
+      "manufacturer": "Demo Visual Systems",
+      "model": "DVS-P5",
+      "omniclass": "23-37 21 11",
+      "warranty_parts_years": 3,
+      "warranty_labor_years": 2,
+      "expected_life_years": 8,
+      "layout": "grid",
+      "jobs": [
+        {
+          "name": "Clean projector filter",
+          "category": "PM",
+          "frequency": 6,
+          "frequency_unit": "month",
+          "duration": 0.5,
+          "duration_unit": "hour",
+          "description": "Clean the filter and check the lamp hours.",
+          "resource_names": "AV technician"
+        }
+      ]
+    },
+    "desktop-computer": {
+      "name": "Desktop computer",
+      "manufacturer": "Demo Computing",
+      "model": "DCP-PC7",
+      "omniclass": "23-37 11 11",
+      "warranty_parts_years": 3,
+      "warranty_labor_years": 3,
+      "expected_life_years": 5,
+      "layout": "grid",
+      "jobs": [
+        {
+          "name": "Check desktop computer",
+          "category": "PM",
+          "frequency": 12,
+          "frequency_unit": "month",
+          "duration": 0.25,
+          "duration_unit": "hour",
+          "description": "Clean the vents and check the cabling.",
+          "resource_names": "IT support"
+        }
+      ]
+    },
+    "air-handling-unit": {
+      "name": "Air handling unit",
+      "manufacturer": "Demo Climate",
+      "model": "DCL-A4",
+      "omniclass": "23-33 25 11",
+      "warranty_parts_years": 2,
+      "warranty_labor_years": 2,
+      "expected_life_years": 20,
+      "layout": "grid",
+      "jobs": [
+        {
+          "name": "Replace air handling unit filters",
+          "category": "PM",
+          "frequency": 6,
+          "frequency_unit": "month",
+          "duration": 1.0,
+          "duration_unit": "hour",
+          "description": "Replace the filters and record the pressure drop.",
+          "resource_names": "HVAC technician"
+        },
+        {
+          "name": "Inspect fans and belts",
+          "category": "PM",
+          "frequency": 12,
+          "frequency_unit": "month",
+          "duration": 2.0,
+          "duration_unit": "hour",
+          "description": "Inspect the fans, belts and dampers.",
+          "resource_names": "HVAC technician"
+        }
+      ]
+    },
+    "distribution-board": {
+      "name": "Electrical distribution board",
+      "manufacturer": "Demo Power",
+      "model": "DPW-B12",
+      "omniclass": "23-35 11 11",
+      "warranty_parts_years": 2,
+      "warranty_labor_years": 2,
+      "expected_life_years": 30,
+      "layout": "perimeter",
+      "jobs": [
+        {
+          "name": "Inspect distribution board",
+          "category": "PM",
+          "frequency": 12,
+          "frequency_unit": "month",
+          "duration": 1.0,
+          "duration_unit": "hour",
+          "description": "Thermographic inspection and check of the breakers.",
+          "resource_names": "Electrician"
+        }
+      ]
+    }
+  },
+  "categories": {
+    "office": {
+      "typical_area_m2": 18,
+      "mix": [
+        {
+          "type": "office-desk",
+          "m2_per_item": 8,
+          "min": 1,
+          "max": 12
+        },
+        {
+          "type": "office-chair",
+          "m2_per_item": 8,
+          "min": 1,
+          "max": 12
+        },
+        {
+          "type": "bookshelf",
+          "m2_per_item": 12,
+          "min": 0,
+          "max": 6
+        },
+        {
+          "type": "desktop-computer",
+          "m2_per_item": 10,
+          "min": 0,
+          "max": 12
+        }
+      ]
+    },
+    "teaching": {
+      "typical_area_m2": 60,
+      "mix": [
+        {
+          "type": "seminar-table",
+          "m2_per_item": 4,
+          "min": 1,
+          "max": 40
+        },
+        {
+          "type": "stacking-chair",
+          "m2_per_item": 2,
+          "min": 1,
+          "max": 80
+        },
+        {
+          "type": "whiteboard",
+          "m2_per_item": null,
+          "min": 1,
+          "max": 1
+        },
+        {
+          "type": "projector",
+          "m2_per_item": null,
+          "min": 1,
+          "max": 1
+        }
+      ]
+    },
+    "lecture-hall": {
+      "typical_area_m2": 250,
+      "mix": [
+        {
+          "type": "auditorium-seat",
+          "m2_per_item": 1.2,
+          "min": 20,
+          "max": 600
+        },
+        {
+          "type": "projector",
+          "m2_per_item": 300,
+          "min": 1,
+          "max": 2
+        },
+        {
+          "type": "whiteboard",
+          "m2_per_item": 150,
+          "min": 1,
+          "max": 3
+        }
+      ]
+    },
+    "circulation": {
+      "typical_area_m2": 80,
+      "mix": [
+        {
+          "type": "notice-board",
+          "m2_per_item": 40,
+          "min": 0,
+          "max": 6
+        }
+      ]
+    },
+    "sanitary": {
+      "typical_area_m2": 15,
+      "mix": [
+        {
+          "type": "hand-dryer",
+          "m2_per_item": 10,
+          "min": 1,
+          "max": 4
+        }
+      ]
+    },
+    "laboratory": {
+      "typical_area_m2": 60,
+      "mix": [
+        {
+          "type": "lab-bench",
+          "m2_per_item": 8,
+          "min": 1,
+          "max": 12
+        },
+        {
+          "type": "fume-cupboard",
+          "m2_per_item": 30,
+          "min": 1,
+          "max": 4
+        },
+        {
+          "type": "stacking-chair",
+          "m2_per_item": 6,
+          "min": 0,
+          "max": 12
+        }
+      ]
+    },
+    "computer-lab": {
+      "typical_area_m2": 60,
+      "mix": [
+        {
+          "type": "desktop-computer",
+          "m2_per_item": 3,
+          "min": 1,
+          "max": 40
+        },
+        {
+          "type": "seminar-table",
+          "m2_per_item": 6,
+          "min": 1,
+          "max": 20
+        },
+        {
+          "type": "stacking-chair",
+          "m2_per_item": 3,
+          "min": 1,
+          "max": 40
+        }
+      ]
+    },
+    "library": {
+      "typical_area_m2": 150,
+      "mix": [
+        {
+          "type": "bookshelf",
+          "m2_per_item": 6,
+          "min": 1,
+          "max": 80
+        },
+        {
+          "type": "seminar-table",
+          "m2_per_item": 10,
+          "min": 1,
+          "max": 30
+        },
+        {
+          "type": "stacking-chair",
+          "m2_per_item": 5,
+          "min": 1,
+          "max": 60
+        }
+      ]
+    },
+    "storage": {
+      "typical_area_m2": 12,
+      "mix": [
+        {
+          "type": "shelving-unit",
+          "m2_per_item": 4,
+          "min": 1,
+          "max": 20
+        }
+      ]
+    },
+    "kitchen": {
+      "typical_area_m2": 15,
+      "mix": [
+        {
+          "type": "refrigerator",
+          "m2_per_item": null,
+          "min": 1,
+          "max": 1
+        },
+        {
+          "type": "dishwasher",
+          "m2_per_item": null,
+          "min": 1,
+          "max": 1
+        }
+      ]
+    },
+    "plant": {
+      "typical_area_m2": 40,
+      "mix": [
+        {
+          "type": "air-handling-unit",
+          "m2_per_item": 60,
+          "min": 1,
+          "max": 4
+        },
+        {
+          "type": "distribution-board",
+          "m2_per_item": 30,
+          "min": 1,
+          "max": 4
+        }
+      ]
+    }
+  },
+  "room_categories": [
+    {
+      "tags": {
+        "room": "office"
+      },
+      "category": "office"
+    },
+    {
+      "tags": {
+        "office": "university"
+      },
+      "category": "office"
+    },
+    {
+      "tags": {
+        "room": "class"
+      },
+      "category": "teaching"
+    },
+    {
+      "tags": {
+        "room": "classroom"
+      },
+      "category": "teaching"
+    },
+    {
+      "tags": {
+        "room": "seminar"
+      },
+      "category": "teaching"
+    },
+    {
+      "tags": {
+        "room": "seminar_room"
+      },
+      "category": "teaching"
+    },
+    {
+      "tags": {
+        "room": "auditorium"
+      },
+      "category": "lecture-hall"
+    },
+    {
+      "tags": {
+        "room": "lecture"
+      },
+      "category": "lecture-hall"
+    },
+    {
+      "tags": {
+        "room": "toilet"
+      },
+      "category": "sanitary"
+    },
+    {
+      "tags": {
+        "room": "toilets"
+      },
+      "category": "sanitary"
+    },
+    {
+      "tags": {
+        "amenity": "toilets"
+      },
+      "category": "sanitary"
+    },
+    {
+      "tags": {
+        "room": "laboratory"
+      },
+      "category": "laboratory"
+    },
+    {
+      "tags": {
+        "room": "lab"
+      },
+      "category": "laboratory"
+    },
+    {
+      "tags": {
+        "room": "computer"
+      },
+      "category": "computer-lab"
+    },
+    {
+      "tags": {
+        "room": "library"
+      },
+      "category": "library"
+    },
+    {
+      "tags": {
+        "amenity": "library"
+      },
+      "category": "library"
+    },
+    {
+      "tags": {
+        "room": "storage"
+      },
+      "category": "storage"
+    },
+    {
+      "tags": {
+        "room": "kitchen"
+      },
+      "category": "kitchen"
+    },
+    {
+      "tags": {
+        "room": "technical"
+      },
+      "category": "plant"
+    },
+    {
+      "tags": {
+        "indoor": "corridor"
+      },
+      "category": "circulation"
+    }
+  ]
+}

@@ -27,7 +27,18 @@ from psycopg import sql
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel, ValidationError
 
-from spatial_core.records import Edge, Space, Span, VisibleSpace
+from spatial_core.records import (
+    Asset,
+    AssetType,
+    Edge,
+    MaintenanceTask,
+    ServiceEvent,
+    Space,
+    Span,
+    VisibleAsset,
+    VisibleAssetType,
+    VisibleSpace,
+)
 from spatial_core.stores import snapshot_schemas
 from spatial_ingest import db, invariants
 from spatial_ingest.build import MANIFEST_FILE
@@ -40,6 +51,12 @@ TABLES: dict[str, type[BaseModel]] = {
     "spans": Span,
     "edges": Edge,
     "visible_spaces": VisibleSpace,
+    "asset_types": AssetType,
+    "assets": Asset,
+    "maintenance_tasks": MaintenanceTask,
+    "service_events": ServiceEvent,
+    "visible_assets": VisibleAsset,
+    "visible_asset_types": VisibleAssetType,
 }
 HALVES = ("osm", "seed")
 
