@@ -1,8 +1,9 @@
-"""The two model calls of a turn, through Microsoft Agent Framework.
+"""The model calls of a turn, through Microsoft Agent Framework.
 
 Planning and composition each have a deployment of their own, set by
-configuration. Each call is one agent run with a structured response format, and
-reports its token usage under the deployment that served it. Any failure to get a
+configuration; recovery plans again, so the planning deployment serves it. Each
+call is one agent run with a structured response format, and reports its token
+usage under the deployment that served it. Any failure to get a
 response is LlmUnavailable: the turn then says the model could not be reached and
 answers nothing.
 """
@@ -23,6 +24,8 @@ log = logging.getLogger(__name__)
 
 class Purpose(StrEnum):
     PLANNING = "planning"
+    # A second plan after a trigger, from the deployment that plans.
+    RECOVERY = "recovery"
     COMPOSITION = "composition"
 
 
@@ -65,7 +68,7 @@ class Llm:
         response_format: type[BaseModel],
     ) -> tuple[str, LlmCall]:
         """The model's raw text, unparsed: the caller checks it against its own schema."""
-        deployment = self.planning if purpose is Purpose.PLANNING else self.composition
+        deployment = self.composition if purpose is Purpose.COMPOSITION else self.planning
         agent = Agent(deployment.client, instructions, name=f"spatial-{purpose}")
         message = json.dumps(payload, ensure_ascii=False, sort_keys=True)
         try:
