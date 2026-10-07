@@ -336,9 +336,9 @@ BREAKAGES: dict[str, tuple[Callable[[Path], None], str]] = {
     ),
     "a sourced record in the seed schema": (
         lambda b: edit(
-            b, "seed/asset_types.jsonl", "seed:type:door-leaf", record_provenance="sourced"
+            b, "seed/asset_types.jsonl", "seed:type:door-type-a", record_provenance="sourced"
         ),
-        "the seed schema holds only seed rows: fails for seed:type:door-leaf",
+        "the seed schema holds only seed rows: fails for seed:type:door-type-a",
     ),
     "a generated edge": (
         lambda b: rewrite(
@@ -352,7 +352,7 @@ BREAKAGES: dict[str, tuple[Callable[[Path], None], str]] = {
         lambda b: edit(
             b,
             "seed/assets.jsonl",
-            "seed:asset:node/1101:door-leaf",
+            "seed:asset:node/1101:door-type-a",
             door="node/9999",
         ),
         "a door asset is bound to a door of the snapshot: fails for seed:asset:node/1101",
@@ -368,17 +368,17 @@ BREAKAGES: dict[str, tuple[Callable[[Path], None], str]] = {
         ),
         "tasks and events name what they belong to: fails for seed:event:",
     ),
-    "a visitor shown staff equipment": (
+    "staff shown maintenance equipment": (
         lambda b: rewrite(
             b,
             "seed/visible_assets.jsonl",
             [
                 *read_jsonl(b / "seed" / "visible_assets.jsonl"),
-                {"persona": "visitor", "asset_id": "seed:asset:osm:way/1002:projector:1"},
+                {"persona": "staff", "asset_id": "seed:asset:osm:way/1005:vav-200-mm:1"},
             ],
         ),
         "a visible asset's type is cleared and its space is visible: "
-        "fails for visitor seed:asset:osm:way/1002:projector:1",
+        "fails for staff seed:asset:osm:way/1005:vav-200-mm:1",
     ),
     "a type visible with no visible asset": (
         lambda b: rewrite(
@@ -386,10 +386,38 @@ BREAKAGES: dict[str, tuple[Callable[[Path], None], str]] = {
             "seed/visible_asset_types.jsonl",
             [
                 *read_jsonl(b / "seed" / "visible_asset_types.jsonl"),
-                {"persona": "visitor", "type_id": "seed:type:projector"},
+                {"persona": "staff", "type_id": "seed:type:vav-200-mm"},
             ],
         ),
-        "a type is visible only through a visible asset: fails for visitor seed:type:projector",
+        "a type is visible only through a visible asset: fails for staff seed:type:vav-200-mm",
+    ),
+    "an asset whose ancestor path skips its space": (
+        lambda b: edit(b, "seed/assets.jsonl", first_seed_asset(b), ancestor_path=[]),
+        "an asset's ancestor path agrees with the tree: fails for seed:asset:",
+    ),
+    "visible assets that do not nest": (
+        lambda b: rewrite(
+            b,
+            "osm/visible_assets.jsonl",
+            [
+                entry
+                for entry in read_jsonl(b / "osm" / "visible_assets.jsonl")
+                if (entry["persona"], entry["asset_id"]) != ("staff", "osm:asset:node/1201")
+            ],
+        ),
+        "the visible assets nest: fails for visitor osm:asset:node/1201",
+    ),
+    "visible asset types that do not nest": (
+        lambda b: rewrite(
+            b,
+            "osm/visible_asset_types.jsonl",
+            [
+                entry
+                for entry in read_jsonl(b / "osm" / "visible_asset_types.jsonl")
+                if (entry["persona"], entry["type_id"]) != ("staff", "osm:type:fire_extinguisher")
+            ],
+        ),
+        "the visible asset types nest: fails for visitor osm:type:fire_extinguisher",
     ),
     "a part that does not match its manifest": (
         lambda b: (b / "osm" / "spans.jsonl").write_text(""),

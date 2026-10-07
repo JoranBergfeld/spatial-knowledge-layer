@@ -27,8 +27,10 @@ Clearance, with the doors of building A:
     and door 1106 on no outline at all
 
 Seed inventory: 1005 is an office and 1007 an office mapped as a point, so it has
-no outline; 1002 is a lecture hall and 1006 circulation. Every other room maps to
-no category. Fire equipment, as OSM maps it:
+no outline; 1002 is an auditorium, 1004 stairs and 1006 a corridor. Every other
+room maps to no category. Building A has a start_date of 2024-03, inside the
+bench's install-date spread before the snapshot, so it holds some dates and not
+others. Fire equipment, as OSM maps it:
 
     1201  extinguisher in corridor 1006, level 0
     1202  extinguisher over 1002 but on level 1, which 1002 is not: building A
@@ -135,6 +137,7 @@ def mini_campus() -> _Osm:
         building="university",
         ref="50.34",
         name="Informatik",
+        start_date="2024-03",
         description=f"Leitung Dr. {PERSON}",
     )
     osm.rect(1001, 3, 3, 6, 6, indoor="room", ref="107", level="1", access="private")

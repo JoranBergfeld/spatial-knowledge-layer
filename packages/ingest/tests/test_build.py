@@ -421,6 +421,7 @@ def test_space_clearance_is_read_from_access_tags_or_flagged_as_an_authored_defa
         "access": "private",
         "rule": "clearance-from-access@1",
         "authored_default": False,
+        "unrecognised_category": False,
     }
     assert tree["osm:way/2001"]["clearance"]["persona"] == "visitor"  # customers
     # An unrecognised value fails closed, and the raw tag is kept beside it.
@@ -431,6 +432,7 @@ def test_space_clearance_is_read_from_access_tags_or_flagged_as_an_authored_defa
         "access": None,
         "rule": "clearance-authored-default@1",
         "authored_default": True,
+        "unrecognised_category": False,
     }
     assert tree["osm:way/1002"]["clearance"]["persona"] == "visitor"  # an auditorium
     assert tree["osm:way/1005"]["clearance"]["persona"] == "staff"

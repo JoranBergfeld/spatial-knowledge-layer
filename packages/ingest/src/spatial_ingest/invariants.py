@@ -151,6 +151,17 @@ INVARIANTS = (
         """,
     ),
     Invariant(
+        "an asset's ancestor path agrees with the tree",
+        # An asset's path is its space's path plus its space.
+        """
+        SELECT asset.id FROM {views}.assets asset
+        JOIN {views}.spaces space ON space.id = asset.space_id
+        WHERE asset.ancestor_path <> space.ancestor_path || jsonb_build_array(
+            jsonb_build_object('tier', space.tier ->> 'value', 'id', space.id)
+        )
+        """,
+    ),
+    Invariant(
         "every asset is of a type of the snapshot",
         """
         SELECT id FROM {views}.asset_types GROUP BY id HAVING count(*) > 1
@@ -202,6 +213,33 @@ INVARIANTS = (
             SELECT FROM {views}.visible_assets seen
             JOIN {views}.assets asset ON asset.id = seen.asset_id
             WHERE seen.persona = visible.persona AND asset.type_id = visible.type_id
+        )
+        """,
+    ),
+    Invariant(
+        "the visible assets nest",
+        # Visitor within staff within maintenance, as the spaces do.
+        """
+        SELECT narrower.persona || ' ' || narrower.asset_id
+        FROM {views}.visible_assets narrower
+        JOIN (VALUES ('visitor', 'staff'), ('staff', 'maintenance')) AS chain (persona, wider)
+            ON chain.persona = narrower.persona
+        WHERE NOT EXISTS (
+            SELECT FROM {views}.visible_assets wider
+            WHERE wider.persona = chain.wider AND wider.asset_id = narrower.asset_id
+        )
+        """,
+    ),
+    Invariant(
+        "the visible asset types nest",
+        """
+        SELECT narrower.persona || ' ' || narrower.type_id
+        FROM {views}.visible_asset_types narrower
+        JOIN (VALUES ('visitor', 'staff'), ('staff', 'maintenance')) AS chain (persona, wider)
+            ON chain.persona = narrower.persona
+        WHERE NOT EXISTS (
+            SELECT FROM {views}.visible_asset_types wider
+            WHERE wider.persona = chain.wider AND wider.type_id = narrower.type_id
         )
         """,
     ),
