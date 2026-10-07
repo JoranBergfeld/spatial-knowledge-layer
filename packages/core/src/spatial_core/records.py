@@ -187,14 +187,15 @@ class Position(_Record):
 class AssetType(_Record):
     """A kind of equipment, after COBie Type. Its assets share its clearance.
 
-    A generated type carries all of manufacturer, model, warranties and expected
-    life. A type a rule read from OSM has only what the tag says, so those are None.
+    A generated type carries what the test bench records for it, so a gap there is
+    None here. A type a rule read from OSM has only what the tag says, so
+    manufacturer, model, warranties and expected life are all None.
     """
 
     id: str
     record_provenance: RecordProvenance
     name: Value
-    # The OmniClass Table 23 (Products) code, e.g. "23-21 19 13".
+    # The OmniClass Table 23 (Products) code, e.g. "23-30 10".
     omniclass: Value
     manufacturer: Value | None = None
     model: Value | None = None

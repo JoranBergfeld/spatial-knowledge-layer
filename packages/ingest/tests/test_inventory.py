@@ -16,6 +16,7 @@ from shapely.geometry import shape
 
 from spatial_core.clearance import type_clearance
 from spatial_ingest.cli import main
+from spatial_ingest.rules import fire
 from spatial_ingest.seed import generate
 
 DATE = "2026-09-15"
@@ -60,7 +61,7 @@ def seeded(bundle: Path) -> list[dict[str, Any]]:
 
 
 def in_space(bundle: Path, space_id: str) -> Counter[str]:
-    """What a room's category drew for it: its assets other than door leaves."""
+    """What a room's category drew for it: its assets other than doors."""
     return Counter(
         a["type_id"] for a in seeded(bundle) if a["space_id"] == space_id and a["door"] is None
     )
@@ -517,6 +518,14 @@ def test_the_fire_assets_in_the_pull_are_sourced(bundle: Path) -> None:
     assert kind["omniclass"]["provenance"] == "derived"
     assert kind["manufacturer"] is None
     assert manifest(bundle)["inventory"]["sourced"]["dropped_outside_site"] == 1
+
+
+def test_every_fire_type_is_filed_where_a_visitor_sees_it() -> None:
+    for value, kind in fire.TYPES.items():
+        cleared = type_clearance(kind.omniclass)
+        assert kind.omniclass.startswith("23-65 70"), value
+        assert cleared.persona.value == "visitor", value
+        assert not cleared.unrecognised_category, value
 
 
 def test_the_attribute_catalogue_is_derived_per_snapshot(bundle: Path) -> None:

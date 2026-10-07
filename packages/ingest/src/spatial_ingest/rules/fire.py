@@ -7,6 +7,11 @@ since OSM says nothing of those. Other `emergency` values (defibrillators,
 assembly points, phones) are not fire equipment and are left alone, and so are
 fire equipment mapped as ways.
 
+The codes follow the test bench's handover, which files its extinguisher cabinets
+under 23-65 70 17 11, fire fighting terminal components. What fights a fire takes
+that code. A call point raises an alarm and fights nothing, and the handover has no
+code for one, so it stays at 23-65 70.
+
 asset-in-space-by-point: an asset read from a point sits in the smallest room-tier
 space whose outline covers it, on the asset's level where both have one; failing
 that, in the smallest building covering it; failing that, in the site. A point
@@ -49,11 +54,11 @@ class FireType:
 
 # `emergency` value -> the type it names.
 TYPES: Mapping[str, FireType] = {
-    "fire_extinguisher": FireType("Fire extinguisher", "23-65 70"),
-    "fire_blanket": FireType("Fire blanket", "23-65 70"),
-    "fire_hose": FireType("Fire hose reel", "23-65 70"),
+    "fire_extinguisher": FireType("Fire extinguisher", "23-65 70 17 11"),
+    "fire_blanket": FireType("Fire blanket", "23-65 70 17 11"),
+    "fire_hose": FireType("Fire hose reel", "23-65 70 17 11"),
     "fire_alarm_box": FireType("Manual fire alarm call point", "23-65 70"),
-    "fire_hydrant": FireType("Fire hydrant", "23-65 70"),
+    "fire_hydrant": FireType("Fire hydrant", "23-65 70 17 11"),
 }
 
 # Sourced tags copied onto a fire asset as attributes.
