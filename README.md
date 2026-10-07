@@ -181,7 +181,9 @@ SPATIAL_COMPOSITION_DEPLOYMENT   the deployment that composes, which must be a d
 SPATIAL_LLM_TIMEOUT_SECONDS      optional, 30 by default
 ```
 
-A turn is three stages, and only the first and last call a model:
+A turn is three stages, plus a fourth only when the plan cannot run. A turn makes at
+most three model calls however many steps run (plan, recover, compose), and the host
+enforces that cap rather than trusting the flow to keep it:
 
 - **Plan.** The planning deployment returns a plan (`packages/service/src/spatial_service/plan.py`):
   the question's shape, the place mentions in it, `within` constraints between them,
@@ -193,10 +195,30 @@ A turn is three stages, and only the first and last call a model:
   an exact label, then a building and room number parsed the way `room-label@1` builds
   labels ("50.34 room 107", "50.34/107", "room 107 in 50.34"), then a number alone,
   then the words of a name. Spaces without a label are never answers.
+- **Recover.** Only on a typed trigger (`packages/service/src/spatial_service/recovery.py`),
+  the planning deployment is handed its plan back with the trigger and its reasons, and
+  writes a second. That one is checked and run exactly like the first. There is no
+  third: a second trigger ends the turn in the clarification still pending, if one is,
+  and otherwise in a `plan-rejected` abstention.
 - **Compose.** The composing deployment is told the facts by reference (`{f1}`, `{f2}`)
   with their tiers, never their labels or ids. It returns segments that cite them; the
   host fills each placeholder from its fact. Output with a digit anywhere outside a
   placeholder is rejected whole.
+
+The triggers, and nothing else, buy a recovery call:
+
+| Trigger | When |
+| --- | --- |
+| `plan-invalid` | The plan does not parse, or breaks a rule: the step cap, a repeated id, a step feeding nothing. |
+| `unbound-reference` | A reference binds to nothing: a step resolving a mention the plan lacks, or reading a step that is not earlier or whose output it cannot take. It wins over `plan-invalid`, since a dangling reference breaks other rules in its wake. |
+| `empty-retrieval` | Document retrieval returned nothing. Nothing retrieves documents yet, so nothing raises it so far. |
+| `malformed-arguments` | A tool rejected its arguments, such as a mention with nothing to look up once normalised. |
+
+Outcomes that are answers never buy a call: no visible place matching (which is also
+what a place beyond clearance looks like), several matching, a question of an
+unsupported shape. Every step's arguments are checked before the first step runs. Were
+they checked as each step came up, a bad later step would be reached only when the
+earlier ones resolved, and the recovery call would tell what the persona can see.
 
 **The step cap is four.** The one supported shape needs a step per place mention, and
 the longest chain worth reading in one question is three deep ("room 107 on level 1 of
@@ -212,10 +234,16 @@ A turn is one of four kinds:
 | `abstention` | `no-such-place` when nothing the persona can see matches. A place beyond clearance and a place that does not exist give the same abstention, and the same trace but for the words asked. Also `unsupported-question`, `plan-rejected` and `composition-rejected`. |
 | `unavailable` | A model could not be reached. HTTP 503, no answer, and the prior state back unchanged. |
 
-Every turn carries its trace (the shape, the plan, each step's result ids, what was
-resolved and how, the provenance of every label in the answer, and any authored default
-clearance among them), the new conversation state, and each model call's token usage
-with the deployment that served it.
+Every turn carries its trace, the new conversation state, each model call's token usage
+with the deployment that served it, and `recovery`: `not-needed`, `repaired` or
+`unrepaired`, so the repair rate is a count over turns. A second plan that calls the
+question unsupported runs nothing, so it counts as `unrepaired`. The trace holds the shape, the
+step and call caps, what was resolved and how, the provenance of every label in the
+answer, and any authored default clearance among them, and under `plans` each version
+of the plan: as the model wrote it, its verdict and reasons, each step it ran with its
+result ids, the trigger it raised, and for the second version its changes against the
+first as JSON Pointer paths. Steps and mentions are matched by id, so one added or
+dropped at the front shows as one change.
 
 A conversation keeps the persona and snapshot it began with, and is refused once its
 snapshot is neither current nor previous. State a client sends back is cut down to what

@@ -16,6 +16,10 @@ In order, the first that finds anything decides:
     name              every word of the text is a word of a space's name
 
 One match resolves. More than one asks which, naming at most CLARIFY_CAP of them.
+
+Text with nothing to look up once normalised (punctuation, an article alone) is a
+malformed argument, rejected before the venue is read, so a rejection never
+depends on what the persona can see.
 """
 
 from __future__ import annotations
@@ -100,6 +104,16 @@ class Outcome(StrEnum):
     RESOLVED = "resolved"
     AMBIGUOUS = "ambiguous"
     NONE = "none"
+    # The tool rejected its arguments and looked nothing up.
+    REJECTED = "rejected"
+
+
+class ArgumentsRejected(Exception):
+    """A tool's arguments are malformed: it looked nothing up."""
+
+    def __init__(self, reasons: list[str]) -> None:
+        super().__init__("; ".join(reasons))
+        self.reasons = reasons
 
 
 class How(StrEnum):
@@ -119,12 +133,25 @@ class PlaceResult:
     matched: int
 
 
+def check_arguments(text: str) -> list[str]:
+    """Why ``text`` is no argument for resolve_place. Reads no venue, so no persona."""
+    if not re.search(r"\w", normalise(text)):
+        return [f"{text!r} has nothing to look up"]
+    return []
+
+
 def resolve_place(venue: Venue, text: str, within: Collection[str] | None = None) -> PlaceResult:
-    """The place ``text`` names in ``venue``, inside one of ``within`` if given."""
+    """The place ``text`` names in ``venue``, inside one of ``within`` if given.
+
+    Raises ArgumentsRejected when ``text`` fails check_arguments.
+    """
+    problems = check_arguments(text)
+    if problems:
+        raise ArgumentsRejected(problems)
     query = normalise(text)
     # A space with no label cannot be addressed, so it is never an answer or a candidate.
     pool = [s for s in venue.spaces.values() if s.label is not None and _inside(s, within)]
-    if not query or not pool:
+    if not pool:
         return PlaceResult(Outcome.NONE, (), None, 0)
 
     for how, find in (

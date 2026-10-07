@@ -4,8 +4,14 @@
                 checked in code before any tool runs
     execute     the steps run in order with the venue the host bound: this persona's
                 visible spaces in this snapshot. No model call between them.
+    recover     only on a typed trigger (recovery.py): the planning deployment gets
+                its plan back with the reasons and writes a second, which is checked
+                and run the same way. A second trigger ends the turn.
     compose     the composing model words the answer over facts by reference; the
                 host checks it and fills in every label
+
+So a turn makes at most three model calls, however many steps run: CALL_CAP, which
+the host enforces rather than trusts.
 
 Every turn is one of four kinds. An answer. A clarification, when a mention names
 more than one place the persona can see. An abstention, with its cause. Or
@@ -19,6 +25,7 @@ composer gets references and tiers only.
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
@@ -32,7 +39,13 @@ from spatial_service.executor import Execution, execute
 from spatial_service.llm import Llm, LlmCall, LlmUnavailable, Purpose
 from spatial_service.places import Outcome, Venue
 from spatial_service.plan import STEP_CAP, Plan, PlanRejected, QuestionShape, parse_plan
+from spatial_service.recovery import PlanChange, RecoveryOutcome, Trigger, diff
 from spatial_service.store import Store
+
+# Plan, recover, compose.
+CALL_CAP = 3
+# How much of a plan that is not JSON the trace and the recovery call keep.
+UNPARSED_CAP = 2000
 
 
 class _Model(BaseModel):
@@ -96,6 +109,29 @@ class TraceStep(_Model):
     outcome: Outcome
     ids: list[str]
     how: str | None
+    # Why the tool rejected its arguments, when it did.
+    rejection: list[str] = []
+
+
+class Verdict(StrEnum):
+    ACCEPTED = "accepted"
+    REJECTED = "rejected"
+
+
+class PlanVersion(_Model):
+    """One plan the turn got: what the model wrote, whether it may run, what it ran."""
+
+    version: int
+    # As the model wrote it, when it is a JSON object, checked or not.
+    plan: dict[str, Any] | None = None
+    # The model's output when it is not, cut to UNPARSED_CAP characters.
+    unparsed: str | None = None
+    verdict: Verdict
+    rejection: list[str] = []
+    steps: list[TraceStep] = []
+    trigger: Trigger | None = None
+    # A second version as changes to the first.
+    changes: list[PlanChange] | None = None
 
 
 class Resolved(_Model):
@@ -127,11 +163,12 @@ class AuthoredDefault(_Model):
 class Trace(_Model):
     snapshot: str
     persona: Persona
+    # The shape of the plan that ran to the end, if one did.
     shape: QuestionShape | None = None
-    plan: dict[str, Any] | None = None
-    plan_rejection: list[str] = []
     step_cap: int = STEP_CAP
-    steps: list[TraceStep] = []
+    call_cap: int = CALL_CAP
+    # The first plan and, after a trigger, the second.
+    plans: list[PlanVersion] = []
     resolved: list[Resolved] = []
     provenance: list[Provenance] = []
     authored_defaults: list[AuthoredDefault] = []
@@ -147,6 +184,8 @@ class Turn(_Model):
     state: ConversationState
     trace: Trace
     llm_calls: list[LlmCall]
+    # Whether this turn needed a second plan, and whether that one ran its steps.
+    recovery: RecoveryOutcome = RecoveryOutcome.NOT_NEEDED
 
 
 class TurnRefused(Exception):
@@ -180,6 +219,15 @@ and listed the candidates. Read the question as the answer to that, and resolve
 the candidate it picks by its label.
 """
 
+RECOVERY_INSTRUCTIONS = (
+    PLANNING_INSTRUCTIONS
+    + """
+"previous" holds the plan you already wrote for this question, which could not run,
+with the trigger it raised and the reasons. Write the whole plan again, fixing what
+the reasons name. Keep what they do not name as it was.
+"""
+)
+
 COMPOSITION_INSTRUCTIONS = """\
 You answer where a place is, in one or two short sentences, in the question's language.
 Return only JSON matching the schema: segments, each with its text and the facts it cites.
@@ -207,6 +255,27 @@ class _Turn:
     state: ConversationState
     trace: Trace
     calls: list[LlmCall]
+    recovery: RecoveryOutcome = RecoveryOutcome.NOT_NEEDED
+
+    async def call(
+        self,
+        llm: Llm,
+        purpose: Purpose,
+        *,
+        instructions: str,
+        payload: dict[str, Any],
+        response_format: type[BaseModel],
+    ) -> str:
+        if len(self.calls) >= CALL_CAP:
+            raise RuntimeError(f"a turn makes at most {CALL_CAP} model calls")
+        text, call = await llm.call(
+            purpose, instructions=instructions, payload=payload, response_format=response_format
+        )
+        self.calls.append(call)
+        return text
+
+    def add_version(self, version: PlanVersion) -> None:
+        self.trace = self.trace.model_copy(update={"plans": [*self.trace.plans, version]})
 
     def finish(
         self,
@@ -225,6 +294,7 @@ class _Turn:
             state=state or self.state,
             trace=self.trace,
             llm_calls=self.calls,
+            recovery=self.recovery,
         )
 
     def abstain(self, cause: AbstentionCause) -> Turn:
@@ -252,25 +322,89 @@ class TurnService:
         venue = await asyncio.to_thread(self.store.venue, snapshot, request.persona)
         state = _own_state(request, snapshot, venue)
         turn = _Turn(state, Trace(snapshot=snapshot, persona=request.persona), [])
-
         try:
-            plan = await self._plan(turn, request.question, venue)
+            first = await self._attempt(turn, request.question, venue, None)
+            if first.trigger is None:
+                return await self._settle(turn, request.question, venue, first)
+            # Unrepaired until the second plan runs, so a failed recovery call counts.
+            turn.recovery = RecoveryOutcome.UNREPAIRED
+            second = await self._attempt(turn, request.question, venue, first)
+            if second.trigger is None:
+                # A second plan with nothing to run is the model giving up, not a repair.
+                if second.execution is not None:
+                    turn.recovery = RecoveryOutcome.REPAIRED
+                return await self._settle(turn, request.question, venue, second)
         except LlmUnavailable as error:
             return turn.unavailable(error)
-        except PlanRejected as rejected:
-            turn.trace = turn.trace.model_copy(update={"plan_rejection": rejected.reasons})
-            return turn.abstain(AbstentionCause.PLAN_REJECTED)
+        return _give_up(turn, venue)
 
-        turn.trace = turn.trace.model_copy(
-            update={"shape": plan.shape, "plan": plan.model_dump(mode="json", exclude_none=True)}
+    async def _attempt(
+        self, turn: _Turn, question: str, venue: Venue, previous: _Attempt | None
+    ) -> _Attempt:
+        """One plan from the model, checked and, when it may, run."""
+        payload: dict[str, Any] = {"question": question}
+        if turn.state.pending is not None:
+            payload["pending"] = {
+                "mention": turn.state.pending.mention,
+                "candidates": [_label(venue.spaces[i]) for i in turn.state.pending.candidates],
+            }
+        if previous is not None:
+            assert previous.trigger is not None
+            payload["previous"] = {
+                "plan": previous.written,
+                "trigger": previous.trigger.model_dump(mode="json", exclude_none=True),
+            }
+        text = await turn.call(
+            self.llm,
+            Purpose.PLANNING if previous is None else Purpose.RECOVERY,
+            instructions=PLANNING_INSTRUCTIONS if previous is None else RECOVERY_INSTRUCTIONS,
+            payload=payload,
+            response_format=Plan,
         )
-        if plan.shape is QuestionShape.UNSUPPORTED:
+        number = 1 if previous is None else 2
+        trigger: Trigger | None
+        try:
+            plan = parse_plan(text)
+        except PlanRejected as rejected:
+            written: Any = _json_object(text)
+            if written is None:
+                written = text[:UNPARSED_CAP]
+            trigger = Trigger(kind=rejected.trigger, reasons=rejected.reasons)
+            version = PlanVersion(
+                version=number,
+                plan=written if isinstance(written, dict) else None,
+                unparsed=written if isinstance(written, str) else None,
+                verdict=Verdict.REJECTED,
+                rejection=rejected.reasons,
+                trigger=trigger,
+            )
+            attempt = _Attempt(written, None, None, trigger)
+        else:
+            written = plan.model_dump(mode="json", exclude_none=True)
+            execution = None if plan.shape is QuestionShape.UNSUPPORTED else execute(plan, venue)
+            trigger = execution.trigger if execution is not None else None
+            version = PlanVersion(
+                version=number,
+                plan=written,
+                verdict=Verdict.ACCEPTED,
+                steps=_steps(execution) if execution is not None else [],
+                trigger=trigger,
+            )
+            attempt = _Attempt(written, plan, execution, trigger)
+        if previous is not None:
+            version = version.model_copy(update={"changes": diff(previous.written, written)})
+        turn.add_version(version)
+        return attempt
+
+    async def _settle(self, turn: _Turn, question: str, venue: Venue, attempt: _Attempt) -> Turn:
+        """The turn a plan that raised no trigger ends in."""
+        assert attempt.plan is not None
+        turn.trace = turn.trace.model_copy(update={"shape": attempt.plan.shape})
+        if attempt.execution is None:
             return turn.abstain(AbstentionCause.UNSUPPORTED_QUESTION)
 
-        execution = execute(plan, venue)
-        turn.trace = turn.trace.model_copy(
-            update={"steps": _steps(execution), "resolved": _resolved(execution, venue)}
-        )
+        execution = attempt.execution
+        turn.trace = turn.trace.model_copy(update={"resolved": _resolved(execution, venue)})
         last = execution.last
         if last.outcome is Outcome.NONE:
             return turn.abstain(AbstentionCause.NO_SUCH_PLACE)
@@ -285,16 +419,13 @@ class TurnService:
                 "authored_defaults": _defaults([f.space for f in facts]),
             }
         )
-        try:
-            text, call = await self.llm.call(
-                Purpose.COMPOSITION,
-                instructions=COMPOSITION_INSTRUCTIONS,
-                payload=compose.composer_input(request.question, facts),
-                response_format=compose.Draft,
-            )
-        except LlmUnavailable as error:
-            return turn.unavailable(error)
-        turn.calls.append(call)
+        text = await turn.call(
+            self.llm,
+            Purpose.COMPOSITION,
+            instructions=COMPOSITION_INSTRUCTIONS,
+            payload=compose.composer_input(question, facts),
+            response_format=compose.Draft,
+        )
         try:
             segments = compose.fill(text, facts)
         except CompositionRejected as rejected:
@@ -320,21 +451,30 @@ class TurnService:
             raise TurnRefused(409, "a conversation keeps the persona it began with")
         return snapshot
 
-    async def _plan(self, turn: _Turn, question: str, venue: Venue) -> Plan:
-        payload: dict[str, Any] = {"question": question}
-        if turn.state.pending is not None:
-            payload["pending"] = {
-                "mention": turn.state.pending.mention,
-                "candidates": [_label(venue.spaces[i]) for i in turn.state.pending.candidates],
-            }
-        text, call = await self.llm.call(
-            Purpose.PLANNING,
-            instructions=PLANNING_INSTRUCTIONS,
-            payload=payload,
-            response_format=Plan,
-        )
-        turn.calls.append(call)
-        return parse_plan(text)
+
+@dataclass(frozen=True)
+class _Attempt:
+    # The plan as written: a checked plan's dump, else the model's JSON or its text.
+    written: Any
+    plan: Plan | None
+    execution: Execution | None
+    trigger: Trigger | None
+
+
+def _json_object(text: str) -> dict[str, Any] | None:
+    try:
+        value = json.loads(text)
+    except ValueError:
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _give_up(turn: _Turn, venue: Venue) -> Turn:
+    """A second trigger: ask again what is pending, or else abstain. Never a third call."""
+    pending = turn.state.pending
+    if pending is not None:
+        return _clarify(turn, venue, pending.mention, tuple(pending.candidates))
+    return turn.abstain(AbstentionCause.PLAN_REJECTED)
 
 
 def _own_state(request: TurnRequest, snapshot: str, venue: Venue) -> ConversationState:
@@ -410,6 +550,7 @@ def _steps(execution: Execution) -> list[TraceStep]:
             outcome=r.outcome,
             ids=list(r.ids),
             how=r.how,
+            rejection=list(r.rejection),
         )
         for r in execution.results
     ]

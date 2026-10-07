@@ -14,6 +14,7 @@ from spatial_core.records import PERSONAS, Persona
 from spatial_service.app import create_app
 from spatial_service.llm import Llm
 from spatial_service.plan import STEP_CAP
+from spatial_service.turn import CALL_CAP
 
 ROOM_107_A = "osm:way/1003"
 ROOM_107_B = "osm:way/2001"
@@ -80,9 +81,12 @@ def test_the_trace_shows_shape_plan_steps_resolution_provenance_and_defaults() -
     trace = ask("visitor", "Where is 50.34 room 107?", where("50.34 room 107"))["trace"]
 
     assert trace["shape"] == "place-location"
-    assert trace["plan"] == json.loads(where("50.34 room 107"))
     assert trace["step_cap"] == STEP_CAP
-    assert [(s["id"], s["outcome"], s["ids"]) for s in trace["steps"]] == [
+    assert trace["call_cap"] == CALL_CAP
+    [first] = trace["plans"]
+    assert first["plan"] == json.loads(where("50.34 room 107"))
+    assert (first["verdict"], first["trigger"], first["changes"]) == ("accepted", None, None)
+    assert [(s["id"], s["outcome"], s["ids"]) for s in first["steps"]] == [
         ("s1", "resolved", [ROOM_107_A])
     ]
     assert trace["resolved"] == [
@@ -225,9 +229,15 @@ def test_beyond_clearance_and_nonexistent_abstain_alike() -> None:
     assert hidden["llm_calls"] == missing["llm_calls"]
 
     def without_text(trace: dict[str, Any]) -> dict[str, Any]:
-        return {k: v for k, v in trace.items() if k not in ("plan", "steps")} | {
-            "steps": [{k: v for k, v in s.items() if k != "text"} for s in trace["steps"]]
-        }
+        plans = [
+            {
+                **v,
+                "plan": None,
+                "steps": [{k: x for k, x in s.items() if k != "text"} for s in v["steps"]],
+            }
+            for v in trace["plans"]
+        ]
+        return {**trace, "plans": plans}
 
     assert without_text(hidden["trace"]) == without_text(missing["trace"])
 
@@ -256,42 +266,324 @@ def _plan(**changes: Any) -> str:
     return json.dumps(plan)
 
 
-@pytest.mark.parametrize(
-    ("plan", "reason"),
-    [
-        (
-            _plan(
-                steps=[{"id": "s1", "tool": "resolve_place", "mention": "m1", "persona": "staff"}]
-            ),
-            "Extra inputs are not permitted",
+INVALID, UNBOUND = "plan-invalid", "unbound-reference"
+REJECTED_PLANS = [
+    (
+        _plan(steps=[{"id": "s1", "tool": "resolve_place", "mention": "m1", "persona": "staff"}]),
+        INVALID,
+        "Extra inputs are not permitted",
+    ),
+    (_plan(snapshot="2026-01-01"), INVALID, "Extra inputs are not permitted"),
+    (where(*[f"place {n}" for n in range(STEP_CAP + 1)]), INVALID, "over the cap"),
+    (
+        _plan(
+            steps=[{"id": "s1", "tool": "resolve_place", "mention": "m1", "within": {"step": "s2"}}]
         ),
-        (_plan(snapshot="2026-01-01"), "Extra inputs are not permitted"),
-        (where(*[f"place {n}" for n in range(STEP_CAP + 1)]), "over the cap"),
-        (
-            _plan(
-                steps=[
-                    {
-                        "id": "s1",
-                        "tool": "resolve_place",
-                        "mention": "m1",
-                        "within": {"step": "s2"},
-                    }
-                ]
-            ),
-            "not earlier",
-        ),
-        (_plan(steps=[{"id": "s1", "tool": "find_asset", "mention": "m1"}]), "steps.0.tool"),
-        (_plan(shape="place-count"), "shape"),
-        ("this is not a plan", "Invalid JSON"),
-    ],
-)
-def test_a_plan_that_fails_its_checks_runs_nothing(plan: str, reason: str) -> None:
+        UNBOUND,
+        "not earlier",
+    ),
+    (_plan(steps=[{"id": "s1", "tool": "resolve_place", "mention": "m7"}]), UNBOUND, "m7"),
+    (_plan(steps=[{"id": "s1", "tool": "find_asset", "mention": "m1"}]), INVALID, "steps.0.tool"),
+    (_plan(shape="place-count"), INVALID, "shape"),
+    ("this is not a plan", INVALID, "Invalid JSON"),
+]
+
+
+@pytest.mark.parametrize(("plan", "trigger", "reason"), REJECTED_PLANS)
+def test_a_plan_rejected_twice_runs_nothing_and_abstains(
+    plan: str, trigger: str, reason: str
+) -> None:
     turn = ask("visitor", "Where is 50.34 room 107?", plan)
 
     assert (turn["kind"], turn["cause"]) == ("abstention", "plan-rejected")
-    assert any(reason in r for r in turn["trace"]["plan_rejection"]), turn["trace"]
-    assert turn["trace"]["steps"] == []
-    assert [call["purpose"] for call in turn["llm_calls"]] == ["planning"]
+    assert turn["recovery"] == "unrepaired"
+    assert [call["purpose"] for call in turn["llm_calls"]] == ["planning", "recovery"]
+    first, second = turn["trace"]["plans"]
+    for version in (first, second):
+        assert version["verdict"] == "rejected"
+        assert version["trigger"]["kind"] == trigger
+        assert any(reason in r for r in version["rejection"]), version
+        assert version["steps"] == []
+    # The same plan twice: nothing changed.
+    assert second["changes"] == []
+
+
+# --- recovery -----------------------------------------------------------------------------
+
+
+def repaired_by(first: str, second: str) -> Any:
+    """A planner that writes ``first``, and ``second`` when handed its plan back."""
+    return lambda payload: second if "previous" in payload else first
+
+
+def test_a_rejected_plan_is_repaired_once_and_the_trace_shows_both() -> None:
+    seen: list[dict[str, Any]] = []
+    # The planner gets the room wrong in the first plan, and the step reads a later one.
+    first = _plan(
+        steps=[{"id": "s1", "tool": "resolve_place", "mention": "m1", "within": {"step": "s2"}}]
+    )
+
+    def planner(payload: dict[str, Any]) -> str:
+        seen.append(payload)
+        return repaired_by(first, where("50.34 room 107"))(payload)
+
+    turn = ask("visitor", "Where is 50.34 room 107?", planner)
+
+    assert turn["kind"] == "answer"
+    assert turn["state"]["place"] == ROOM_107_A
+    assert turn["recovery"] == "repaired"
+    assert [c["purpose"] for c in turn["llm_calls"]] == ["planning", "recovery", "composition"]
+    # Recovery plans again, on the planning deployment.
+    assert turn["llm_calls"][1]["deployment"] == PLANNER
+
+    v1, v2 = turn["trace"]["plans"]
+    assert v1["plan"] == json.loads(first)
+    assert (v1["verdict"], v1["steps"]) == ("rejected", [])
+    assert v1["trigger"] == {
+        "kind": "unbound-reference",
+        "step": None,
+        "reasons": ["step s1 reads s2, which is not earlier"],
+    }
+    assert v2["verdict"] == "accepted"
+    assert v2["trigger"] is None
+    assert [(s["id"], s["outcome"]) for s in v2["steps"]] == [("s1", "resolved")]
+    assert v2["changes"] == [
+        {"op": "remove", "path": "/steps/0/within", "before": {"step": "s2"}, "after": None}
+    ]
+
+    # The recovery call is handed the plan it wrote and why it could not run.
+    assert seen[1]["question"] == "Where is 50.34 room 107?"
+    assert seen[1]["previous"] == {
+        "plan": json.loads(first),
+        "trigger": {"kind": "unbound-reference", "reasons": v1["trigger"]["reasons"]},
+    }
+
+
+def test_a_plan_that_is_not_json_is_repaired_and_diffed_from_nothing() -> None:
+    turn = ask(
+        "visitor", "Where is the Audimax?", repaired_by("the Audimax, I think", where("Audimax"))
+    )
+
+    assert (turn["kind"], turn["recovery"]) == ("answer", "repaired")
+    v1, v2 = turn["trace"]["plans"]
+    assert (v1["plan"], v1["unparsed"]) == (None, "the Audimax, I think")
+    assert v2["changes"] == [
+        {"op": "replace", "path": "", "before": "the Audimax, I think", "after": v2["plan"]}
+    ]
+
+
+def test_a_tool_rejecting_its_arguments_buys_a_recovery() -> None:
+    turn = ask("visitor", "Where is the Audimax?", repaired_by(where("?!"), where("Audimax")))
+
+    assert (turn["kind"], turn["recovery"]) == ("answer", "repaired")
+    v1, v2 = turn["trace"]["plans"]
+    assert v1["verdict"] == "accepted"
+    assert v1["trigger"] == {
+        "kind": "malformed-arguments",
+        "step": "s1",
+        "reasons": ["'?!' has nothing to look up"],
+    }
+    assert [(s["outcome"], s["rejection"]) for s in v1["steps"]] == [
+        ("rejected", ["'?!' has nothing to look up"])
+    ]
+    assert v2["changes"] == [
+        {"op": "replace", "path": "/mentions/0/text", "before": "?!", "after": "Audimax"}
+    ]
+
+
+def test_a_second_plan_that_gives_up_is_not_a_repair() -> None:
+    unsupported = json.dumps({"shape": "unsupported", "mentions": [], "steps": []})
+
+    turn = ask("visitor", "Where is the Audimax?", repaired_by("not a plan", unsupported))
+
+    assert (turn["kind"], turn["cause"]) == ("abstention", "unsupported-question")
+    assert turn["recovery"] == "unrepaired"
+    assert [c["purpose"] for c in turn["llm_calls"]] == ["planning", "recovery"]
+    v2 = turn["trace"]["plans"][1]
+    assert (v2["verdict"], v2["trigger"], v2["steps"]) == ("accepted", None, [])
+
+
+def test_a_step_added_at_the_front_is_one_change_not_every_step_after_it() -> None:
+    # The first plan reads a container step it never wrote.
+    second = json.loads(where("Informatik", "107"))
+    first = {
+        **second,
+        "mentions": second["mentions"][1:],
+        "constraints": [],
+        "steps": second["steps"][1:],
+    }
+
+    turn = ask(
+        "visitor",
+        "Where is room 107 in the Informatik building?",
+        repaired_by(json.dumps(first), json.dumps(second)),
+    )
+
+    assert (turn["kind"], turn["recovery"]) == ("answer", "repaired")
+    v1, v2 = turn["trace"]["plans"]
+    assert v1["trigger"]["kind"] == "unbound-reference"
+    assert v2["changes"] == [
+        {"op": "add", "path": "/mentions/0", "before": None, "after": second["mentions"][0]},
+        {"op": "add", "path": "/constraints/0", "before": None, "after": second["constraints"][0]},
+        {"op": "add", "path": "/steps/0", "before": None, "after": second["steps"][0]},
+    ]
+
+
+def test_a_step_dropped_from_the_front_is_one_change_not_every_step_after_it() -> None:
+    # The first plan resolves a place that feeds nothing.
+    first = json.loads(where("Informatik", "Audimax"))
+    first["constraints"] = []
+    del first["steps"][1]["within"]
+    second = {**first, "mentions": first["mentions"][1:], "steps": first["steps"][1:]}
+
+    turn = ask(
+        "visitor", "Where is the Audimax?", repaired_by(json.dumps(first), json.dumps(second))
+    )
+
+    assert (turn["kind"], turn["recovery"]) == ("answer", "repaired")
+    v1, v2 = turn["trace"]["plans"]
+    assert v1["trigger"]["kind"] == "plan-invalid"
+    assert v2["changes"] == [
+        {"op": "remove", "path": "/mentions/0", "before": first["mentions"][0], "after": None},
+        {"op": "remove", "path": "/steps/0", "before": first["steps"][0], "after": None},
+    ]
+
+
+def test_steps_whose_ids_changed_order_are_diffed_by_position() -> None:
+    first = json.loads(where("Informatik", "107"))
+    first["steps"].reverse()
+
+    turn = ask(
+        "visitor",
+        "Where is room 107 in the Informatik building?",
+        repaired_by(json.dumps(first), where("Informatik", "107")),
+    )
+
+    assert (turn["kind"], turn["recovery"]) == ("answer", "repaired")
+    changes = turn["trace"]["plans"][1]["changes"]
+    assert [(c["op"], c["path"]) for c in changes] == [
+        ("replace", "/steps/0/id"),
+        ("replace", "/steps/0/mention"),
+        ("remove", "/steps/0/within"),
+        ("replace", "/steps/1/id"),
+        ("replace", "/steps/1/mention"),
+        ("add", "/steps/1/within"),
+    ]
+
+
+@pytest.mark.parametrize("persona", [p.value for p in PERSONAS])
+def test_whether_a_turn_recovers_never_depends_on_what_the_persona_sees(persona: str) -> None:
+    # The Serverraum is beyond a visitor and staff, and not beyond maintenance. Were
+    # arguments checked as each step came up, only maintenance would reach the bad one.
+    turn = ask(persona, "Where is it?", where("Serverraum", "..."))
+    missing = ask(persona, "Where is it?", where("Bibliothek", "..."))
+
+    for t in (turn, missing):
+        assert (t["kind"], t["cause"], t["recovery"]) == (
+            "abstention",
+            "plan-rejected",
+            "unrepaired",
+        )
+        assert [c["purpose"] for c in t["llm_calls"]] == ["planning", "recovery"]
+        assert [
+            (s["id"], s["outcome"], s["ids"]) for v in t["trace"]["plans"] for s in v["steps"]
+        ] == [("s2", "rejected", []), ("s2", "rejected", [])]
+
+
+@pytest.mark.parametrize(
+    ("persona", "plan", "kind"),
+    [
+        ("visitor", where("Serverraum"), "abstention"),
+        ("visitor", where("Bibliothek"), "abstention"),
+        ("visitor", where("Informatik", "Bibliothek"), "abstention"),
+        ("visitor", where("107"), "clarification"),
+        ("visitor", where("Seminarraum"), "clarification"),
+        (
+            "visitor",
+            json.dumps({"shape": "unsupported", "mentions": [], "steps": []}),
+            "abstention",
+        ),
+    ],
+)
+def test_outcomes_that_are_answers_never_buy_a_model_call(
+    persona: str, plan: str, kind: str
+) -> None:
+    def planner(payload: dict[str, Any]) -> str:
+        assert "previous" not in payload, "no recovery call"
+        return plan
+
+    turn = ask(persona, "Where is it?", planner)
+
+    assert turn["kind"] == kind
+    assert turn["recovery"] == "not-needed"
+    assert [c["purpose"] for c in turn["llm_calls"]] == ["planning"]
+    assert [v["trigger"] for v in turn["trace"]["plans"]] == [None]
+
+
+def test_a_second_trigger_asks_the_pending_clarification_again() -> None:
+    first = ask("visitor", "Where is 107?", where("107"))
+
+    turn = ask("visitor", "the blue one", "not a plan", state=first["state"])
+
+    assert turn["kind"] == "clarification"
+    assert turn["recovery"] == "unrepaired"
+    assert [c["purpose"] for c in turn["llm_calls"]] == ["planning", "recovery"]
+    assert turn["candidates"] == first["candidates"]
+    assert turn["state"]["pending"] == first["state"]["pending"]
+    assert turn["state"]["turns"] == 2
+
+
+def test_a_recovery_call_that_cannot_be_made_answers_nothing() -> None:
+    def planner(payload: dict[str, Any]) -> str:
+        if "previous" in payload:
+            raise fixture.Unreachable("connection reset")
+        return "not a plan"
+
+    state = {"snapshot": fixture.SNAPSHOT, "persona": "visitor", "turns": 1, "place": AUDIMAX}
+    turn = ask("visitor", "Where is it?", planner, state=state, status=503)
+
+    assert turn["kind"] == "unavailable"
+    assert turn["recovery"] == "unrepaired"
+    assert turn["trace"]["unavailable"] == "recovery"
+    assert turn["state"] == {**state, "pending": None}
+    assert [c["purpose"] for c in turn["llm_calls"]] == ["planning"]
+
+
+GOOD = where("Audimax")
+BAD = "not a plan"
+MALFORMED = where("?!")
+
+
+@pytest.mark.parametrize(
+    ("first", "second", "composer"),
+    [
+        (GOOD, GOOD, located),
+        (BAD, GOOD, located),
+        (MALFORMED, GOOD, located),
+        (BAD, MALFORMED, located),
+        (MALFORMED, MALFORMED, located),
+        (BAD, BAD, located),
+        (BAD, GOOD, lambda _p: "not a draft"),
+        (MALFORMED, where("107"), located),
+    ],
+)
+def test_a_turn_makes_at_most_three_model_calls(first: str, second: str, composer: Any) -> None:
+    made: list[str] = []
+
+    def planner(payload: dict[str, Any]) -> str:
+        made.append("recovery" if "previous" in payload else "planning")
+        return second if "previous" in payload else first
+
+    def counted(payload: dict[str, Any]) -> str:
+        made.append("composition")
+        reply: str = composer(payload)
+        return reply
+
+    turn = ask("visitor", "Where is the Audimax?", planner, counted)
+
+    assert len(made) <= CALL_CAP
+    assert [c["purpose"] for c in turn["llm_calls"]] == made
+    assert made.count("recovery") <= 1
 
 
 # --- composition --------------------------------------------------------------------------
@@ -351,6 +643,7 @@ def test_an_unreachable_model_answers_nothing(
     assert turn["candidates"] == []
     assert turn["state"] == {**state, "pending": None}
     assert [call["purpose"] for call in turn["llm_calls"]] == calls
+    assert turn["recovery"] == "not-needed"
 
 
 # --- snapshots and state ------------------------------------------------------------------

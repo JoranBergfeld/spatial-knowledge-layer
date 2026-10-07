@@ -11,6 +11,9 @@ and the longest place mention chain worth reading in one question is three deep
 ("room 107 on level 1 of 50.34"), plus one to spare. Plans over the cap are
 rejected, never truncated: running a shortened plan would answer a different
 question.
+
+A plan that may not run raises a trigger, unbound-reference when a reference in
+it binds to nothing and plan-invalid otherwise, which buys it one recovery call.
 """
 
 from __future__ import annotations
@@ -19,6 +22,8 @@ from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
+from spatial_service.recovery import TriggerKind
 
 STEP_CAP = 4
 
@@ -84,27 +89,70 @@ class Plan(_Model):
 
 
 class PlanRejected(Exception):
-    def __init__(self, reasons: list[str]) -> None:
+    """A plan that may not run, and the trigger it raises."""
+
+    def __init__(self, trigger: TriggerKind, reasons: list[str]) -> None:
         super().__init__("; ".join(reasons))
+        self.trigger = trigger
         self.reasons = reasons
 
 
+# What each tool's steps produce, and what a step's `within` must read. A reference
+# binds only to an earlier step whose output is the kind it reads.
+PRODUCES = {"resolve_place": "places"}
+WITHIN_READS = {"resolve_place": "places"}
+
+
 def parse_plan(text: str) -> Plan:
-    """The planning model's output as a checked plan. Raises PlanRejected otherwise."""
+    """The planning model's output as a checked plan. Raises PlanRejected otherwise.
+
+    A plan that does not parse, or parses and breaks a rule, is invalid. One with a
+    reference that binds to nothing is unbound, even if it breaks rules too: a
+    dangling reference breaks others in its wake (the step it should have read now
+    feeds nothing), and it is the one to fix. The reasons list all of them.
+    """
     try:
         plan = Plan.model_validate_json(text)
     except ValidationError as error:
         raise PlanRejected(
-            [f"{'.'.join(map(str, e['loc'])) or 'plan'}: {e['msg']}" for e in error.errors()]
+            TriggerKind.PLAN_INVALID,
+            [f"{'.'.join(map(str, e['loc'])) or 'plan'}: {e['msg']}" for e in error.errors()],
         ) from error
-    reasons = check(plan)
-    if reasons:
-        raise PlanRejected(reasons)
+    unbound, invalid = bind(plan), check(plan)
+    if unbound:
+        raise PlanRejected(TriggerKind.UNBOUND_REFERENCE, unbound + invalid)
+    if invalid:
+        raise PlanRejected(TriggerKind.PLAN_INVALID, invalid)
     return plan
 
 
+def bind(plan: Plan) -> list[str]:
+    """Every reference in a plan that names nothing it can bind to. Empty when all bind."""
+    reasons: list[str] = []
+    mentions = {mention.id for mention in plan.mentions}
+    earlier: dict[str, Step] = {}
+    for step in plan.steps:
+        if step.mention not in mentions:
+            reasons.append(f"step {step.id} resolves {step.mention}, which is not a mention")
+        if step.within is not None:
+            source = earlier.get(step.within.step)
+            if source is None:
+                reasons.append(f"step {step.id} reads {step.within.step}, which is not earlier")
+            elif PRODUCES[source.tool] != WITHIN_READS[step.tool]:
+                reasons.append(
+                    f"step {step.id} reads {source.id}, which produces "
+                    f"{PRODUCES[source.tool]}, not {WITHIN_READS[step.tool]}"
+                )
+        earlier.setdefault(step.id, step)
+    for constraint in plan.constraints:
+        for named in (constraint.mention, constraint.container):
+            if named not in mentions:
+                reasons.append(f"a {constraint.kind} constraint names {named}, not a mention")
+    return reasons
+
+
 def check(plan: Plan) -> list[str]:
-    """What is wrong with a plan that parses. Empty when it may run."""
+    """What is wrong with a plan that parses, references aside. Empty when it may run."""
     reasons: list[str] = []
     mentions = {mention.id: mention for mention in plan.mentions}
     if len(mentions) != len(plan.mentions):
@@ -120,18 +168,14 @@ def check(plan: Plan) -> list[str]:
     if len(plan.steps) > STEP_CAP:
         reasons.append(f"the plan has {len(plan.steps)} steps, over the cap of {STEP_CAP}")
 
-    earlier: dict[str, Step] = {}
+    seen: set[str] = set()
     referenced: set[str] = set()
     for step in plan.steps:
-        if step.id in earlier:
+        if step.id in seen:
             reasons.append(f"step {step.id} repeats")
-        if step.mention not in mentions:
-            reasons.append(f"step {step.id} resolves {step.mention}, which is not a mention")
+        seen.add(step.id)
         if step.within is not None:
-            if step.within.step not in earlier:
-                reasons.append(f"step {step.id} reads {step.within.step}, which is not earlier")
             referenced.add(step.within.step)
-        earlier[step.id] = step
 
     resolved = [step.mention for step in plan.steps]
     for mention in plan.mentions:
@@ -146,7 +190,6 @@ def check(plan: Plan) -> list[str]:
     by_mention = {step.mention: step for step in plan.steps}
     for constraint in plan.constraints:
         if constraint.mention not in mentions or constraint.container not in mentions:
-            reasons.append(f"a {constraint.kind} constraint names a mention the plan lacks")
             continue
         if constraint.mention == constraint.container:
             reasons.append(f"{constraint.mention} cannot lie within itself")
