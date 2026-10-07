@@ -300,6 +300,7 @@ def _asset(asset_id: str, type_id: str, space_id: str) -> Asset:
         source=None,
         type_id=type_id,
         space_id=space_id,
+        ancestor_path=(),
         name=Value.sourced(asset_id),
     )
 

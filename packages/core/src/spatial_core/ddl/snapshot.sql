@@ -90,6 +90,7 @@ CREATE TABLE {osm}.assets (
     source            text,
     type_id           text NOT NULL,
     space_id          text NOT NULL,
+    ancestor_path     jsonb NOT NULL,
     name              jsonb NOT NULL,
     door              text,
     position          jsonb,
@@ -118,16 +119,17 @@ CREATE TABLE {osm}.maintenance_tasks (
     resource_names    jsonb
 );
 
--- What was done to an asset and when, after COBie v3 Event.
+-- What was done to an asset, when and by whom, after COBie v3 Event. Nothing
+-- about the outcome.
 CREATE TABLE {osm}.service_events (
     id                text PRIMARY KEY,
     record_provenance text NOT NULL CHECK (record_provenance IN ('sourced', 'seed')),
     asset_id          text NOT NULL,
     task_id           text,
     name              jsonb NOT NULL,
-    category          jsonb NOT NULL,
-    date              jsonb NOT NULL,
-    description       jsonb NOT NULL
+    start             jsonb NOT NULL,
+    "end"             jsonb,
+    performer         jsonb NOT NULL
 );
 CREATE INDEX ON {osm}.service_events (asset_id);
 

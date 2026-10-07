@@ -219,12 +219,15 @@ class Asset(_Record):
     source: str | None
     type_id: str
     space_id: str
+    # Its space's path and then its space, root first, so scope is a filter here too.
+    ancestor_path: tuple[Ancestor, ...]
     name: Value
     # The OSM door node ("node/123") a door asset is bound to.
     door: str | None = None
     # None where the space has no outline to lay it out in.
     position: Position | None = None
-    # serial_number, installation_date and the like. Absent where the data has a gap.
+    # serial_number, installation_date, warranty_start_date and the like. Absent
+    # where the data has a gap.
     attributes: dict[str, Value] = {}
 
 
@@ -250,7 +253,7 @@ class MaintenanceTask(_Record):
 
 
 class ServiceEvent(_Record):
-    """Something done to one asset on a date, after COBie v3 Event."""
+    """Something done to one asset, after COBie v3 Event. It says nothing of the outcome."""
 
     id: str
     record_provenance: RecordProvenance
@@ -258,9 +261,10 @@ class ServiceEvent(_Record):
     # The task it carried out, where it was a planned one.
     task_id: str | None
     name: Value
-    category: Value
-    date: Value
-    description: Value
+    start: Value
+    # None where the event records no end.
+    end: Value | None = None
+    performer: Value
 
 
 class VisibleAsset(_Record):

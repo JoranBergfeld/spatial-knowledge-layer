@@ -2,9 +2,15 @@
 
 Pinned inputs in, the same inventory out. The inputs are the snapshot's structure
 (itself pinned by the pull), the snapshot date, and inventory.json beside this
-file, which holds the fixed seed, the asset types, the test bench's space
-categories with their equipment mixes and fill rates, and which room types map to
-which category. The manifest records the file's sha256 and the seed.
+file. That file is adapted from the test bench's COBie handover (the buildingSMART
+Medical-Dental Clinic sample, CC BY 4.0) and names it: the type library, the
+bench's space categories with their equipment mixes, its measured fill rates and
+install-date spread, and which room types map to which category. It also holds
+the fixed seed. The manifest records the file's sha256 and the seed.
+
+Only domain-neutral types are generated: lights, AC units, air terminals, doors,
+valves, sanitary fittings and electrical panels. Each is the bench's most
+installed type with its Table 23 code. What the bench leaves blank stays blank.
 
 Every record made here is seed, and every value on it is inferred with its basis.
 It is written to the seed half of the bundle and never to the OSM half. The rules,
@@ -12,30 +18,42 @@ in order:
 
     room-category@1      a room-tier space takes the category of the first mapping
                          whose tags it carries. An unmapped space gets nothing.
-    count-by-area@1      per item of the category's mix: the room's area over the
-                         item's square metres, rounded, between its min and max. A
-                         fixed item (no square metres) is its min. A room without
-                         an outline counts with the category's typical area.
+    count-by-area@2      per item of the category's mix: the room's area over the
+                         item's square metres on the bench, rounded, at least its
+                         min. A room without an outline counts with the category's
+                         typical area.
     layout-in-outline@1  where each one stands (rules/layout.py). A room without an
                          outline gets its count and no placement.
-    door-asset@1         a door leaf for each sourced door an edge goes through,
-                         in the mapped space it opens into (a room before a
-                         corridor, then by id). The asset is bound to the door; the
-                         edge stays the door's, and no asset is ever an edge.
-    fill-by-rate@1       serial and installation date, each on the share of a
-                         type's assets the bench measured, picked by a hash of the
-                         seed and the asset id. The rest are gaps.
-    install-date@1       between 30 days and nine tenths of the type's expected
-                         life before the snapshot.
+    door-asset@1         a door for each sourced door an edge goes through, in the
+                         mapped space it opens into (a room before a corridor, then
+                         by id). The asset is bound to the door; the edge stays the
+                         door's, and no asset is ever an edge.
+    manufacturer-from-email@1
+                         the bench names a manufacturer by a contact address. The
+                         name is the label before the top-level domain, capitalised
+                         (sales@lithonia.com is Lithonia). A placeholder address
+                         reads not recorded.
+    fill-by-rate@1       serial, installation date and warranty start, each on the
+                         share of a type's assets the bench measured, picked by a
+                         hash of the seed and the asset id. The rest are gaps.
+    install-date@2       as long before the snapshot as a draw from the bench's
+                         spread of installation dates before its handover, and
+                         never before the building's sourced `start_date` where
+                         OSM has one.
+    warranty-start@1     the installation date: on the bench the two agree on
+                         every component.
     serial@1             the type's model and eight hex digits of that hash.
-    latest-service@1     on the chosen share of all assets, generated and
-                         sourced: one event for the type's most frequent task,
-                         within one interval of it before the snapshot and never
-                         before installation.
+    latest-service@2     on the chosen share of all assets, generated and
+                         sourced: one event, within one interval of the type's
+                         most frequent task before the snapshot, or within a year
+                         for a type with no task, and never before installation.
 
-The service-event share is chosen here, not measured: 0.7. A bench that records
+The service-event share and the performer are chosen here, not measured, since the
+bench has no service events. The share is 0.7. A bench that records
 events at all records them on most of its assets, but not all; seven in ten keeps
 the gap visible without making "when was this last serviced" mostly unanswerable.
+The bench has no task for any generated type, so the two that carry one (the door
+and the panelboard) have it authored in inventory.json, and the file says so.
 """
 
 from __future__ import annotations
@@ -45,6 +63,7 @@ import hashlib
 import json
 import math
 import random
+import re
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
@@ -70,20 +89,24 @@ from spatial_ingest.rules import fire, layout, tiers
 
 GENERATOR = "seed-inventory@1"
 CATEGORY_RULE = "room-category@1"
-COUNT_RULE = "count-by-area@1"
+COUNT_RULE = "count-by-area@2"
 DOOR_RULE = "door-asset@1"
+MANUFACTURER_RULE = "manufacturer-from-email@1"
 FILL_RULE = "fill-by-rate@1"
-INSTALL_RULE = "install-date@1"
+INSTALL_RULE = "install-date@2"
 SERIAL_RULE = "serial@1"
-SERVICE_RULE = "latest-service@1"
+WARRANTY_RULE = "warranty-start@1"
+SERVICE_RULE = "latest-service@2"
 RULES = (
     GENERATOR,
     CATEGORY_RULE,
     COUNT_RULE,
     layout.RULE,
     DOOR_RULE,
+    MANUFACTURER_RULE,
     FILL_RULE,
     INSTALL_RULE,
+    WARRANTY_RULE,
     SERIAL_RULE,
     SERVICE_RULE,
     clearance.TYPE_RULE,
@@ -92,9 +115,23 @@ RULES = (
 INVENTORY_FILE = "inventory.json"
 SERIAL = "serial_number"
 INSTALLED = "installation_date"
-# Types whose names could make the demo about surveillance or a specific trade.
-# None of these may be generated.
+WARRANTY = "warranty_start_date"
+# What fill-by-rate fills, each at the bench's rate.
+FILLED = (SERIAL, INSTALLED, WARRANTY)
+# The only families a generated type may belong to.
+NEUTRAL_FAMILIES = (
+    "lights",
+    "AC units",
+    "air terminals",
+    "doors",
+    "valves",
+    "sanitary fittings",
+    "electrical panels",
+)
+# Types whose names could make the demo about surveillance. None may be generated.
 EXCLUDED_WORDS = ("camera", "cctv", "surveillance")
+# The default service-due interval, for a type with no task.
+_YEAR_DAYS = 365
 
 _MONTH_DAYS = 30.4375
 _UNIT_DAYS = {"day": 1.0, "week": 7.0, "month": _MONTH_DAYS, "year": 365.25}
@@ -134,6 +171,10 @@ def _check(data: Mapping[str, Any]) -> None:
     for key, kind in types.items():
         if any(word in f"{key} {kind['name']}".lower() for word in EXCLUDED_WORDS):
             raise InventoryError(f"type {key!r} is not domain-neutral and cannot be generated")
+        if kind["family"] not in NEUTRAL_FAMILIES:
+            raise InventoryError(
+                f"type {key!r} is of family {kind['family']!r}, which is not domain-neutral"
+            )
         if kind["layout"] not in (*layout.LAYOUTS, None):
             raise InventoryError(f"type {key!r} has an unknown layout {kind['layout']!r}")
     if data["door_type"] not in types:
@@ -184,12 +225,19 @@ def category_of(space: Space, mappings: Sequence[Mapping[str, Any]]) -> str | No
 
 
 def count_for(item: Mapping[str, Any], area: float) -> int:
-    """count-by-area: the area over the item's square metres, rounded, within min and max."""
-    low, high = int(item["min"]), int(item["max"])
-    per = item["m2_per_item"]
-    if per is None:
-        return low
-    return max(low, min(high, math.floor(area / float(per) + 0.5)))
+    """count-by-area: the area over the item's square metres, rounded, at least its min."""
+    return max(int(item["min"]), math.floor(area / float(item["m2_per_item"]) + 0.5))
+
+
+def manufacturer_from_email(email: str | None, placeholders: Sequence[str]) -> str | None:
+    """manufacturer-from-email: the label before the top-level domain, capitalised.
+
+    None, for not recorded, where the bench has no address or a placeholder one.
+    """
+    if not email or "@" not in email or email in placeholders:
+        return None
+    labels = email.rsplit("@", 1)[1].split(".")
+    return labels[-2].capitalize() if len(labels) >= 2 else None
 
 
 class _Generator:
@@ -296,6 +344,7 @@ class _Generator:
                             source=None,
                             type_id=_type_id(key),
                             space_id=space_id,
+                            ancestor_path=fire.asset_path(space),
                             name=_inferred(f"{kind['name']} {number}", basis),
                             position=position,
                         )
@@ -327,6 +376,7 @@ class _Generator:
                     source=None,
                     type_id=_type_id(key),
                     space_id=space_id,
+                    ancestor_path=fire.asset_path(self.spaces[space_id]),
                     name=_inferred(name, basis),
                     door=door,
                     position=Position(
@@ -355,34 +405,55 @@ class _Generator:
         by_type: dict[str, list[str]] = defaultdict(list)
         for asset in assets:
             by_type[asset.type_id].append(asset.id)
-        with_serial: set[str] = set()
-        with_date: set[str] = set()
+        chosen: dict[str, set[str]] = {key: set() for key in FILLED}
         for ids in by_type.values():
-            with_serial |= self._chosen(ids, float(rates[SERIAL]), SERIAL)
-            with_date |= self._chosen(ids, float(rates[INSTALLED]), INSTALLED)
+            for key in FILLED:
+                chosen[key] |= self._chosen(ids, float(rates[key]), key)
 
         filled = []
         for asset in assets:
             kind = self.data["types"][_type_key(asset.type_id)]
             attributes: dict[str, Value] = {}
-            if asset.id in with_serial:
+            if asset.id in chosen[SERIAL]:
                 digits = _hash(self.seed, SERIAL_RULE, asset.id)[:8].upper()
                 attributes[SERIAL] = _inferred(
                     f"{kind['model']}-{digits}", self._basis(f"{SERIAL_RULE} after {FILL_RULE}")
                 )
-            if asset.id in with_date:
-                attributes[INSTALLED] = _inferred(
-                    self._installed(asset.id, kind).isoformat(),
-                    self._basis(f"{INSTALL_RULE} within {kind['expected_life_years']} years"),
-                )
+            if asset.id in chosen[INSTALLED]:
+                installed, how = self._installed(asset)
+                attributes[INSTALLED] = _inferred(installed.isoformat(), self._basis(how))
+                # The bench starts every warranty on the day of installation.
+                if asset.id in chosen[WARRANTY]:
+                    attributes[WARRANTY] = _inferred(
+                        installed.isoformat(),
+                        self._basis(f"{WARRANTY_RULE} on the installation date, after {FILL_RULE}"),
+                    )
             filled.append(asset.model_copy(update={"attributes": attributes}))
         return filled
 
-    def _installed(self, asset_id: str, kind: Mapping[str, Any]) -> datetime.date:
-        longest = max(31, int(float(kind["expected_life_years"]) * 365.25 * 0.9))
-        return self.date - datetime.timedelta(
-            days=_rng(self.seed, INSTALL_RULE, asset_id).randrange(30, longest)
-        )
+    def _installed(self, asset: Asset) -> tuple[datetime.date, str]:
+        """install-date: a draw from the bench's spread, never before the building."""
+        spread = self.data["bench"]["install_days_before_handover_deciles"]
+        at = _rng(self.seed, INSTALL_RULE, asset.id).random() * (len(spread) - 1)
+        low = min(int(at), len(spread) - 2)
+        days = spread[low] + (spread[low + 1] - spread[low]) * (at - low)
+        installed = self.date - datetime.timedelta(days=math.floor(days + 0.5))
+        how = f"{INSTALL_RULE} from the bench's install-date spread"
+        built = self._built(asset.space_id)
+        if built is not None and installed < built:
+            return built, f"{how}, held to the building's start_date {built.isoformat()}"
+        return installed, how
+
+    def _built(self, space_id: str) -> datetime.date | None:
+        """The sourced `start_date` of the building a space is in, where it has one."""
+        space = self.spaces[space_id]
+        within = [space.id, *(ancestor.id for ancestor in reversed(space.ancestor_path))]
+        for candidate in within:
+            enclosing = self.spaces.get(candidate)
+            if enclosing is None or enclosing.tier.value != tiers.BUILDING:
+                continue
+            return start_date(_tags(self.osm, enclosing.source).get("start_date"))
+        return None
 
     def _fill_counts(self, assets: Sequence[Asset], events: int, sourced: int) -> dict[str, Any]:
         def share(count: int, total: int) -> float:
@@ -390,7 +461,7 @@ class _Generator:
 
         rates = self.data["bench"]["fill_rates"]
         result: dict[str, Any] = {}
-        for key in (SERIAL, INSTALLED):
+        for key in FILLED:
             count = sum(1 for asset in assets if key in asset.attributes)
             result[key] = {"bench": rates[key], "generated": share(count, len(assets))}
         result["service_event"] = {
@@ -404,18 +475,29 @@ class _Generator:
     def _type(self, type_id: str) -> AssetType:
         key = _type_key(type_id)
         kind = self.data["types"][key]
-        basis = self._basis(f"types.{key} in {INVENTORY_FILE}")
+        basis = self._basis(f"types.{key} in {INVENTORY_FILE}, after {self.data['source']['file']}")
         code = _inferred(kind["omniclass"], basis)
+        maker = manufacturer_from_email(
+            kind["manufacturer_email"], self.data["placeholder_manufacturers"]
+        )
+
+        def given(name: str) -> Value | None:
+            return None if kind[name] is None else _inferred(kind[name], basis)
+
         return AssetType(
             id=type_id,
             record_provenance=RecordProvenance.SEED,
             name=_inferred(kind["name"], basis),
             omniclass=code,
-            manufacturer=_inferred(kind["manufacturer"], basis),
-            model=_inferred(kind["model"], basis),
-            warranty_parts_years=_inferred(kind["warranty_parts_years"], basis),
-            warranty_labor_years=_inferred(kind["warranty_labor_years"], basis),
-            expected_life_years=_inferred(kind["expected_life_years"], basis),
+            manufacturer=None
+            if maker is None
+            else _inferred(
+                maker, f"{basis}, {MANUFACTURER_RULE} over {kind['manufacturer_email']}"
+            ),
+            model=given("model"),
+            warranty_parts_years=given("warranty_parts_years"),
+            warranty_labor_years=given("warranty_labor_years"),
+            expected_life_years=given("expected_life_years"),
             clearance=clearance.type_clearance(code.value),
         )
 
@@ -460,35 +542,73 @@ class _Generator:
     def _events(
         self, assets: Sequence[Asset], tasks: Mapping[str, Sequence[MaintenanceTask]]
     ) -> list[ServiceEvent]:
-        rate = float(self.data["bench"]["service_event_fill_rate"])
-        serviceable = [asset for asset in assets if tasks.get(asset.type_id)]
-        chosen = self._chosen((asset.id for asset in serviceable), rate, SERVICE_RULE)
+        bench = self.data["bench"]
+        chosen = self._chosen(
+            (asset.id for asset in assets), float(bench["service_event_fill_rate"]), SERVICE_RULE
+        )
         events = []
-        for asset in serviceable:
+        for asset in assets:
             if asset.id not in chosen:
                 continue
-            task = min(tasks[asset.type_id], key=lambda t: (_interval_days(t), t.id))
-            interval = max(1, int(_interval_days(task)))
-            date = self.date - datetime.timedelta(
+            planned = tasks.get(asset.type_id)
+            if planned:
+                task = min(planned, key=lambda t: (_interval_days(t), t.id))
+                interval = max(1, int(_interval_days(task)))
+                name, task_id = task.name.value, task.id
+                basis = self._basis(f"{SERVICE_RULE} for {task.id}, within one interval")
+            else:
+                interval, name, task_id = _YEAR_DAYS, "Service", None
+                basis = self._basis(f"{SERVICE_RULE}, no task for the type, within one year")
+            start = self.date - datetime.timedelta(
                 days=_rng(self.seed, SERVICE_RULE, asset.id).randrange(interval)
             )
             installed = asset.attributes.get(INSTALLED)
             if installed is not None:
-                date = max(date, datetime.date.fromisoformat(installed.value))
-            basis = self._basis(f"{SERVICE_RULE} for {task.id}, within one interval")
+                start = max(start, datetime.date.fromisoformat(installed.value))
             events.append(
                 ServiceEvent(
                     id=f"seed:event:{asset.id}",
                     record_provenance=RecordProvenance.SEED,
                     asset_id=asset.id,
-                    task_id=task.id,
-                    name=_inferred(task.name.value, basis),
-                    category=_inferred("Service", basis),
-                    date=_inferred(date.isoformat(), basis),
-                    description=_inferred(f"Carried out: {task.description.value}", basis),
+                    task_id=task_id,
+                    name=_inferred(name, basis),
+                    start=_inferred(start.isoformat(), basis),
+                    performer=_inferred(
+                        bench["service_performer"],
+                        self._basis(f"bench.service_performer in {INVENTORY_FILE}"),
+                    ),
                 )
             )
         return events
+
+
+_START_DATE = re.compile(r"(\d{4})(?:-(\d{2}))?(?:-(\d{2}))?")
+
+
+def start_date(value: str | None) -> datetime.date | None:
+    """An OSM `start_date` as its first day: a year, a year and month, or a full date.
+
+    Anything else ("~1960", "C19", "before 1900") bounds nothing.
+    """
+    found = _START_DATE.fullmatch(value.strip()) if value else None
+    if not found:
+        return None
+    year, month, day = (int(part) if part else 1 for part in found.groups())
+    try:
+        return datetime.date(year, month, day)
+    except ValueError:
+        return None
+
+
+def _tags(osm: OsmData, source: str | None) -> Mapping[str, str]:
+    kind, _, ref = (source or "").partition("/")
+    if not ref.isdigit():
+        return {}
+    if kind == "way" and int(ref) in osm.ways:
+        return osm.ways[int(ref)].tags
+    if kind == "relation" and int(ref) in osm.relations:
+        return osm.relations[int(ref)].tags
+    return {}
 
 
 def _type_id(key: str) -> str:

@@ -25,6 +25,7 @@ from shapely.geometry.base import BaseGeometry
 
 from spatial_core import clearance
 from spatial_core.records import (
+    Ancestor,
     Asset,
     AssetType,
     Position,
@@ -97,6 +98,8 @@ class Placer:
 
     def __init__(self, spaces: Iterable[Space], site_id: str) -> None:
         self.site_id = site_id
+        spaces = list(spaces)
+        self._paths = {space.id: asset_path(space) for space in spaces}
         self._rooms: list[_Place] = []
         self._buildings: list[_Place] = []
         self._site: BaseGeometry | None = None
@@ -130,6 +133,14 @@ class Placer:
         if self._site is not None and self._site.covers(point):
             return self.site_id
         return None
+
+    def path_of(self, space_id: str) -> tuple[Ancestor, ...]:
+        return self._paths[space_id]
+
+
+def asset_path(space: Space) -> tuple[Ancestor, ...]:
+    """An asset's ancestor path: its space's path, then its space."""
+    return (*space.ancestor_path, Ancestor(tier=space.tier.value, id=space.id))
 
 
 def _geometry(outline: dict[str, Any] | None) -> BaseGeometry | None:
@@ -168,6 +179,7 @@ def fire_assets(osm: OsmData, placer: Placer) -> FireAssets:
                 source=f"node/{node_id}",
                 type_id=type_id(value),
                 space_id=space_id,
+                ancestor_path=placer.path_of(space_id),
                 name=Value.derived(TYPES[value].name, RULE),
                 position=Position(lon=lon, lat=lat, provenance=ValueProvenance.SOURCED),
                 attributes={key: Value.sourced(tags[key]) for key in ATTRIBUTE_KEYS if key in tags},
