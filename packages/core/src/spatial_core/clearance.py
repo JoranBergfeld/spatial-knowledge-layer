@@ -15,7 +15,8 @@ misclassifies something is fixed by changing the rule.
                                    and its ancestors are visible with it
     clearance-from-omniclass@1     an asset type's OmniClass Table 23 code to the
                                    lowest persona it admits, by its longest listed
-                                   prefix; an unlisted code fails closed
+                                   prefix; always an authored default, and an
+                                   unlisted or missing code fails closed
     visible-assets@1               an asset is visible when its type is cleared and
                                    its space is visible; a type only through a
                                    visible asset
@@ -78,20 +79,55 @@ PUBLIC_FUNCTIONS: frozenset[tuple[str, str]] = frozenset(
 _CIRCULATION = {"corridor", "area"}
 
 # The published mapping over OmniClass Table 23 (Products), by code prefix. A code
-# takes its longest listed prefix. What a visitor meets in a room it may enter is
-# visitor; equipment people work with is staff; what keeps the building running is
-# maintenance. Any code with no listed prefix fails closed to maintenance.
-OMNICLASS: Mapping[str, Persona] = {
-    "23-17 11": Persona.VISITOR,  # doors
-    "23-21": Persona.VISITOR,  # furnishings, fixtures and equipment
-    "23-25": Persona.STAFF,  # medical and laboratory equipment
-    "23-29": Persona.VISITOR,  # fire and life safety equipment
-    "23-31": Persona.MAINTENANCE,  # plumbing equipment
-    "23-33": Persona.MAINTENANCE,  # HVAC equipment
-    "23-35": Persona.MAINTENANCE,  # electrical and lighting equipment
-    "23-37": Persona.STAFF,  # information and communication equipment
+# takes its longest listed prefix. A type hidden behind ceilings, in risers or in
+# plant rooms is maintenance; working equipment is staff; what anyone in the room
+# can see or use is visitor. A row that turns out wrong is fixed here, never by
+# overriding a single type.
+_TIERS: Mapping[Persona, tuple[str, ...]] = {
+    Persona.MAINTENANCE: (
+        "23-15",
+        "23-60",
+        "23-65 35",
+        "23-65 50",
+        "23-65 55",
+        "23-75 10",
+        "23-75 35",
+        "23-75 50",
+        "23-75 70 21 24",
+        "23-75 85",
+        "23-80 30",
+    ),
+    Persona.STAFF: (
+        "23-20",
+        "23-25 30",
+        "23-35",
+        "23-40 35",
+        "23-40 40",
+        "23-40 70",
+        "23-85",
+    ),
+    Persona.VISITOR: (
+        "23-25 40",
+        "23-30",
+        "23-40 10",
+        "23-40 20",
+        "23-40 90",
+        "23-40 95",
+        "23-45",
+        "23-50",
+        "23-55",
+        "23-65 70",
+        "23-75 70 21 27",
+        "23-80 50",
+        "23-80 70",
+    ),
 }
-_TABLE_23 = re.compile(r"23-\d{2}( \d{2}){1,5}")
+OMNICLASS: Mapping[str, Persona] = {
+    prefix: persona for persona, prefixes in _TIERS.items() for prefix in prefixes
+}
+# The numeric code at the front of a category. A title may follow it
+# ("23-75 70 21 24: Variable Air Volume Terminals") and is never matched on.
+_TABLE_23 = re.compile(r"\s*(23-\d{2}(?: \d{2}){0,5})(?!\d)")
 
 
 def from_access(value: str) -> Clearance:
@@ -139,18 +175,25 @@ def _code_digits(code: str) -> str:
     return code.replace("-", "").replace(" ", "")
 
 
-def type_clearance(code: str) -> Clearance:
-    """An asset type's clearance from its Table 23 code. Unrecognised codes fail closed.
+def type_clearance(code: str | None) -> Clearance:
+    """An asset type's clearance from its Table 23 code. Always an authored default.
 
-    A code that is not of the Table 23 form ("23-21 19 13") is unrecognised too.
+    Only the numeric code is matched, never the title after it. A missing code, one
+    not of the Table 23 form, or one with no listed prefix fails closed to
+    maintenance and is flagged an unrecognised category.
     """
-    persona = UNRECOGNISED
-    if _TABLE_23.fullmatch(code):
-        digits = _code_digits(code)
+    found = _TABLE_23.match(code) if code else None
+    listed: list[str] = []
+    if found:
+        digits = _code_digits(found.group(1))
         listed = [p for p in OMNICLASS if digits.startswith(_code_digits(p))]
-        if listed:
-            persona = OMNICLASS[max(listed, key=len)]
-    return Clearance(persona=persona, access=code, rule=TYPE_RULE, authored_default=False)
+    return Clearance(
+        persona=OMNICLASS[max(listed, key=len)] if listed else UNRECOGNISED,
+        access=None,
+        rule=TYPE_RULE,
+        authored_default=True,
+        unrecognised_category=not listed,
+    )
 
 
 def stricter(first: Clearance, second: Clearance) -> Clearance:

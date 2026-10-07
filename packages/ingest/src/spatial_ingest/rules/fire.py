@@ -48,11 +48,11 @@ class FireType:
 
 # `emergency` value -> the type it names.
 TYPES: Mapping[str, FireType] = {
-    "fire_extinguisher": FireType("Fire extinguisher", "23-29 21 11"),
-    "fire_blanket": FireType("Fire blanket", "23-29 21 13"),
-    "fire_hose": FireType("Fire hose reel", "23-29 21 15"),
-    "fire_alarm_box": FireType("Manual fire alarm call point", "23-29 23 11"),
-    "fire_hydrant": FireType("Fire hydrant", "23-29 25 11"),
+    "fire_extinguisher": FireType("Fire extinguisher", "23-65 70"),
+    "fire_blanket": FireType("Fire blanket", "23-65 70"),
+    "fire_hose": FireType("Fire hose reel", "23-65 70"),
+    "fire_alarm_box": FireType("Manual fire alarm call point", "23-65 70"),
+    "fire_hydrant": FireType("Fire hydrant", "23-65 70"),
 }
 
 # Sourced tags copied onto a fire asset as attributes.

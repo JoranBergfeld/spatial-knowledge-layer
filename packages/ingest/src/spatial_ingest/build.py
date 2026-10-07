@@ -241,6 +241,11 @@ def build(
                 "dropped_outside_site": sourced.dropped_outside_site,
             },
             "generated": seeded.counts,
+            # Types whose Table 23 code matched nothing and failed closed. Reported,
+            # never a reason to block load.
+            "unrecognised_categories": sum(
+                1 for kind in all_types if kind.clearance.unrecognised_category
+            ),
             "visible_assets": {
                 persona.value: sum(1 for v in visible_assets if v.persona is persona)
                 for persona in PERSONAS

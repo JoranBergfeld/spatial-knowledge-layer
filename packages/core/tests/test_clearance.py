@@ -218,35 +218,69 @@ def test_nothing_entered_and_nothing_cleared_is_visible_to_nobody() -> None:
 @pytest.mark.parametrize(
     ("code", "persona"),
     [
-        ("23-17 11 13", Persona.VISITOR),  # a door
-        ("23-21 19 13", Persona.VISITOR),  # furniture
-        ("23-29 21 11", Persona.VISITOR),  # a fire extinguisher
-        ("23-25 31 11", Persona.STAFF),  # laboratory equipment
-        ("23-37 21 11", Persona.STAFF),  # a projector
-        ("23-33 25 11", Persona.MAINTENANCE),  # an air handling unit
-        ("23-35 11 11", Persona.MAINTENANCE),  # a distribution board
+        ("23-30 10 00", Persona.VISITOR),  # a door
+        ("23-80 70 11", Persona.VISITOR),  # lighting
+        ("23-65 70 11", Persona.VISITOR),  # a sprinkler
+        ("23-45 10 00", Persona.VISITOR),  # a plumbing fixture
+        ("23-40 35 17", Persona.STAFF),  # kitchen equipment
+        ("23-85 10 00", Persona.STAFF),  # AV
+        ("23-65 35 11", Persona.MAINTENANCE),  # a valve
+        ("23-75 35 00", Persona.MAINTENANCE),  # an AC unit
+        ("23-80 30 20", Persona.MAINTENANCE),  # a panelboard
     ],
 )
 def test_a_type_takes_the_clearance_its_table_23_code_maps_to(code: str, persona: Persona) -> None:
     cleared = type_clearance(code)
 
     assert cleared.persona is persona
-    assert cleared.access == code
     assert cleared.rule == "clearance-from-omniclass@1"
-    assert not cleared.authored_default
+    # The code is sourced, the tier it maps to is authored.
+    assert cleared.authored_default
+    assert cleared.access is None
+    assert not cleared.unrecognised_category
 
 
 def test_a_type_code_takes_its_longest_listed_prefix() -> None:
-    # 23-17 11 is doors. The rest of 23-17 is not listed.
-    assert type_clearance("23-17 11 00").persona is Persona.VISITOR
-    assert type_clearance("23-17 13 00").persona is Persona.MAINTENANCE
+    # Air terminals split: VAV boxes sit above the ceiling, diffusers in the room.
+    assert type_clearance("23-75 70 21 24").persona is Persona.MAINTENANCE
+    assert type_clearance("23-75 70 21 27").persona is Persona.VISITOR
+    # 23-65 is not listed on its own, only what is under it.
+    assert type_clearance("23-65 70").persona is Persona.VISITOR
+    assert type_clearance("23-65 35").persona is Persona.MAINTENANCE
+    assert type_clearance("23-65 10").unrecognised_category
+
+
+def test_a_type_is_matched_on_its_numeric_code_never_the_title() -> None:
+    titled = type_clearance("23-75 70 21 24: Variable Air Volume Terminals")
+
+    assert titled.persona is Persona.MAINTENANCE
+    assert not titled.unrecognised_category
+    assert type_clearance("Doors").unrecognised_category
+    # A prefix is whole pairs of digits: 23-150 is not under 23-15.
+    assert type_clearance("23-150").unrecognised_category
 
 
 @pytest.mark.parametrize(
-    "code", ["23-39 11 00", "23-11", "13-55 11 00", "2321 19 13", "23-21-19-13", "", "camera"]
+    "code",
+    ["23-39 11 00", "23-11", "13-55 11 00", "2330 10 00", "23-75 70 21", "", None, "camera"],
 )
-def test_an_unrecognised_type_code_fails_closed_to_maintenance(code: str) -> None:
-    assert type_clearance(code).persona is Persona.MAINTENANCE
+def test_an_unrecognised_type_code_fails_closed_to_maintenance(code: str | None) -> None:
+    cleared = type_clearance(code)
+
+    assert cleared.persona is Persona.MAINTENANCE
+    assert cleared.authored_default
+    assert cleared.unrecognised_category
+
+
+def test_only_an_authored_default_can_be_an_unrecognised_category() -> None:
+    with pytest.raises(ValueError, match="unrecognised category"):
+        Clearance(
+            persona=Persona.MAINTENANCE,
+            access="no",
+            rule="r@1",
+            authored_default=False,
+            unrecognised_category=True,
+        )
 
 
 def _kind(type_id: str, code: str) -> AssetType:
@@ -272,9 +306,9 @@ def _asset(asset_id: str, type_id: str, space_id: str) -> Asset:
 
 def test_an_asset_is_visible_when_its_type_is_cleared_and_its_space_is_visible() -> None:
     chair, hood, unit = (
-        _kind("chair", "23-21 19 13"),
-        _kind("hood", "23-25 31 11"),
-        _kind("unit", "23-33 25 11"),
+        _kind("chair", "23-40 20 00"),
+        _kind("hood", "23-40 35 17"),
+        _kind("unit", "23-75 35 00"),
     )
     spaces = {
         Persona.VISITOR: frozenset({"hall"}),
@@ -301,7 +335,7 @@ def test_an_asset_is_visible_when_its_type_is_cleared_and_its_space_is_visible()
 
 
 def test_a_type_with_no_visible_asset_is_not_visible() -> None:
-    chair = _kind("chair", "23-21 19 13")
+    chair = _kind("chair", "23-40 20 00")
     spaces = {persona: frozenset({"hall"}) for persona in Persona}
 
     seen, types = visible_assets([_asset("a", "chair", "office")], [chair], spaces)

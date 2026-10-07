@@ -77,19 +77,23 @@ class Clearance(_Record):
     """The lowest persona that may reach something, and what that was read from."""
 
     persona: Persona
-    # The raw value it was mapped from, kept beside the persona it mapped to: an
-    # `access` tag, or an asset type's OmniClass Table 23 code. None for an
-    # authored default.
+    # The raw `access` tag it was mapped from, kept beside the persona it mapped
+    # to. None for an authored default.
     access: str | None
     # The published rule that gave it.
     rule: str
-    # True when the element carried no tag and a rule supplied the clearance.
+    # True when the element carried no tag and a rule supplied the clearance. Every
+    # asset type's clearance is one: its Table 23 code is sourced, the tier is not.
     authored_default: bool
+    # True when an asset type's code matched nothing and it failed closed.
+    unrecognised_category: bool = False
 
     @model_validator(mode="after")
     def _default_has_no_tag(self) -> Self:
         if self.authored_default != (self.access is None):
             raise ValueError("a clearance is an authored default exactly when it has no tag")
+        if self.unrecognised_category and not self.authored_default:
+            raise ValueError("an unrecognised category is an authored default")
         return self
 
 
@@ -197,7 +201,8 @@ class AssetType(_Record):
     warranty_parts_years: Value | None = None
     warranty_labor_years: Value | None = None
     expected_life_years: Value | None = None
-    # From the Table 23 code by clearance-from-omniclass. Unrecognised codes fail closed.
+    # From the Table 23 code by clearance-from-omniclass, an authored default.
+    # Unrecognised codes fail closed.
     clearance: Clearance
 
 
