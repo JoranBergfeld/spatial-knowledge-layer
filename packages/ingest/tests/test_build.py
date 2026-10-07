@@ -264,10 +264,20 @@ def test_the_manifest_records_input_hashes_and_what_produced_each_part(bundle: P
     assert len(recorded["inputs"]["venue"]["sha256"]) == 64
     assert "strip-person-names@1" not in recorded["parts"]["osm/spans.jsonl"]["produced_by"]
     assert sorted(recorded["parts"]) == [
+        "osm/asset_types.jsonl",
+        "osm/assets.jsonl",
         "osm/edges.jsonl",
         "osm/spaces.jsonl",
         "osm/spans.jsonl",
+        "osm/visible_asset_types.jsonl",
+        "osm/visible_assets.jsonl",
         "osm/visible_spaces.jsonl",
+        "seed/asset_types.jsonl",
+        "seed/assets.jsonl",
+        "seed/maintenance_tasks.jsonl",
+        "seed/service_events.jsonl",
+        "seed/visible_asset_types.jsonl",
+        "seed/visible_assets.jsonl",
     ]
     for name, part in recorded["parts"].items():
         assert part["sha256"] == sha256(bundle / name)
@@ -411,6 +421,7 @@ def test_space_clearance_is_read_from_access_tags_or_flagged_as_an_authored_defa
         "access": "private",
         "rule": "clearance-from-access@1",
         "authored_default": False,
+        "unrecognised_category": False,
     }
     assert tree["osm:way/2001"]["clearance"]["persona"] == "visitor"  # customers
     # An unrecognised value fails closed, and the raw tag is kept beside it.
@@ -421,6 +432,7 @@ def test_space_clearance_is_read_from_access_tags_or_flagged_as_an_authored_defa
         "access": None,
         "rule": "clearance-authored-default@1",
         "authored_default": True,
+        "unrecognised_category": False,
     }
     assert tree["osm:way/1002"]["clearance"]["persona"] == "visitor"  # an auditorium
     assert tree["osm:way/1005"]["clearance"]["persona"] == "staff"

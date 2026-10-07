@@ -1,0 +1,902 @@
+{
+  "version": 2,
+  "seed": 6,
+  "source": {
+    "name": "buildingSMART Medical-Dental Clinic sample, COBie handover",
+    "file": "2013-10-09-Clinic-Handover-v14.xlsx",
+    "sha256": "cc539fe27e3a8df5c80bc6710c17f96f329c3d5d1b023b4246536333bcd77b7a",
+    "repository": "buildingsmart-community/Community-Sample-Test-Files",
+    "licence": "CC BY 4.0",
+    "handover_date": "2013-10-09",
+    "types": 366,
+    "components": 5071,
+    "spaces": 269,
+    "notes": [
+      "Each type is the most installed Clinic type with its Table 23 code, and stands for every Clinic type with that code.",
+      "m2_per_item is a category's summed net area over its components with the type's code. A component listing two spaces counts in the first.",
+      "min is 1 where the median Clinic space of the category holds at least one.",
+      "The Clinic has no Job for any of these types. The jobs on the door and the panelboard are authored here, not sourced."
+    ]
+  },
+  "door_type": "door-type-a",
+  "placeholder_manufacturers": [
+    "supplycompany@usace.army.mil"
+  ],
+  "bench": {
+    "fill_rates": {
+      "serial_number": 0.43,
+      "installation_date": 1.0,
+      "warranty_start_date": 1.0
+    },
+    "measured": {
+      "components": 5071,
+      "serial_number": 2173,
+      "warranty_start_is_installation_date": 5071
+    },
+    "install_days_before_handover_deciles": [
+      718,
+      746,
+      884,
+      926,
+      935,
+      938,
+      938,
+      953,
+      1025,
+      1063,
+      1083
+    ],
+    "service_event_fill_rate": 0.7,
+    "service_performer": "Building maintenance team"
+  },
+  "sourced_type_jobs": {
+    "fire_extinguisher": [
+      {
+        "name": "Inspect fire extinguisher",
+        "category": "PM",
+        "frequency": 24,
+        "frequency_unit": "month",
+        "duration": 0.25,
+        "duration_unit": "hour",
+        "description": "Check the pressure, seal and mounting, and record the inspection.",
+        "resource_names": "Fire safety technician"
+      }
+    ],
+    "fire_blanket": [
+      {
+        "name": "Inspect fire blanket",
+        "category": "PM",
+        "frequency": 12,
+        "frequency_unit": "month",
+        "duration": 0.1,
+        "duration_unit": "hour",
+        "description": "Check the container and the release tapes.",
+        "resource_names": "Fire safety technician"
+      }
+    ],
+    "fire_hose": [
+      {
+        "name": "Inspect fire hose reel",
+        "category": "PM",
+        "frequency": 12,
+        "frequency_unit": "month",
+        "duration": 0.5,
+        "duration_unit": "hour",
+        "description": "Unroll, check for damage and test the flow.",
+        "resource_names": "Fire safety technician"
+      }
+    ],
+    "fire_alarm_box": [
+      {
+        "name": "Test manual call point",
+        "category": "PM",
+        "frequency": 12,
+        "frequency_unit": "month",
+        "duration": 0.1,
+        "duration_unit": "hour",
+        "description": "Activate with the test key and confirm the alarm reaches the panel.",
+        "resource_names": "Fire safety technician"
+      }
+    ],
+    "fire_hydrant": [
+      {
+        "name": "Inspect fire hydrant",
+        "category": "PM",
+        "frequency": 12,
+        "frequency_unit": "month",
+        "duration": 0.5,
+        "duration_unit": "hour",
+        "description": "Check access, the cap and the flow.",
+        "resource_names": "Fire safety technician"
+      }
+    ]
+  },
+  "types": {
+    "door-type-a": {
+      "name": "Door Type A",
+      "family": "doors",
+      "omniclass": "23-30 10",
+      "omniclass_title": "Doors",
+      "manufacturer_email": "fibrdor@fibrdor.com",
+      "model": "Standard Fib-R-Dor",
+      "warranty_parts_years": 2,
+      "warranty_labor_years": 0,
+      "expected_life_years": 15,
+      "clinic_types_with_code": 9,
+      "clinic_components_with_code": 254,
+      "layout": null,
+      "jobs": [
+        {
+          "name": "Check door closer and hinges",
+          "category": "PM",
+          "frequency": 12,
+          "frequency_unit": "month",
+          "duration": 0.25,
+          "duration_unit": "hour",
+          "description": "Check the closer, hinges and latch, and adjust.",
+          "resource_names": "Carpenter"
+        }
+      ]
+    },
+    "light-fixture-b1": {
+      "name": "Light Fixture B1",
+      "family": "lights",
+      "omniclass": "23-80 70 11 14 11",
+      "omniclass_title": "Downlights",
+      "manufacturer_email": "sales@lithonia.com",
+      "model": "GT2 MV",
+      "warranty_parts_years": 2,
+      "warranty_labor_years": 2,
+      "expected_life_years": null,
+      "clinic_types_with_code": 24,
+      "clinic_components_with_code": 668,
+      "layout": "grid",
+      "jobs": []
+    },
+    "light-fixture-q4": {
+      "name": "Light Fixture Q4",
+      "family": "lights",
+      "omniclass": "23-80 70 11 11",
+      "omniclass_title": "General Luminaries, Non Directional",
+      "manufacturer_email": "sales@lithonia.com",
+      "model": "AF 2 32 277 GEB10IS",
+      "warranty_parts_years": 1,
+      "warranty_labor_years": 1,
+      "expected_life_years": null,
+      "clinic_types_with_code": 15,
+      "clinic_components_with_code": 166,
+      "layout": "grid",
+      "jobs": []
+    },
+    "ac-unit-type-1": {
+      "name": "AC Unit Type 1",
+      "family": "AC units",
+      "omniclass": "23-75 10 24 21 27",
+      "omniclass_title": "Unitary Air Conditioning Equipment",
+      "manufacturer_email": "sales@mitsubishielectric.com",
+      "model": "PC24EK1",
+      "warranty_parts_years": 1,
+      "warranty_labor_years": 1,
+      "expected_life_years": null,
+      "clinic_types_with_code": 2,
+      "clinic_components_with_code": 5,
+      "layout": "grid",
+      "jobs": []
+    },
+    "vav-200-mm": {
+      "name": "VAV 200 mm",
+      "family": "air terminals",
+      "omniclass": "23-75 70 21 24 14",
+      "omniclass_title": "Variable Volume Air Terminal Units",
+      "manufacturer_email": "sales@krueger-hvac.com",
+      "model": "LMHS-8",
+      "warranty_parts_years": 1,
+      "warranty_labor_years": 1,
+      "expected_life_years": null,
+      "clinic_types_with_code": 10,
+      "clinic_components_with_code": 133,
+      "layout": "grid",
+      "jobs": []
+    },
+    "supply-diffuser-600-face": {
+      "name": "Supply Diffuser 600 Face",
+      "family": "air terminals",
+      "omniclass": "23-75 70 21 27 11",
+      "omniclass_title": "Diffusers, Registers, and Grilles",
+      "manufacturer_email": "info@truaire.com",
+      "model": "1020 MAS (SUPPLY)",
+      "warranty_parts_years": 1,
+      "warranty_labor_years": 1,
+      "expected_life_years": null,
+      "clinic_types_with_code": 12,
+      "clinic_components_with_code": 454,
+      "layout": "grid",
+      "jobs": []
+    },
+    "ball-valve-50-mm": {
+      "name": "Ball Valve 50 mm",
+      "family": "valves",
+      "omniclass": "23-65 55 14 17",
+      "omniclass_title": "Adjusting/Controlling Valves for Liquid Services",
+      "manufacturer_email": "sales@apollovalves.com",
+      "model": "64-108",
+      "warranty_parts_years": 2,
+      "warranty_labor_years": 0,
+      "expected_life_years": null,
+      "clinic_types_with_code": 5,
+      "clinic_components_with_code": 172,
+      "layout": "perimeter",
+      "jobs": []
+    },
+    "lavatory-p-3100": {
+      "name": "Lavatory P-3100",
+      "family": "sanitary fittings",
+      "omniclass": "23-45 05 14 14",
+      "omniclass_title": "Sinks/Lavatories",
+      "manufacturer_email": "sales@kohler.com",
+      "model": "K-2211",
+      "warranty_parts_years": 1,
+      "warranty_labor_years": 0,
+      "expected_life_years": null,
+      "clinic_types_with_code": 10,
+      "clinic_components_with_code": 83,
+      "layout": "perimeter",
+      "jobs": []
+    },
+    "water-closet-p-9050": {
+      "name": "Water Closet P-9050",
+      "family": "sanitary fittings",
+      "omniclass": "23-45 05 21 11 11",
+      "omniclass_title": "Water Operated Water Closets",
+      "manufacturer_email": "sales@americanstandard-us.com",
+      "model": "3461.528",
+      "warranty_parts_years": 1,
+      "warranty_labor_years": 1,
+      "expected_life_years": null,
+      "clinic_types_with_code": 2,
+      "clinic_components_with_code": 24,
+      "layout": "perimeter",
+      "jobs": []
+    },
+    "urinal-p-8150": {
+      "name": "Urinal P-8150",
+      "family": "sanitary fittings",
+      "omniclass": "23-45 05 21 11 21",
+      "omniclass_title": "Urinals",
+      "manufacturer_email": "sales@kohler.com",
+      "model": "K-4904-ET",
+      "warranty_parts_years": 1,
+      "warranty_labor_years": 1,
+      "expected_life_years": null,
+      "clinic_types_with_code": 1,
+      "clinic_components_with_code": 3,
+      "layout": "perimeter",
+      "jobs": []
+    },
+    "lighting-and-appliance-panelboard": {
+      "name": "Lighting and Appliance Panelboard",
+      "family": "electrical panels",
+      "omniclass": "23-80 30 11 17",
+      "omniclass_title": "Distribution Boards and Control Panels",
+      "manufacturer_email": "sales@eaton.com",
+      "model": "PRL4",
+      "warranty_parts_years": 1,
+      "warranty_labor_years": 1,
+      "expected_life_years": null,
+      "clinic_types_with_code": 2,
+      "clinic_components_with_code": 30,
+      "layout": "perimeter",
+      "jobs": [
+        {
+          "name": "Inspect distribution board",
+          "category": "PM",
+          "frequency": 12,
+          "frequency_unit": "month",
+          "duration": 1.0,
+          "duration_unit": "hour",
+          "description": "Thermographic inspection and check of the breakers.",
+          "resource_names": "Electrician"
+        }
+      ]
+    }
+  },
+  "categories": {
+    "Break Room": {
+      "clinic_spaces": 5,
+      "clinic_net_area_m2": 56.0,
+      "typical_area_m2": 10.3,
+      "mix": [
+        {
+          "type": "light-fixture-b1",
+          "clinic_count": 9,
+          "m2_per_item": 6.2,
+          "min": 1
+        },
+        {
+          "type": "vav-200-mm",
+          "clinic_count": 2,
+          "m2_per_item": 28.0,
+          "min": 0
+        },
+        {
+          "type": "supply-diffuser-600-face",
+          "clinic_count": 8,
+          "m2_per_item": 7.0,
+          "min": 1
+        },
+        {
+          "type": "ball-valve-50-mm",
+          "clinic_count": 5,
+          "m2_per_item": 11.2,
+          "min": 1
+        },
+        {
+          "type": "lavatory-p-3100",
+          "clinic_count": 5,
+          "m2_per_item": 11.2,
+          "min": 1
+        }
+      ]
+    },
+    "Classroom": {
+      "clinic_spaces": 1,
+      "clinic_net_area_m2": 27.3,
+      "typical_area_m2": 27.3,
+      "mix": [
+        {
+          "type": "light-fixture-b1",
+          "clinic_count": 6,
+          "m2_per_item": 4.6,
+          "min": 1
+        },
+        {
+          "type": "vav-200-mm",
+          "clinic_count": 1,
+          "m2_per_item": 27.3,
+          "min": 1
+        },
+        {
+          "type": "supply-diffuser-600-face",
+          "clinic_count": 3,
+          "m2_per_item": 9.1,
+          "min": 1
+        }
+      ]
+    },
+    "Conference Room": {
+      "clinic_spaces": 4,
+      "clinic_net_area_m2": 93.2,
+      "typical_area_m2": 25.4,
+      "mix": [
+        {
+          "type": "light-fixture-b1",
+          "clinic_count": 29,
+          "m2_per_item": 3.2,
+          "min": 1
+        },
+        {
+          "type": "vav-200-mm",
+          "clinic_count": 4,
+          "m2_per_item": 23.3,
+          "min": 1
+        },
+        {
+          "type": "supply-diffuser-600-face",
+          "clinic_count": 10,
+          "m2_per_item": 9.3,
+          "min": 1
+        }
+      ]
+    },
+    "Corridor": {
+      "clinic_spaces": 40,
+      "clinic_net_area_m2": 752.9,
+      "typical_area_m2": 15.0,
+      "mix": [
+        {
+          "type": "light-fixture-b1",
+          "clinic_count": 143,
+          "m2_per_item": 5.3,
+          "min": 1
+        },
+        {
+          "type": "vav-200-mm",
+          "clinic_count": 24,
+          "m2_per_item": 31.4,
+          "min": 0
+        },
+        {
+          "type": "supply-diffuser-600-face",
+          "clinic_count": 67,
+          "m2_per_item": 11.2,
+          "min": 1
+        },
+        {
+          "type": "ball-valve-50-mm",
+          "clinic_count": 95,
+          "m2_per_item": 7.9,
+          "min": 0
+        }
+      ]
+    },
+    "Elevator Shaft": {
+      "clinic_spaces": 1,
+      "clinic_net_area_m2": 4.4,
+      "typical_area_m2": 4.4,
+      "mix": []
+    },
+    "Entry Vestibule": {
+      "clinic_spaces": 1,
+      "clinic_net_area_m2": 2.8,
+      "typical_area_m2": 2.8,
+      "mix": [
+        {
+          "type": "light-fixture-b1",
+          "clinic_count": 1,
+          "m2_per_item": 2.8,
+          "min": 1
+        }
+      ]
+    },
+    "Kitchen": {
+      "clinic_spaces": 1,
+      "clinic_net_area_m2": 9.0,
+      "typical_area_m2": 9.0,
+      "mix": [
+        {
+          "type": "light-fixture-q4",
+          "clinic_count": 1,
+          "m2_per_item": 9.0,
+          "min": 1
+        },
+        {
+          "type": "supply-diffuser-600-face",
+          "clinic_count": 2,
+          "m2_per_item": 4.5,
+          "min": 1
+        }
+      ]
+    },
+    "Laboratory": {
+      "clinic_spaces": 4,
+      "clinic_net_area_m2": 105.5,
+      "typical_area_m2": 20.9,
+      "mix": [
+        {
+          "type": "light-fixture-b1",
+          "clinic_count": 13,
+          "m2_per_item": 8.1,
+          "min": 1
+        },
+        {
+          "type": "light-fixture-q4",
+          "clinic_count": 6,
+          "m2_per_item": 17.6,
+          "min": 0
+        },
+        {
+          "type": "vav-200-mm",
+          "clinic_count": 5,
+          "m2_per_item": 21.1,
+          "min": 1
+        },
+        {
+          "type": "supply-diffuser-600-face",
+          "clinic_count": 8,
+          "m2_per_item": 13.2,
+          "min": 1
+        },
+        {
+          "type": "ball-valve-50-mm",
+          "clinic_count": 5,
+          "m2_per_item": 21.1,
+          "min": 0
+        },
+        {
+          "type": "lavatory-p-3100",
+          "clinic_count": 6,
+          "m2_per_item": 17.6,
+          "min": 1
+        }
+      ]
+    },
+    "Mechanical Room": {
+      "clinic_spaces": 3,
+      "clinic_net_area_m2": 324.9,
+      "typical_area_m2": 64.8,
+      "mix": [
+        {
+          "type": "light-fixture-q4",
+          "clinic_count": 28,
+          "m2_per_item": 11.6,
+          "min": 1
+        },
+        {
+          "type": "ball-valve-50-mm",
+          "clinic_count": 2,
+          "m2_per_item": 162.4,
+          "min": 0
+        },
+        {
+          "type": "lighting-and-appliance-panelboard",
+          "clinic_count": 1,
+          "m2_per_item": 324.9,
+          "min": 0
+        }
+      ]
+    },
+    "Office": {
+      "clinic_spaces": 61,
+      "clinic_net_area_m2": 1025.3,
+      "typical_area_m2": 10.5,
+      "mix": [
+        {
+          "type": "light-fixture-b1",
+          "clinic_count": 191,
+          "m2_per_item": 5.4,
+          "min": 1
+        },
+        {
+          "type": "light-fixture-q4",
+          "clinic_count": 22,
+          "m2_per_item": 46.6,
+          "min": 0
+        },
+        {
+          "type": "ac-unit-type-1",
+          "clinic_count": 5,
+          "m2_per_item": 205.1,
+          "min": 0
+        },
+        {
+          "type": "vav-200-mm",
+          "clinic_count": 35,
+          "m2_per_item": 29.3,
+          "min": 0
+        },
+        {
+          "type": "supply-diffuser-600-face",
+          "clinic_count": 142,
+          "m2_per_item": 7.2,
+          "min": 1
+        },
+        {
+          "type": "ball-valve-50-mm",
+          "clinic_count": 25,
+          "m2_per_item": 41.0,
+          "min": 0
+        },
+        {
+          "type": "lavatory-p-3100",
+          "clinic_count": 4,
+          "m2_per_item": 256.3,
+          "min": 0
+        }
+      ]
+    },
+    "Restroom": {
+      "clinic_spaces": 22,
+      "clinic_net_area_m2": 157.4,
+      "typical_area_m2": 5.2,
+      "mix": [
+        {
+          "type": "light-fixture-b1",
+          "clinic_count": 27,
+          "m2_per_item": 5.8,
+          "min": 1
+        },
+        {
+          "type": "light-fixture-q4",
+          "clinic_count": 5,
+          "m2_per_item": 31.5,
+          "min": 0
+        },
+        {
+          "type": "supply-diffuser-600-face",
+          "clinic_count": 2,
+          "m2_per_item": 78.7,
+          "min": 0
+        },
+        {
+          "type": "ball-valve-50-mm",
+          "clinic_count": 8,
+          "m2_per_item": 19.7,
+          "min": 0
+        },
+        {
+          "type": "lavatory-p-3100",
+          "clinic_count": 22,
+          "m2_per_item": 7.2,
+          "min": 1
+        },
+        {
+          "type": "water-closet-p-9050",
+          "clinic_count": 24,
+          "m2_per_item": 6.6,
+          "min": 1
+        },
+        {
+          "type": "urinal-p-8150",
+          "clinic_count": 3,
+          "m2_per_item": 52.5,
+          "min": 0
+        }
+      ]
+    },
+    "Stairway": {
+      "clinic_spaces": 6,
+      "clinic_net_area_m2": 89.2,
+      "typical_area_m2": 14.9,
+      "mix": [
+        {
+          "type": "light-fixture-b1",
+          "clinic_count": 8,
+          "m2_per_item": 11.1,
+          "min": 0
+        },
+        {
+          "type": "light-fixture-q4",
+          "clinic_count": 2,
+          "m2_per_item": 44.6,
+          "min": 0
+        }
+      ]
+    },
+    "Storage Room": {
+      "clinic_spaces": 23,
+      "clinic_net_area_m2": 348.3,
+      "typical_area_m2": 8.9,
+      "mix": [
+        {
+          "type": "light-fixture-b1",
+          "clinic_count": 47,
+          "m2_per_item": 7.4,
+          "min": 1
+        },
+        {
+          "type": "light-fixture-q4",
+          "clinic_count": 11,
+          "m2_per_item": 31.7,
+          "min": 0
+        },
+        {
+          "type": "vav-200-mm",
+          "clinic_count": 10,
+          "m2_per_item": 34.8,
+          "min": 0
+        },
+        {
+          "type": "supply-diffuser-600-face",
+          "clinic_count": 34,
+          "m2_per_item": 10.2,
+          "min": 1
+        },
+        {
+          "type": "ball-valve-50-mm",
+          "clinic_count": 5,
+          "m2_per_item": 69.7,
+          "min": 0
+        },
+        {
+          "type": "lavatory-p-3100",
+          "clinic_count": 9,
+          "m2_per_item": 38.7,
+          "min": 0
+        }
+      ]
+    },
+    "Waiting Room": {
+      "clinic_spaces": 9,
+      "clinic_net_area_m2": 423.8,
+      "typical_area_m2": 12.7,
+      "mix": [
+        {
+          "type": "light-fixture-b1",
+          "clinic_count": 73,
+          "m2_per_item": 5.8,
+          "min": 1
+        },
+        {
+          "type": "light-fixture-q4",
+          "clinic_count": 20,
+          "m2_per_item": 21.2,
+          "min": 0
+        },
+        {
+          "type": "vav-200-mm",
+          "clinic_count": 8,
+          "m2_per_item": 53.0,
+          "min": 1
+        },
+        {
+          "type": "supply-diffuser-600-face",
+          "clinic_count": 43,
+          "m2_per_item": 9.9,
+          "min": 1
+        },
+        {
+          "type": "ball-valve-50-mm",
+          "clinic_count": 3,
+          "m2_per_item": 141.3,
+          "min": 0
+        }
+      ]
+    }
+  },
+  "room_categories": [
+    {
+      "tags": {
+        "room": "office"
+      },
+      "category": "Office"
+    },
+    {
+      "tags": {
+        "room": "lecture"
+      },
+      "category": "Classroom"
+    },
+    {
+      "tags": {
+        "room": "class"
+      },
+      "category": "Classroom"
+    },
+    {
+      "tags": {
+        "room": "seminar"
+      },
+      "category": "Conference Room"
+    },
+    {
+      "tags": {
+        "room": "toilets"
+      },
+      "category": "Restroom"
+    },
+    {
+      "tags": {
+        "room": "toilet"
+      },
+      "category": "Restroom"
+    },
+    {
+      "tags": {
+        "room": "storage"
+      },
+      "category": "Storage Room"
+    },
+    {
+      "tags": {
+        "room": "technical"
+      },
+      "category": "Mechanical Room"
+    },
+    {
+      "tags": {
+        "room": "laboratory"
+      },
+      "category": "Laboratory"
+    },
+    {
+      "tags": {
+        "room": "kitchen"
+      },
+      "category": "Kitchen"
+    },
+    {
+      "tags": {
+        "room": "stairs"
+      },
+      "category": "Stairway"
+    },
+    {
+      "tags": {
+        "room": "corridor"
+      },
+      "category": "Corridor"
+    },
+    {
+      "tags": {
+        "room": "conference"
+      },
+      "category": "Conference Room"
+    },
+    {
+      "tags": {
+        "room": "computer"
+      },
+      "category": "Classroom"
+    },
+    {
+      "tags": {
+        "room": "library"
+      },
+      "category": "Office"
+    },
+    {
+      "tags": {
+        "room": "hall"
+      },
+      "category": "Waiting Room"
+    },
+    {
+      "tags": {
+        "room": "lobby"
+      },
+      "category": "Waiting Room"
+    },
+    {
+      "tags": {
+        "room": "elevator"
+      },
+      "category": "Elevator Shaft"
+    },
+    {
+      "tags": {
+        "room": "workshop"
+      },
+      "category": "Laboratory"
+    },
+    {
+      "tags": {
+        "room": "study"
+      },
+      "category": "Classroom"
+    },
+    {
+      "tags": {
+        "room": "auditorium"
+      },
+      "category": "Classroom"
+    },
+    {
+      "tags": {
+        "room": "classroom"
+      },
+      "category": "Classroom"
+    },
+    {
+      "tags": {
+        "room": "seminar_room"
+      },
+      "category": "Conference Room"
+    },
+    {
+      "tags": {
+        "room": "computer_lab"
+      },
+      "category": "Classroom"
+    },
+    {
+      "tags": {
+        "room": "installations"
+      },
+      "category": "Mechanical Room"
+    },
+    {
+      "tags": {
+        "room": "dining"
+      },
+      "category": "Break Room"
+    },
+    {
+      "tags": {
+        "room": "restaurant"
+      },
+      "category": "Break Room"
+    },
+    {
+      "tags": {
+        "room": "entrance"
+      },
+      "category": "Entry Vestibule"
+    },
+    {
+      "tags": {
+        "indoor": "corridor"
+      },
+      "category": "Corridor"
+    }
+  ]
+}

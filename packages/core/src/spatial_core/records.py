@@ -77,18 +77,23 @@ class Clearance(_Record):
     """The lowest persona that may reach something, and what that was read from."""
 
     persona: Persona
-    # The raw `access` tag it was mapped from, kept beside the persona it mapped to.
-    # None for an authored default.
+    # The raw `access` tag it was mapped from, kept beside the persona it mapped
+    # to. None for an authored default.
     access: str | None
     # The published rule that gave it.
     rule: str
-    # True when the element carried no tag and a rule supplied the clearance.
+    # True when the element carried no tag and a rule supplied the clearance. Every
+    # asset type's clearance is one: its Table 23 code is sourced, the tier is not.
     authored_default: bool
+    # True when an asset type's code matched nothing and it failed closed.
+    unrecognised_category: bool = False
 
     @model_validator(mode="after")
     def _default_has_no_tag(self) -> Self:
         if self.authored_default != (self.access is None):
             raise ValueError("a clearance is an authored default exactly when it has no tag")
+        if self.unrecognised_category and not self.authored_default:
+            raise ValueError("an unrecognised category is an authored default")
         return self
 
 
@@ -159,3 +164,115 @@ class VisibleSpace(_Record):
 
     persona: Persona
     space_id: str
+
+
+class Position(_Record):
+    """Where an asset is, as a WGS84 point, and how that was reached."""
+
+    lon: float
+    lat: float
+    provenance: ValueProvenance
+    rule: str | None = None
+    basis: str | None = None
+
+    @model_validator(mode="after")
+    def _names_its_rule(self) -> Self:
+        if self.provenance is ValueProvenance.DERIVED and not self.rule:
+            raise ValueError("a derived position names its rule")
+        if self.provenance is ValueProvenance.INFERRED and not self.basis:
+            raise ValueError("an inferred position records its basis")
+        return self
+
+
+class AssetType(_Record):
+    """A kind of equipment, after COBie Type. Its assets share its clearance.
+
+    A generated type carries what the test bench records for it, so a gap there is
+    None here. A type a rule read from OSM has only what the tag says, so
+    manufacturer, model, warranties and expected life are all None.
+    """
+
+    id: str
+    record_provenance: RecordProvenance
+    name: Value
+    # The OmniClass Table 23 (Products) code, e.g. "23-30 10".
+    omniclass: Value
+    manufacturer: Value | None = None
+    model: Value | None = None
+    warranty_parts_years: Value | None = None
+    warranty_labor_years: Value | None = None
+    expected_life_years: Value | None = None
+    # From the Table 23 code by clearance-from-omniclass, an authored default.
+    # Unrecognised codes fail closed.
+    clearance: Clearance
+
+
+class Asset(_Record):
+    """One installed thing, after COBie Component. It sits in exactly one space.
+
+    An asset is never an edge. A door asset is the thing in the doorway, bound to
+    the sourced door whose edges carry the circulation.
+    """
+
+    id: str
+    record_provenance: RecordProvenance
+    # The OSM element it was read from ("node/123"). None for a generated asset.
+    source: str | None
+    type_id: str
+    space_id: str
+    # Its space's path and then its space, root first, so scope is a filter here too.
+    ancestor_path: tuple[Ancestor, ...]
+    name: Value
+    # The OSM door node ("node/123") a door asset is bound to.
+    door: str | None = None
+    # None where the space has no outline to lay it out in.
+    position: Position | None = None
+    # serial_number, installation_date, warranty_start_date and the like. Absent
+    # where the data has a gap.
+    attributes: dict[str, Value] = {}
+
+
+class MaintenanceTask(_Record):
+    """A planned job on every asset of a type, after COBie 2.4 Job."""
+
+    id: str
+    record_provenance: RecordProvenance
+    type_id: str
+    name: Value
+    category: Value
+    status: Value
+    description: Value
+    duration: Value
+    duration_unit: Value
+    start: Value
+    task_start_unit: Value
+    frequency: Value
+    frequency_unit: Value
+    task_number: Value
+    priors: Value | None = None
+    resource_names: Value | None = None
+
+
+class ServiceEvent(_Record):
+    """Something done to one asset, after COBie v3 Event. It says nothing of the outcome."""
+
+    id: str
+    record_provenance: RecordProvenance
+    asset_id: str
+    # The task it carried out, where it was a planned one.
+    task_id: str | None
+    name: Value
+    start: Value
+    # None where the event records no end.
+    end: Value | None = None
+    performer: Value
+
+
+class VisibleAsset(_Record):
+    persona: Persona
+    asset_id: str
+
+
+class VisibleAssetType(_Record):
+    persona: Persona
+    type_id: str

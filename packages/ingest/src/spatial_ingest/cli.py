@@ -23,6 +23,7 @@ from spatial_ingest.build import MANIFEST_FILE, BuildError, build
 from spatial_ingest.load import LoadError, load
 from spatial_ingest.promote import PromoteError, promote
 from spatial_ingest.pull import PullError
+from spatial_ingest.seed.generate import InventoryError
 from spatial_ingest.structure import StructureError
 from spatial_ingest.venue import load_venue
 
@@ -55,6 +56,11 @@ def _parser() -> argparse.ArgumentParser:
     )
     build_cmd.add_argument(
         "--refetch", action="store_true", help="replace the stored pull instead of reusing it"
+    )
+    build_cmd.add_argument(
+        "--inventory",
+        type=Path,
+        help="the seed inventory's pinned inputs (default: the published inventory.json)",
     )
 
     for name, help_text in (
@@ -103,13 +109,27 @@ def _build(args: argparse.Namespace) -> int:
             out=args.out,
             extract=args.extract,
             refetch=args.refetch,
+            inventory_file=args.inventory,
         )
-    except (BuildError, PullError, StructureError, ValueError, KeyError, OSError) as error:
+    except (
+        BuildError,
+        InventoryError,
+        PullError,
+        StructureError,
+        ValueError,
+        KeyError,
+        OSError,
+    ) as error:
         print(f"ingest build failed: {error}", file=sys.stderr)
         return 1
     manifest = json.loads((bundle / MANIFEST_FILE).read_text(encoding="utf-8"))
     print(f"built {bundle}")
     print(json.dumps(manifest["counts"], indent=2))
+    stock = manifest["inventory"]
+    print(
+        f"inventory: {stock['sourced']['assets']} sourced fire assets, "
+        f"{stock['generated']['assets']} generated assets (seed {stock['seed']})"
+    )
     return 0
 
 

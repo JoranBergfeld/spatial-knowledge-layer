@@ -5,6 +5,7 @@ The bundle for a snapshot date:
     <out>/<date>/
       pull/            the pinned pull, private
       osm/             everything sourced from OSM or derived from it by a rule
+      seed/            the generated seed inventory
       manifest.json    input hashes and what produced each part
 
 Nothing in the bundle depends on when the build ran, so building twice from the
@@ -24,9 +25,19 @@ from typing import Any
 from pydantic import BaseModel
 
 from spatial_core import clearance
-from spatial_core.records import PERSONAS, Space, VisibleSpace
+from spatial_core.records import (
+    PERSONAS,
+    Asset,
+    AssetType,
+    Persona,
+    Space,
+    VisibleAsset,
+    VisibleAssetType,
+    VisibleSpace,
+)
 from spatial_ingest import pull
-from spatial_ingest.rules import tiers
+from spatial_ingest.rules import fire, tiers
+from spatial_ingest.seed import generate as inventory
 from spatial_ingest.structure import EDGE_RULES, RULES, TREE_RULES, build_structure
 from spatial_ingest.venue import Venue
 
@@ -76,6 +87,32 @@ def _clearance_counts(
     }
 
 
+def _visible_assets(
+    assets: list[Asset], types: list[AssetType], sets: dict[Persona, frozenset[str]]
+) -> tuple[list[VisibleAsset], list[VisibleAssetType]]:
+    asset_sets, type_sets = clearance.visible_assets(assets, types, sets)
+    return (
+        [
+            VisibleAsset(persona=persona, asset_id=asset_id)
+            for persona in PERSONAS
+            for asset_id in sorted(asset_sets[persona])
+        ],
+        [
+            VisibleAssetType(persona=persona, type_id=type_id)
+            for persona in PERSONAS
+            for type_id in sorted(type_sets[persona])
+        ],
+    )
+
+
+def _catalogue(assets: Iterable[Asset]) -> dict[str, list[str]]:
+    """The attribute catalogue: per asset type, the attributes at least one asset carries."""
+    catalogue: dict[str, set[str]] = {}
+    for asset in assets:
+        catalogue.setdefault(asset.type_id, set()).update(asset.attributes)
+    return {type_id: sorted(keys) for type_id, keys in sorted(catalogue.items())}
+
+
 def build(
     *,
     venue: Venue,
@@ -83,6 +120,7 @@ def build(
     out: Path,
     extract: Path | None = None,
     refetch: bool = False,
+    inventory_file: Path | None = None,
 ) -> Path:
     bundle = out / date
     pull_dir = bundle / "pull"
@@ -98,6 +136,7 @@ def build(
             f"{pull_dir} already holds a pull. Pass --refetch to replace it with the extract."
         )
 
+    inputs = inventory.read_inputs(inventory_file or inventory.default_inventory())
     stored = pull.load_pull(pull_dir, venue, date)
     structure = build_structure(stored.data, venue)
     sets = clearance.visible_sets(structure.spaces, structure.edges)
@@ -120,6 +159,25 @@ def build(
     )
     visible_rules = tuple(dict.fromkeys((*RULES, *EDGE_RULES, clearance.VISIBLE_RULE)))
 
+    placer = fire.Placer(structure.spaces, f"site:{venue.id}")
+    sourced = fire.fire_assets(stored.data, placer)
+    seeded = inventory.generate(
+        inputs=inputs,
+        snapshot=date,
+        spaces=structure.spaces,
+        edges=structure.edges,
+        osm=stored.data,
+        sourced=sourced,
+    )
+    all_types = [*sourced.types, *seeded.types]
+    all_assets = [*sourced.assets, *seeded.assets]
+    visible_assets, visible_types = _visible_assets(all_assets, all_types, sets)
+    sourced_assets = {asset.id for asset in sourced.assets}
+    sourced_types = {kind.id for kind in sourced.types}
+    fire_rules = (fire.RULE, fire.SPACE_RULE, clearance.TYPE_RULE)
+    asset_visible_rules = (*visible_rules, clearance.TYPE_RULE, clearance.ASSET_VISIBLE_RULE)
+    seed_rules = (*inventory.RULES, *fire_rules)
+
     tool = f"spatial-ingest@{version('spatial-ingest')}"
     parts: dict[str, Any] = {}
     for name, records, rules in (
@@ -127,6 +185,32 @@ def build(
         ("osm/spans.jsonl", structure.spans, TREE_RULES),
         ("osm/edges.jsonl", structure.edges, EDGE_RULES),
         ("osm/visible_spaces.jsonl", visible, visible_rules),
+        ("osm/asset_types.jsonl", sourced.types, fire_rules),
+        ("osm/assets.jsonl", sourced.assets, (*fire_rules, *TREE_RULES)),
+        (
+            "osm/visible_assets.jsonl",
+            [v for v in visible_assets if v.asset_id in sourced_assets],
+            asset_visible_rules,
+        ),
+        (
+            "osm/visible_asset_types.jsonl",
+            [v for v in visible_types if v.type_id in sourced_types],
+            asset_visible_rules,
+        ),
+        ("seed/asset_types.jsonl", seeded.types, inventory.RULES),
+        ("seed/assets.jsonl", seeded.assets, inventory.RULES),
+        ("seed/maintenance_tasks.jsonl", seeded.tasks, seed_rules),
+        ("seed/service_events.jsonl", seeded.events, seed_rules),
+        (
+            "seed/visible_assets.jsonl",
+            [v for v in visible_assets if v.asset_id not in sourced_assets],
+            asset_visible_rules,
+        ),
+        (
+            "seed/visible_asset_types.jsonl",
+            [v for v in visible_types if v.type_id not in sourced_types],
+            asset_visible_rules,
+        ),
     ):
         content = _jsonl(records)
         path = bundle / name
@@ -141,10 +225,33 @@ def build(
     manifest = {
         "snapshot": date,
         "venue": venue.id,
-        "inputs": {"pull": stored.pin, "venue": _venue_input(venue)},
+        "inputs": {
+            "pull": stored.pin,
+            "venue": _venue_input(venue),
+            "inventory": inputs.pin(),
+        },
         "parts": parts,
         "counts": structure.counts,
         "clearance": _clearance_counts(structure.spaces, visible, unrecognised),
+        "inventory": {
+            "seed": inputs.seed,
+            "sourced": {
+                "asset_types": len(sourced.types),
+                "assets": len(sourced.assets),
+                "dropped_outside_site": sourced.dropped_outside_site,
+            },
+            "generated": seeded.counts,
+            # Types whose Table 23 code matched nothing and failed closed. Reported,
+            # never a reason to block load.
+            "unrecognised_categories": sum(
+                1 for kind in all_types if kind.clearance.unrecognised_category
+            ),
+            "visible_assets": {
+                persona.value: sum(1 for v in visible_assets if v.persona is persona)
+                for persona in PERSONAS
+            },
+            "attribute_catalogue": _catalogue(all_assets),
+        },
     }
     manifest_path.write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"

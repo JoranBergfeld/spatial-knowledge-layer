@@ -25,6 +25,18 @@ Clearance, with the doors of building A:
     1009  access=staff_only: maintenance, an unrecognised value
     2001  access=customers: visitor
     and door 1106 on no outline at all
+
+Seed inventory: 1005 is an office and 1007 an office mapped as a point, so it has
+no outline; 1002 is an auditorium, 1004 stairs and 1006 a corridor. Every other
+room maps to no category. Building A has a start_date of 2024-03, inside the
+bench's install-date spread before the snapshot, so it holds some dates and not
+others. Fire equipment, as OSM maps it:
+
+    1201  extinguisher in corridor 1006, level 0
+    1202  extinguisher over 1002 but on level 1, which 1002 is not: building A
+    1203  hydrant in part 1 outside every building: the site
+    1204  extinguisher in building G, outside the site: dropped
+    1205  defibrillator in 1006: not fire equipment
 """
 
 from __future__ import annotations
@@ -125,6 +137,7 @@ def mini_campus() -> _Osm:
         building="university",
         ref="50.34",
         name="Informatik",
+        start_date="2024-03",
         description=f"Leitung Dr. {PERSON}",
     )
     osm.rect(1001, 3, 3, 6, 6, indoor="room", ref="107", level="1", access="private")
@@ -144,9 +157,9 @@ def mini_campus() -> _Osm:
         1003, 3, 7, 6, 10, indoor="room", ref="108", level="1", name=f"Büro Prof. Dr. {PERSON}"
     )
     osm.rect(1004, 11, 3, 13, 6, indoor="room", ref="T1", level="0-2", room="stairs")
-    osm.rect(1005, 7, 7, 10, 11, indoor="room", level="0")
+    osm.rect(1005, 7, 7, 10, 11, indoor="room", level="0", room="office")
     osm.rect(1006, 3, 11, 13, 12, indoor="corridor", level="0")
-    osm.node(15, 15, node_id=1007, indoor="room", ref="109", level="1")
+    osm.node(15, 15, node_id=1007, indoor="room", ref="109", level="1", room="office")
     osm.rect(1008, 14, 3, 16, 6, indoor="room", ref="110")
     osm.rect(
         1009,
@@ -188,6 +201,18 @@ def mini_campus() -> _Osm:
 
     osm.rect(700, 42, 42, 48, 48, building="yes", ref="99.99")
     osm.rect(7001, 43, 43, 46, 46, indoor="room", ref="1", level="0")
+    osm.node(5, 11.5, node_id=1201, emergency="fire_extinguisher", level="0")
+    osm.node(
+        8,
+        4,
+        node_id=1202,
+        emergency="fire_extinguisher",
+        level="1",
+        **{"fire_extinguisher:type": "powder"},
+    )
+    osm.node(20, 20, node_id=1203, emergency="fire_hydrant", **{"fire_hydrant:type": "underground"})
+    osm.node(45, 45, node_id=1204, emergency="fire_extinguisher")
+    osm.node(12, 11.5, node_id=1205, emergency="defibrillator", level="0")
     return osm
 
 

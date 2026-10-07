@@ -5,10 +5,10 @@ assets installed in it, and the documents anchored to both. The demo venue is KI
 Campus Süd, from OpenStreetMap.
 
 Ingestion runs here: `ingest build` turns a pinned OpenStreetMap pull into a snapshot
-bundle holding the venue's structure, `ingest load` writes a bundle into Postgres and
-checks it, and `ingest promote` makes a loaded snapshot current. The service answers
-one kind of question so far, "where is room X". The seed inventory and documents are
-later issues.
+bundle holding the venue's structure and its equipment, `ingest load` writes a bundle
+into Postgres and checks it, and `ingest promote` makes a loaded snapshot current. The
+service answers one kind of question so far, "where is room X". Documents are a later
+issue.
 
 The spec and the glossary live in the site's repository
 ([spec](https://github.com/JoranBergfeld/personal-website/issues/73), `CONTEXT.md`).
@@ -42,7 +42,16 @@ osm/spaces.jsonl        the containment tree, one space per line
 osm/spans.jsonl         spaces covering more floors than the one they hang from
 osm/edges.jsonl         the circulation edges: one way through a door, with its clearance
 osm/visible_spaces.jsonl  what exists for each persona: visitor, staff, maintenance
-manifest.json           input hashes, what produced each part, counts, the sourced-clearance share
+osm/asset_types.jsonl   the fire equipment types OSM maps (fire-assets-from-emergency@1)
+osm/assets.jsonl        the fire equipment itself, sourced
+osm/visible_assets.jsonl, osm/visible_asset_types.jsonl   which of those exist per persona
+seed/asset_types.jsonl  the generated asset types
+seed/assets.jsonl       the generated assets
+seed/maintenance_tasks.jsonl  planned jobs per type, after COBie 2.4 Job
+seed/service_events.jsonl     the latest service per asset, after COBie v3 Event
+seed/visible_assets.jsonl, seed/visible_asset_types.jsonl
+manifest.json           input hashes, what produced each part, counts, the sourced-clearance
+                        share, the inventory's seed, fill rates and attribute catalogue
 ```
 
 Run it again and it reuses the stored pull and writes the same bytes. `--refetch`
@@ -57,6 +66,58 @@ uv run ingest build --date 2026-09-15 --extract karlsruhe-regbez-260915.osm.pbf
 ```
 
 `bundles/` is gitignored. The pull is private and never committed.
+
+## The seed inventory
+
+The demo venue gets equipment from a published, deterministic generator,
+`packages/ingest/src/spatial_ingest/seed/generate.py`. Its one input besides the
+structure is `seed/inventory.json`, which holds the fixed seed and is otherwise adapted
+from the test bench's COBie handover: the type library, the bench's space categories with
+their equipment mixes, its measured fill rates and install-date spread, and which room
+types map to which category. The manifest records the file's sha256 and the seed, and
+the same inputs give the same inventory, byte for byte. `--inventory <file>` builds from
+another one.
+
+Equipment mixes and type library adapted from the buildingSMART Medical-Dental Clinic
+sample (CC BY 4.0). The file names the handover and its sha256.
+
+Only the domain-neutral families are generated: lights, AC units, air terminals, doors,
+valves, sanitary fittings and electrical panels. Each generated type is the Clinic's most
+installed type with its Table 23 code, and stands for every Clinic type with that code.
+The generator refuses a type outside those families, and a camera by name. What the
+Clinic leaves blank stays blank, so most types have no expected life.
+
+Every generated record is `seed`, every value on it is `inferred` with its basis, and it
+is written only to the bundle's `seed/` half. The fire equipment OSM maps
+(`emergency=fire_extinguisher`, `fire_hydrant`, ...) is read by a rule instead, stays
+`sourced`, and goes to the `osm/` half.
+
+| Rule | What it does |
+| --- | --- |
+| `room-category@1` | A room-tier space takes the Clinic space category of the first mapping whose tags it carries (`room=office` is an Office, `room=auditorium` a Classroom, `indoor=corridor` a Corridor). An unmapped room gets nothing. |
+| `count-by-area@2` | Per item of the category's mix, the room's area over the item's square metres on the Clinic, rounded, at least its min. The min is 1 where the median Clinic space of the category holds one. A room without an outline counts with the category's typical area. |
+| `layout-in-outline@1` | Floor-standing things on a grid inside the real outline, wall-mounted things along it, both 0.5 m in from the walls. A room without an outline gets its count and no placement. |
+| `door-asset@1` | A door for each sourced door an edge goes through, in the mapped space it opens into. It is bound to the door; the edge stays the door's, and no asset is ever an edge. |
+| `manufacturer-from-email@1` | The Clinic names a manufacturer by a contact address. The name is the label before the top-level domain (`sales@lithonia.com` is Lithonia). A placeholder address reads not recorded. |
+| `fill-by-rate@1` | Serial number on 43% of a type's assets, installation date and warranty start on all of them: the shares measured on the Clinic's 5,071 components. The rest are gaps. |
+| `install-date@2` | As long before the snapshot as a draw from the Clinic's spread of installation dates before its handover, and never before the building's sourced `start_date` where OSM has one. |
+| `warranty-start@1` | The installation date. On the Clinic the two agree on every component. |
+| `serial@1` | The type's model and eight hex digits. |
+| `latest-service@2` | One event on 70% of assets: a start and a performer, no end and nothing about the outcome. It falls within one interval of the type's most frequent task before the snapshot, or within a year for a type with no task. The share and the performer are chosen here, not measured, since the Clinic has no service events. |
+| `fire-assets-from-emergency@1` | A node tagged with a fire `emergency` value is a sourced asset of a type derived from that value, under Table 23 `23-65 70 17 11` (fire fighting terminal components, where the Clinic files its extinguisher cabinets), or `23-65 70` for a call point. |
+| `asset-in-space-by-point@1` | A sourced asset sits in the smallest room-tier space covering it on its level, else the smallest building, else the site. Outside the site it is dropped. |
+| `clearance-from-omniclass@1` | A type's clearance from its OmniClass Table 23 code, by the longest prefix in the published three-tier table. Only the numeric code is matched, never the title. It is always an authored default. An unlisted or missing code fails closed to maintenance, flagged as an unrecognised category. |
+| `visible-assets@1` | An asset is visible when its type is cleared and its space is visible. A type is visible only through a visible asset. |
+
+Every asset carries its ancestor path: its space's path and then its space.
+
+The Clinic has no maintenance job for any of the generated types. The two jobs in the
+file (the door's and the panelboard's) are authored, and the file says so.
+
+The manifest counts the types whose code fell back (`inventory.unrecognised_categories`),
+the way `clearance.unrecognised_access` does for spaces. It never blocks a load. The
+attribute catalogue (per asset type, which attributes at least one asset carries) is in
+the manifest and in the `attribute_catalogue` view.
 
 ## Load and promote
 
@@ -82,7 +143,7 @@ Load writes a snapshot as three schemas (ADR 0001 in the site's repository):
 
 ```
 snap_20260915_osm    the bundle's osm/ half: sourced from OSM or derived by a rule (ODbL)
-snap_20260915_seed   the bundle's seed/ half: generated data (empty until the seed inventory)
+snap_20260915_seed   the bundle's seed/ half: the generated inventory
 snap_20260915        views joining the two, which is all the service reads
 ```
 
@@ -96,7 +157,15 @@ then writes, then checks what it wrote:
 - every edge names spaces of the snapshot
 - every visible space is a space of the snapshot, and its parent is visible too
 - the visible sets nest: visitor within staff within maintenance
-- the OSM schema holds no seed rows
+- the OSM schema holds no seed rows, and the seed schema only seed rows
+- the seed schema holds no edges
+- every asset sits in exactly one space, and is of a type of the snapshot
+- every asset's ancestor path is its space's path plus its space
+- a door asset is bound to a door of the snapshot
+- tasks name their type; events name their asset and task
+- a visible asset's type is cleared and its space is visible, and a type is visible only
+  through a visible asset
+- the visible assets and the visible asset types nest, like the spaces
 - each table holds as many rows as the manifest says
 
 A snapshot that fails any of them is recorded as failed in `control.snapshots` and
@@ -118,8 +187,8 @@ parts of the bundle, and the manifest does not list them.
 
 ## The rules
 
-The clearance and visibility rules live in `packages/core/src/spatial_core/clearance.py`,
-since the service imports them too. There are no per-element overrides: a rule that
+The clearance and visibility rules, for spaces and for assets, live in
+`packages/core/src/spatial_core/clearance.py`, since the service imports them too. There are no per-element overrides: a rule that
 gets a room wrong is fixed by changing the rule.
 
 Every derived value in a bundle names the rule that made it. The rules are plain

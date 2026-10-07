@@ -19,6 +19,16 @@ from spatial_core.stores import SnapshotSchemas
 EXAMPLES = 5
 
 
+# Tables whose rows carry a record provenance.
+_PROVENANCED = ("spaces", "asset_types", "assets", "maintenance_tasks", "service_events")
+# A persona's rank in SQL, least cleared first.
+_RANK = "array_position(ARRAY['visitor', 'staff', 'maintenance'], {})"
+
+
+def _union(select: str) -> str:
+    return "\nUNION ALL\n".join(select.format(table=table) for table in _PROVENANCED)
+
+
 @dataclass(frozen=True)
 class Invariant:
     name: str
@@ -113,9 +123,124 @@ INVARIANTS = (
     ),
     Invariant(
         "the OSM schema holds no seed rows",
+        _union(
+            "SELECT id FROM {{osm}}.{table}"
+            f" WHERE record_provenance <> '{RecordProvenance.SOURCED.value}'"
+        ),
+    ),
+    Invariant(
+        "the seed schema holds only seed rows",
+        _union(
+            "SELECT id FROM {{seed}}.{table}"
+            f" WHERE record_provenance <> '{RecordProvenance.SEED.value}'"
+        ),
+    ),
+    Invariant(
+        "the seed schema holds no edges",
+        # Edges come from doors in OSM. A generated door asset is bound to one, never one.
+        "SELECT id FROM {seed}.edges",
+    ),
+    Invariant(
+        "every asset sits in exactly one space",
+        # Each asset once across the pair, and its space a space of this snapshot.
+        """
+        SELECT id FROM {views}.assets GROUP BY id HAVING count(*) > 1
+        UNION ALL
+        SELECT asset.id FROM {views}.assets asset
+        WHERE NOT EXISTS (SELECT FROM {views}.spaces WHERE id = asset.space_id)
+        """,
+    ),
+    Invariant(
+        "an asset's ancestor path agrees with the tree",
+        # An asset's path is its space's path plus its space.
+        """
+        SELECT asset.id FROM {views}.assets asset
+        JOIN {views}.spaces space ON space.id = asset.space_id
+        WHERE asset.ancestor_path <> space.ancestor_path || jsonb_build_array(
+            jsonb_build_object('tier', space.tier ->> 'value', 'id', space.id)
+        )
+        """,
+    ),
+    Invariant(
+        "every asset is of a type of the snapshot",
+        """
+        SELECT id FROM {views}.asset_types GROUP BY id HAVING count(*) > 1
+        UNION ALL
+        SELECT asset.id FROM {views}.assets asset
+        WHERE NOT EXISTS (SELECT FROM {views}.asset_types WHERE id = asset.type_id)
+        """,
+    ),
+    Invariant(
+        "a door asset is bound to a door of the snapshot",
+        """
+        SELECT asset.id FROM {views}.assets asset
+        WHERE asset.door IS NOT NULL
+            AND NOT EXISTS (SELECT FROM {views}.edges WHERE door = asset.door)
+        """,
+    ),
+    Invariant(
+        "tasks and events name what they belong to",
+        """
+        SELECT task.id FROM {views}.maintenance_tasks task
+        WHERE NOT EXISTS (SELECT FROM {views}.asset_types WHERE id = task.type_id)
+        UNION ALL
+        SELECT event.id FROM {views}.service_events event
+        WHERE NOT EXISTS (SELECT FROM {views}.assets WHERE id = event.asset_id)
+            OR (event.task_id IS NOT NULL
+                AND NOT EXISTS (SELECT FROM {views}.maintenance_tasks WHERE id = event.task_id))
+        """,
+    ),
+    Invariant(
+        "a visible asset's type is cleared and its space is visible",
         f"""
-        SELECT id FROM {{osm}}.spaces
-        WHERE record_provenance <> '{RecordProvenance.SOURCED.value}'
+        SELECT visible.persona || ' ' || visible.asset_id FROM {{views}}.visible_assets visible
+        LEFT JOIN {{views}}.assets asset ON asset.id = visible.asset_id
+        LEFT JOIN {{views}}.asset_types kind ON kind.id = asset.type_id
+        WHERE asset.id IS NULL
+            OR kind.id IS NULL
+            OR {_RANK.format("kind.clearance ->> 'persona'")} > {_RANK.format("visible.persona")}
+            OR NOT EXISTS (
+                SELECT FROM {{views}}.visible_spaces space
+                WHERE space.persona = visible.persona AND space.space_id = asset.space_id
+            )
+        """,
+    ),
+    Invariant(
+        "a type is visible only through a visible asset",
+        """
+        SELECT visible.persona || ' ' || visible.type_id FROM {views}.visible_asset_types visible
+        WHERE NOT EXISTS (
+            SELECT FROM {views}.visible_assets seen
+            JOIN {views}.assets asset ON asset.id = seen.asset_id
+            WHERE seen.persona = visible.persona AND asset.type_id = visible.type_id
+        )
+        """,
+    ),
+    Invariant(
+        "the visible assets nest",
+        # Visitor within staff within maintenance, as the spaces do.
+        """
+        SELECT narrower.persona || ' ' || narrower.asset_id
+        FROM {views}.visible_assets narrower
+        JOIN (VALUES ('visitor', 'staff'), ('staff', 'maintenance')) AS chain (persona, wider)
+            ON chain.persona = narrower.persona
+        WHERE NOT EXISTS (
+            SELECT FROM {views}.visible_assets wider
+            WHERE wider.persona = chain.wider AND wider.asset_id = narrower.asset_id
+        )
+        """,
+    ),
+    Invariant(
+        "the visible asset types nest",
+        """
+        SELECT narrower.persona || ' ' || narrower.type_id
+        FROM {views}.visible_asset_types narrower
+        JOIN (VALUES ('visitor', 'staff'), ('staff', 'maintenance')) AS chain (persona, wider)
+            ON chain.persona = narrower.persona
+        WHERE NOT EXISTS (
+            SELECT FROM {views}.visible_asset_types wider
+            WHERE wider.persona = chain.wider AND wider.type_id = narrower.type_id
+        )
         """,
     ),
 )
