@@ -40,7 +40,8 @@ pull/query.overpassql   the query text
 pull/source.json        where the pull came from
 osm/spaces.jsonl        the containment tree, one space per line
 osm/spans.jsonl         spaces covering more floors than the one they hang from
-osm/edges.jsonl         the circulation edges: one way through a door, with its clearance
+osm/edges.jsonl         the circulation edges: one way through a door, with its clearance,
+                        where the door is and its level. Plus the snaps of doorless rooms
 osm/visible_spaces.jsonl  what exists for each persona: visitor, staff, maintenance
 osm/asset_types.jsonl   the fire equipment types OSM maps (fire-assets-from-emergency@1)
 osm/assets.jsonl        the fire equipment itself, sourced
@@ -51,7 +52,8 @@ seed/maintenance_tasks.jsonl  planned jobs per type, after COBie 2.4 Job
 seed/service_events.jsonl     the latest service per asset, after COBie v3 Event
 seed/visible_assets.jsonl, seed/visible_asset_types.jsonl
 manifest.json           input hashes, what produced each part, counts, the sourced-clearance
-                        share, the inventory's seed, fill rates and attribute catalogue
+                        share, the inventory's seed, fill rates and attribute catalogue,
+                        and the default origin if the venue definition names one
 ```
 
 Run it again and it reuses the stored pull and writes the same bytes. `--refetch`
@@ -206,7 +208,10 @@ functions under `packages/ingest/src/spatial_ingest/rules/`, each with its own t
 | `clearance-from-access@1` | `yes`, `permissive`, `customers` are visitor. `private`, `no`, `delivery`, `permit`, `emergency` are staff. Any other value fails closed to maintenance. The raw tag is kept beside it. |
 | `clearance-authored-default@1` | Untagged corridors and areas, and untagged rooms of a public function (toilets, auditorium, classroom, seminar room, hall, library, stairs, elevator, entrance), are visitor. Any other untagged room is staff. Flagged as an authored default, and never over a tag. Doors and spaces above the room tier get no default. |
 | `edge-clearance@1` | An edge takes the stricter of its door's tag and the clearance of the space it enters. An untagged door constrains nothing. |
-| `visible-by-edges@1` | A space is visible to a persona when an edge it clears enters the space, or, with no edge entering, by the space's own clearance. Its ancestors are visible with it. |
+| `visible-by-edges@1` | A space is visible to a persona when an edge it clears enters the space, or, with no edge entering, by the space's own clearance. Its ancestors are visible with it. Only edges through a door count. A snap shows nobody anything. |
+| `snap-doorless-room@1` | A room-tier space with no door at all is joined to the nearest circulation space on a level they share, if their outlines come within 2 m. Two edges with no door, derived, for routes only. It joins a room to circulation, never two rooms through a wall. |
+| `crossable-by-tags@1` | What a route may pass through by sourced tags: corridors and areas, stairs and lifts, footways, and rooms tagged hall, lobby, entrance, foyer or corridor. Also what a doorless room may snap to. |
+| `crossable-by-door-count@1` | An `indoor=room` with no `room`, `amenity` or `office` tag and three or more doors may be passed through too. Derived, and flagged in every route that uses one, since it may still be an office. Worked out by the service from the edges, not stored. |
 | `strip-person-names@1` | Removes academic titles with the name after them, and the capitalised words after Büro, Sekretariat, Labor or AG. Runs over names and descriptions. Rooms named after someone are left alone. |
 
 Things that are rough or just not done yet:
@@ -224,6 +229,17 @@ Things that are rough or just not done yet:
   Entrances on a building outline make edges only where a room's outline holds them too.
 - A door node shared by spaces on different levels joins them. The door's `level` is not
   checked against theirs.
+- An edge carries where its door is and the level it is on: the door's own `level` tag,
+  else the one level its spaces share, else nothing. A door with no level changes no
+  level in a route, so a stair door mapped without one makes the climb free.
+- The snap only helps a room with no door at all. A room with one mapped door and a
+  second unmapped opening gets nothing, and two corridor polygons that meet without a
+  door node stay apart unless one of them has no door anywhere.
+- The footways between buildings are in the pull and make no spaces, so there is no
+  graph outdoors. No route crosses from one building to another yet.
+- The default origin is a door node typed into the venue definition (`default_origin`).
+  The build checks it opens from outside into one mapped space and puts it in the
+  manifest. KIT's definition names none yet: picking one needs a pull to look at.
 
 ## The service
 
@@ -372,6 +388,92 @@ A question that needs one step's result to choose the next ("what is in the room
 the most lights") is its own shape, `step-dependent`, and gets an abstention. The plan
 schema could not run it anyway: nothing reads what `aggregate` produces.
 
+### Routes and proximity
+
+The two lowest-priority shapes. `route` is "how do I get to the Audimax", `proximity`
+is "where is the nearest extinguisher to room 107". Three more tools
+(`packages/service/src/spatial_service/routes.py`):
+
+| Tool | What it does |
+| --- | --- |
+| `places_matching` | Every visible place a description fits, as a set: by what the room is for (`room`, `amenity`), else by the words of its name. "The nearest toilet" is all the toilets. Only a route reads it. The word list is short and typed in. |
+| `route` | The quickest route to a destination: one place, a set of places, or assets. It ends at the nearest. From a place, from where an earlier route ended, or from the default origin. |
+| `nearest` | The nearest of some assets to a place, or to the default origin. |
+
+**The graph is the persona's.** It is built from the edges the persona clears, between
+spaces they can see. Nothing else is in it, so a route never touches a space beyond
+clearance and cannot say one is there. The trace records how big the graph was.
+
+**A route minimises modelled duration.** Nothing is measured:
+
+```
+walking   1.34 m/s everywhere                Weidmann 1993, a literature mean
+stairs    12 s per level, half for a half    a 4.0 m storey at 0.326 m/s vertical
+lift      40 s to take one, plus 4 s a level design figures, not measurements
+storey    4.0 m                              a chosen constant
+```
+
+Every route comes back with whole seconds, whole metres and those constants, in
+`routes` on the turn. Each one stands on its own: both ends, every space passed
+through with its seconds and metres, and everything derived it leaned on. Rounding
+further and wording are the page's. In the answer text a duration fills in as
+"41 seconds (modelled)", by the host, so the word cannot be left out.
+
+Metres are what is walked on the flat. A level change adds time and no distance.
+Inside a space the walk is door to door in a straight line, so an L-shaped corridor
+comes out short.
+
+**Lifts are in by default.** So a floor only a lift reaches is routable. Stairs win
+anyway for a level or two. `step_free` on the route step takes every stair out. The
+planner sets it only when the question asks, and nothing in the host ever sets it
+from the persona. The spec calls it a constraint. Here it is a flag on the step: the
+constraint list is all "this mention within that one" and a flag with no mentions
+did not fit it.
+
+**What a route may cross.** Circulation by its sourced tags, plus an untagged room
+with three or more doors, which is flagged `derived` in the route wherever one is
+used. A room with a function that is not circulation is never crossed, three doors or
+not. The rooms a route starts and ends in are always enterable. A doorless room is
+reached by its snap, flagged too.
+
+**A destination is places before anything is routed.**
+
+- A named place is that place.
+- A description is a set, and the route reaches the nearest. Ask for alternatives and
+  the next nearest come back too.
+- An asset is its space. An asset hung on something bigger than a room (a hydrant on
+  the site) goes by its position: the mapped rooms the point lies in, and if it lies
+  in none, the nearest place a route can reach within 5 m.
+- Typed coordinates are never read. The request has no field for a point either, so
+  asset positions are the only points there are so far.
+
+**The open-space snap is 5 m.** Chosen, not measured, since there is no bundle here
+to measure on. About a corridor and a wall: enough for a hydrant on a facade or a
+point dropped just outside a door. It hides at most about four modelled seconds. The
+snap distance is reported with the route and not added to its metres.
+
+**The origin defaults.** A route step with no origin starts at the venue's default
+origin, one entrance shared by every persona.
+
+**No route is one abstention.** `no-route`, with the same words, whether a restricted
+corridor is in the way, the crossing rule stopped it, the mapping has a gap, the
+venue names no default origin or the destination came to no place. The trace gives a
+reason only where it cannot be clearance: no default origin, no destination, or a
+route that exists with stairs and not without. A place the persona cannot see never
+gets that far. It is `no-such-place`, as everywhere else.
+
+**A plan holds at most two route steps, each with at most three alternatives.** Over
+either and the plan is rejected.
+
+**Proximity** is by modelled duration when a route reaches any of the assets, and the
+answer carries that route. When none does, it is by shared containment: the assets in
+the smallest space that also holds the anchor (same room, then floor, then building).
+The trace says which, and the answer does not call the second one a distance.
+
+Rough, all of it. Not measured against anything, and the spec lists both shapes as
+unmeasured. A space with no outline cannot be routed to. Type and description matching
+are word lists.
+
 ### The collapsed tree
 
 The planner is shown the top of the containment tree: labels and tiers of the spaces
@@ -393,7 +495,7 @@ A turn is one of four kinds:
 | --- | --- |
 | `answer` | Every step found what it needed and the composition passed its checks. |
 | `clarification` | A step matched several places, or the mention was a bare room number, which is never a label. The candidates are all visible to the persona, at most six. The state carries them, and the next turn's planner sees their labels. |
-| `abstention` | `no-such-place` when nothing the persona can see matches. A place beyond clearance and a place that does not exist give the same abstention, and the same trace but for the words asked. `no-such-asset-type` is the same for a type. Also `nothing-at-scale-level`, `step-dependent-question`, `unsupported-question`, `plan-rejected` and `composition-rejected`. And `coverage-gap`, with the turn's `gap` saying which: so far only `no-recorded-installations`, when nothing the persona can see is installed in the scope asked about. A gap in the data, not a count of zero. |
+| `abstention` | `no-such-place` when nothing the persona can see matches. A place beyond clearance and a place that does not exist give the same abstention, and the same trace but for the words asked. `no-such-asset-type` is the same for a type. Also `nothing-at-scale-level`, `step-dependent-question`, `unsupported-question`, `plan-rejected` and `composition-rejected`. And `coverage-gap`, with the turn's `gap` saying which: so far only `no-recorded-installations`, when nothing the persona can see is installed in the scope asked about. A gap in the data, not a count of zero. `no-route` for any route that cannot be found, whatever stopped it, and `nothing-near` when a proximity question has nothing to be near. |
 | `unavailable` | A model could not be reached. HTTP 503, no answer, and the prior state back unchanged. |
 
 Every turn carries its trace, the new conversation state, each model call's token usage
