@@ -22,6 +22,8 @@ Terms here are used as written there.
 packages/core     record models, the stores' DDL and the clearance rules, shared with the service
 packages/ingest   the ingestion CLI, its own package and its own image
 packages/service  the turn service: FastAPI on Microsoft Agent Framework, reading the stores
+packages/bench    the evaluation harness: question sets, a scripted model, the leak checks
+gold/             gold answers from a handover, by scripts that import none of the above
 ```
 
 The service holds no pipeline code and imports nothing from `packages/ingest`.
@@ -806,6 +808,146 @@ Rough here:
 - "Those", meaning several assets at once, has no tool to feed. It asks which one.
 - Whether the planning model writes `refers` reliably is untested. Every test stubs it.
 
+## The test bench
+
+Quality figures are not measured on the campus. They are measured on a real building
+handover: a COBie workbook, the IFC models it was exported from and the O&M documents
+handed over with it. That is the test bench. It goes through the same build, the same
+bundle, the same load and the same invariants as the demo venue, into a database and an
+index of its own.
+
+```
+uv run ingest fetch-handover --to handover/        # the pinned files, about 250 MB, once
+# OCR the documents yourself into handover/ocr/<file name without .pdf>.txt
+uv run ingest build --venue test-bench --date 2026-09-15 --handover handover/ --out bench-bundles
+uv run ingest load --date 2026-09-15 --out bench-bundles --database-url <the bench's database>
+```
+
+The files are pinned by sha256 in `packages/ingest/src/spatial_ingest/venues/test-bench.json`,
+the way the Overpass pull is pinned. Build stops if one does not match. No test and no
+CI job fetches them. Tests run on a small hand-made handover in
+`packages/ingest/tests/handover_fixture/` (13 rooms, 35 components, 12 documents), written
+by `packages/ingest/tests/mini_handover.py`.
+
+Source: BSI (2020) "Medical-Dental Test Files," buildingSMART International,
+https://github.com/buildingsmart-community/Community-Sample-Test-Files (CC BY 4.0). Read
+into the layer's records by the rules below. Nothing of it is in this repository or
+redistributed.
+
+A database holds one venue. Load refuses a bundle whose venue is not the one already in
+the database, so the bench cannot land in the demo venue's stores or the other way round.
+The index is named after the venue (`spatial-test-bench-20260915`).
+
+| Rule | What it does |
+| --- | --- |
+| `tree-from-cobie-sheets@1` | The Facility is the building and the root. Every Floor row is a floor under it, whatever its category. Every Space is a room on its FloorName. |
+| `room-label@1` | The same rule as the campus. A Space's Description is its name, its Name is its number: "CORRIDOR", or "PN 0001 room 1A01" where there is no description. |
+| `clearance-from-space-category@1` | A room's clearance from its OmniClass Table 13 category, by code. Corridors, stairs, restrooms, waiting, reception and vestibules are visitor. Electrical, mechanical and equipment rooms, service spaces, hazardous storage, the loading dock and shafts are maintenance. Anything else, a missing category too, is staff. It is not the campus's rule, on purpose, and every one is an authored default: a handover has no access data. |
+| `clearance-from-omniclass@1` | Asset types use the campus's Table 23 rule, unchanged. |
+| `asset-in-first-space@1` | A Component listed in several spaces (a door in both rooms it joins) sits in the first. |
+| `position-from-cobie-coordinate@1` | A Component's point from the Coordinate sheet, or the middle of its box. |
+| `position-from-ifc-placement@1` | Else the placement of the IFC element whose GlobalId is the Component's ExtIdentifier. |
+| `document-per-file@1` | One document per File, anchored to every row the Document sheet lists it for: a type, a component, a space, a floor, the facility. |
+| `anchors-from-system@1` | A document keyed to a System is anchored to each of that system's components. Those anchors are flagged derived. |
+| `document-kind-from-category@1` | Product data, O&M and maker's instructions are `manual`. Anything else is `handover-record`, a document kind only the bench has. |
+
+Ids are the sheet's names, slugged: `space:1a01`, `asset:ac-unit-type-1-ac-1`,
+`type:door-type-a`, `doc:panelboard-om-pdf`. Two names that slug alike stop the build.
+"n/a" is COBie for nothing there and stays a gap.
+
+Rough, or just not done:
+
+- Only the workbook has been through this for real, on my machine: 269 rooms, 366 types,
+  5,071 components, visible assets 1,136 / 4,502 / 5,071 per persona, which is what
+  decision ticket 70 measured. The IFC reader and the whole document half have only ever
+  run on the hand-made fixture. I have not downloaded the models or the 147 MB of
+  documents, and nothing here has OCR'd anything.
+- The bench's sourced half lands in the schema still called `snap_<date>_osm`, comment
+  and all. The split is right (sourced there, seed empty), the name is wrong for it.
+- A placement is a point in the model's own metres, put on the globe at an origin the
+  definition makes up (0, 0), because the schema wants WGS84 and a redacted building has
+  no address. Nothing prints or routes on it.
+- The IFC reader is mine and small: placements only, read line by line. Around a minute
+  for the four models, at a guess.
+- A document with no OCR text reads as "offline" in the manifest. It is skipped either way.
+- The Attribute sheet (door widths, finishes) is not read. Assets carry the six
+  Component columns and nothing else.
+- Job rows keep the sheet's own "n/a" where a frequency is blank, since the record
+  wants a value there.
+- Spaces have no outlines, the bench has no edges, and so no routes. By design.
+
+### Gold, the question set and the leak checks
+
+```
+gold/            the gold scripts. Standard library only, not a package of the workspace
+packages/bench   the harness: question set models, a scripted model, the checks, a CLI
+```
+
+Gold is what a correct turn would hold, worked out from the COBie workbook by scripts
+that share no code with the layer. They are run as `python -I -S gold ...`, with
+site-packages off, where `spatial_core` and friends cannot be imported at all. A test
+holds them to that. The clearance tables are typed in again there from the decision
+tickets. On the real workbook the two implementations agree on who sees what.
+
+```
+uv run bench gold cobie --workbook handover/2013-10-09-Clinic-Handover-v14.xlsx \
+    --ocr handover/ocr --out gold.json
+uv run bench check --bundle bench-bundles/2026-09-15 --gold gold.json \
+    --admin-url postgresql://postgres:...@localhost/postgres --report checks.json
+```
+
+The question set is template questions per question shape, each asked as a visitor and
+as a maintenance technician, each with its expected turn kind and its own gold: the ids,
+the counts, the clarification candidates, the fill rate, the documents retrieval may
+return. Nothing is drawn at random, so the same workbook gives the same file. Routes and
+proximity have no questions and are listed as unmeasured. Follow-ups have none either.
+
+`bench check` calls no model. The planner writes the plan a question's slots spell out
+and the composer names what it is told to, so the tools, the clearance filter and the
+host's checks are all real and the run is free. It loads the bundle into throwaway
+databases (it needs a Postgres login that may create them, never the layer's own) and
+runs three things:
+
+- **Tool correctness.** Every turn against gold, by exact match on turn kind, ids and
+  counts. Retrieved documents must all be ones gold says the persona may get.
+- **Input leak check.** Nothing sent to the planner, the composer, the embedding
+  deployment or the index filter holds an id outside the persona's visible set. It also
+  looks for names only hidden things carry, and attributes only hidden assets carry. No
+  model input here carries an id today, so ids alone would pass a service that showed a
+  visitor the whole building by label. What the asker typed themselves does not count.
+- **Counterfactual leak check.** The bundle is copied twice: once with every restricted
+  asset and document removed, once with more of them added (every restricted asset and
+  document doubled, restricted types dropped into rooms a visitor walks through, and a
+  restricted twin of every document a visitor can read). Each copy is loaded into its
+  own stores and the visitor's questions are asked again. Every turn has to come back
+  identical, whole, not just in kind, ids and numbers.
+
+Each passes or fails. CI runs gold generation, the load invariants and all three on the
+hand-made handover, and a failure fails the build.
+
+The demo venue gets the same checks as an internal regression. It has no handover, so
+its gold is read off its bundle (`bench gold bundle --bundle bundles/<date>`), visible
+sets included. That checks the tools against the stores and not the clearance rules. CI
+does it on the mini campus. Nothing from it is published.
+
+Rough here:
+
+- The scripted run on the real workbook passes all three, with 154 questions. That was
+  without documents. With the fixture's documents it passes too. Nobody has run it on
+  the real corpus.
+- The counterfactual check is only as good as the stand-in index. That one scores
+  keywords over the filtered passages. Azure scores BM25 over the whole index, restricted
+  documents included, so a restricted document can move a visitor's ranking there
+  without ever being returned. Not measured, and this check cannot see it.
+- Gold only asks with words that name one thing: a label nothing else shares, a building
+  and room number, a type's full name. Loose wording is for the hand-written questions,
+  which do not exist yet.
+- An attribute whose name is not plain words (`fire_extinguisher:type`, straight from an
+  OSM tag) is in the catalogue and shown to the planner, but no plan can name it: the
+  filter's pattern refuses the colon. Gold skips those. Found by the regression, not fixed.
+- `within` (a place's enclosing spaces) is in gold and not compared yet.
+- Timing leaks are not looked at.
+
 ## Develop
 
 ```
@@ -821,7 +963,8 @@ model, and need neither.
 
 No test makes a paid call. The venue's pages, the manuals, Azure OpenAI and Azure AI
 Search are all stand-ins on localhost (`packages/ingest/tests/stubs.py`), and the root
-`conftest.py` points every test's search index at a temporary directory.
+`conftest.py` points every test's search index at a temporary directory. No test fetches
+the test bench's handover either: see The test bench.
 
 ## Data
 
@@ -833,3 +976,6 @@ The accessibility pages are KIT's (Studium und Behinderung), which allows reuse 
 educational, scientific or private purposes with the source named. They are translated,
 quoted and linked. They are not OSM's and never go in the `osm` schema: chunks live in
 the search index only.
+
+The test bench is the buildingSMART Medical-Dental Clinic sample (CC BY 4.0), credited
+under The test bench. It never shares a database or an index with the campus.
