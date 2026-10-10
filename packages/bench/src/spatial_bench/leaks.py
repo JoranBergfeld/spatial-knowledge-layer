@@ -3,7 +3,9 @@
 Input leak check: nothing a model was sent holds an id outside the persona's
 visible set. "A model" is the planner, the composer and the embedding deployment.
 The filter the index is given is checked too, since an id in it is an id the
-host was willing to ask about.
+host was willing to ask about. It runs under every persona. Gold is paired for
+two of them, so the third is asked the same words with no gold behind them
+(suite.unpaired).
 
     It also looks for names. No model input in this layer carries an id at all
     today, so an id-only check would pass on a service that showed a visitor the
@@ -224,6 +226,8 @@ class LeakReport:
     counterfactual: tuple[Difference, ...] = ()
     # How many turns each check looked at.
     turns: dict[str, int] = field(default_factory=dict)
+    # How many turns of the bundle itself the input check read, per persona.
+    asked_as: dict[Persona, int] = field(default_factory=dict)
 
     @property
     def passed(self) -> bool:

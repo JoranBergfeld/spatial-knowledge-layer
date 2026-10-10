@@ -30,7 +30,7 @@ from spatial_bench.leaks import Difference, Hidden, Leak, LeakReport, input_leak
 from spatial_bench.questions import Expected, ExpectedKind, Question, QuestionSet, Slots
 from spatial_bench.run import loaded
 from spatial_bench.variants import with_restricted_added, without_restricted
-from spatial_core.records import Persona
+from spatial_core.records import PERSONAS, Persona
 from spatial_service.retrieval import Embedder
 
 # The persona the counterfactual check holds still: the one who sees least.
@@ -78,6 +78,22 @@ def route_probes(bundle: Bundle, persona: Persona = LOWEST) -> list[Question]:
     ]
 
 
+def unpaired(gold: QuestionSet) -> list[Question]:
+    """Gold's questions again, once per pair, as each persona gold has no copy for.
+
+    Gold pairs the visitor with the technician, which leaves staff unasked. The
+    input leak check needs no gold, only the turn, so staff get the same words and
+    slots. Nothing here is ever scored.
+    """
+    once = {question.pair: question for question in reversed(gold.questions)}
+    return [
+        question.model_copy(update={"id": f"{pair}/{persona.value}", "persona": persona})
+        for persona in PERSONAS
+        if persona not in gold.personas
+        for pair, question in sorted(once.items())
+    ]
+
+
 @dataclass(frozen=True)
 class Report:
     venue: str
@@ -119,6 +135,10 @@ class Report:
                 "input": {
                     "passed": not self.leaks.inputs,
                     "turns": self.leaks.turns.get("input", 0),
+                    # Of the bundle itself. The copies are only ever asked as a visitor.
+                    "turns_by_persona": {
+                        persona.value: self.leaks.asked_as.get(persona, 0) for persona in PERSONAS
+                    },
                     "leaks": [
                         {
                             "question": leak.question,
@@ -165,15 +185,18 @@ def run(
     leaks: list[Leak] = []
     differences: list[Difference] = []
     turns = {"input": 0, "counterfactual": 0, "route_probes": 0}
+    asked_as: dict[Persona, int] = {}
     probes = route_probes(records) if counterfactual else []
     with loaded(bundle, admin_url, work / "index") as base:
         asked = base.bench(embedder).ask_all(gold.questions)
         verdicts = compare_all(asked)
-        for persona in gold.personas:
-            leaks += input_leaks(asked, Hidden.of(records, persona))
         probed = base.bench(embedder).ask_all(probes)
-        leaks += input_leaks(probed, Hidden.of(records, LOWEST))
-        turns["input"] += len(asked) + len(probed)
+        # Every persona, whether or not gold has a copy for them. No gold is needed here.
+        read = [*asked, *probed, *base.bench(embedder).ask_all(unpaired(gold))]
+        for persona in PERSONAS:
+            leaks += input_leaks(read, Hidden.of(records, persona))
+            asked_as[persona] = sum(1 for one in read if one.question.persona is persona)
+        turns["input"] += len(read)
         lowest = [one for one in asked if one.question.persona is LOWEST]
         for name, change in VARIANTS.items() if counterfactual else ():
             copy = change(records, LOWEST).write(work / name)
@@ -193,5 +216,5 @@ def run(
         gold_source=dict(gold.source),
         checked_on=datetime.datetime.now(datetime.UTC).date().isoformat(),
         verdicts=tuple(verdicts),
-        leaks=LeakReport(tuple(leaks), tuple(differences), turns),
+        leaks=LeakReport(tuple(leaks), tuple(differences), turns, asked_as),
     )

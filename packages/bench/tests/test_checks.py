@@ -105,6 +105,36 @@ def test_on_the_bench_no_model_input_holds_anything_outside_the_visible_set(
     assert bench_report.leaks.turns["input"] > 200
 
 
+def test_the_input_leak_check_asks_as_every_persona_staff_included(
+    bench_report: Report, bench_gold: QuestionSet
+) -> None:
+    # Gold is paired for the visitor and the technician. Staff get the same words and
+    # no gold: a leak check needs none.
+    pairs = len({question.pair for question in bench_gold.questions})
+    said = bench_report.as_json()["leak_checks"]["input"]
+
+    assert bench_gold.personas == [Persona.VISITOR, Persona.MAINTENANCE]
+    assert bench_report.leaks.asked_as[Persona.STAFF] == pairs
+    assert said["turns_by_persona"]["staff"] == pairs
+    assert set(said["turns_by_persona"]) == {"visitor", "staff", "maintenance"}
+    # And none of them are scored against gold they do not have.
+    assert len(bench_report.verdicts) == len(bench_gold.questions)
+
+
+def test_a_service_that_shows_staff_too_much_fails_the_input_leak_check(
+    bench_loaded: Loaded, bench_bundle: Path, bench_gold: QuestionSet
+) -> None:
+    asking = suite.unpaired(bench_gold)
+    assert {question.persona for question in asking} == {Persona.STAFF}
+    leaky = Bench(Leaky(PostgresStore(bench_loaded.database_url)), bench_loaded.index)
+
+    leaks = input_leaks(leaky.ask_all(asking), Hidden.of(Bundle.read(bench_bundle), Persona.STAFF))
+
+    # Staff were shown the plant rooms only a technician gets.
+    assert "ELEC. ROOM" in {leak.value for leak in leaks if leak.kind == "name"}
+    assert {leak.persona for leak in leaks} == {Persona.STAFF}
+
+
 def test_on_the_bench_adding_or_removing_restricted_things_changes_no_visitor_turn(
     bench_report: Report, bench_gold: QuestionSet
 ) -> None:
@@ -367,6 +397,7 @@ def test_bench_check_passes_on_the_bench_and_writes_its_report(
     assert said["leak_checks"]["input"] == {
         "passed": True,
         "turns": said["leak_checks"]["input"]["turns"],
+        "turns_by_persona": {"visitor": 83, "staff": 83, "maintenance": 83},
         "leaks": [],
     }
     assert said["leak_checks"]["counterfactual"]["passed"] is True
