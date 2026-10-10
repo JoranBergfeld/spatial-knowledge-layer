@@ -7,6 +7,9 @@ checks what comes back and fills the placeholders from the facts. Output carryin
 digit is rejected, whatever it says: a number the model typed is a number nobody
 checked.
 
+A route's modelled duration and its distance are facts too. They fill in as
+"41 seconds (modelled)" and "39 metres", so the word modelled is the host's as well.
+
 A fact is a place (filled with its label), an asset type (its name) or a count. A
 count is always of one record provenance. Where sourced and generated assets mix,
 there are two count facts and no fact for their sum, so the model has no way to
@@ -24,7 +27,7 @@ the composer reads, and give the turn an instruction for the shape.
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
@@ -34,6 +37,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from spatial_core.records import Asset, AssetType, RecordProvenance, Space
 from spatial_service.assets import Aggregation, ScopeResult, Tally
 from spatial_service.places import Venue, tier
+from spatial_service.routes import Found, Nearest, Routed
 
 _PLACEHOLDER = re.compile(r"\{(f[0-9]+)\}")
 
@@ -63,6 +67,9 @@ class FactKind(StrEnum):
     PLACE = "place"
     ASSET_TYPE = "asset-type"
     COUNT = "count"
+    # A modelled duration in seconds and a distance in metres, of one route.
+    DURATION = "modelled-duration"
+    DISTANCE = "distance"
 
 
 class Citation(_Model):
@@ -79,6 +86,9 @@ class Citation(_Model):
     record_provenance: str | None = None
     # The number a count stands for.
     count: int | None = None
+    # What a modelled duration or a distance stands for.
+    seconds: int | None = None
+    metres: int | None = None
 
 
 @dataclass(frozen=True)
@@ -184,6 +194,23 @@ class Facts:
                 )
             )
         return refs
+
+    def duration(self, seconds: int, *, space_id: str) -> str:
+        """A route's modelled duration. Says it is modelled, so nobody has to remember to."""
+        text = f"{seconds} seconds (modelled)"
+        return self._add(
+            FactKind.DURATION,
+            text,
+            Citation(kind=FactKind.DURATION, space_id=space_id, label=text, seconds=seconds),
+        )
+
+    def distance(self, metres: int, *, space_id: str) -> str:
+        text = f"{metres} metres"
+        return self._add(
+            FactKind.DISTANCE,
+            text,
+            Citation(kind=FactKind.DISTANCE, space_id=space_id, label=text, metres=metres),
+        )
 
     def told(self) -> list[dict[str, str]]:
         return [{"ref": f.ref, "kind": f.kind.value, **f.told} for f in self.items]
@@ -368,6 +395,108 @@ def aggregation(venue: Venue, question: str, found: ScopeResult, counted: Aggreg
     payload["required"] = required
     payload["facts"] = facts.told()
     return Answer(facts.items, payload, required, together, rows)
+
+
+def _place(venue: Venue, facts: Facts, space_id: str) -> str | None:
+    space = venue.spaces[space_id]
+    return facts.place(space) if space.label else None
+
+
+def _told_route(venue: Venue, facts: Facts, found: Found) -> dict[str, Any]:
+    """One route by reference: its ends, what it passes through, how long and how far."""
+    via: list[str] = []
+    for leg in found.legs[1:-1]:
+        ref = _place(venue, facts, leg.space_id)
+        if ref is not None and ref not in via:
+            via.append(ref)
+    return {
+        "destination": _place(venue, facts, found.destination),
+        "duration": facts.duration(round(found.seconds), space_id=found.destination),
+        "distance": facts.distance(round(found.metres), space_id=found.destination),
+        "via": via[:ROW_CAP],
+        "changes_level_by": sorted({leg.mode for leg in found.legs if leg.levels}),
+    }
+
+
+def route(venue: Venue, question: str, runs: Sequence[Routed]) -> Answer:
+    """Each route found, in order: where from, where to, how long, how far."""
+    facts = Facts()
+    told = []
+    required: list[str] = []
+    for run in runs:
+        best = run.found[0]
+        origin = _place(venue, facts, best.origin)
+        one = {
+            "origin": origin,
+            "origin_is_default": run.default_origin,
+            "step_free": run.step_free,
+            **_told_route(venue, facts, best),
+            "alternatives": [_told_route(venue, facts, other) for other in run.found[1:]],
+        }
+        told.append(one)
+        required += [ref for ref in (one["destination"], one["duration"], one["distance"]) if ref]
+    payload = {
+        "question": question,
+        "shape": "route",
+        "routes": told,
+        "required": required,
+        "facts": facts.told(),
+    }
+    return Answer(facts.items, payload, required)
+
+
+def proximity(venue: Venue, question: str, near: Nearest) -> Answer:
+    """The nearest assets: what they are, where, and what nearest was measured by."""
+    facts = Facts()
+    assets = [venue.assets[i] for i in near.asset_ids]
+    by_space: dict[str, list[Asset]] = {}
+    for asset in assets:
+        by_space.setdefault(asset.space_id, []).append(asset)
+    rows = [
+        Row(Tally.of(members), space_id=space_id, label=_label_of(venue, space_id))
+        for space_id, members in sorted(by_space.items())
+    ]
+    payload: dict[str, Any] = {
+        "question": question,
+        "shape": "proximity",
+        "basis": near.basis,
+        "anchor": _place(venue, facts, near.anchor),
+        "anchor_is_default": near.default_origin,
+        "types": [
+            facts.asset_type(venue.asset_types[type_id])
+            for type_id in sorted({asset.type_id for asset in assets})
+        ],
+    }
+    together = []
+    told_rows: list[dict[str, Any]] = []
+    for row in rows[:ROW_CAP]:
+        assert row.space_id is not None
+        counts = facts.counts(row.tally, space_id=row.space_id)
+        told_rows.append({"in": _place(venue, facts, row.space_id), "counts": counts})
+        together.append(counts)
+    payload["nearest"] = told_rows
+    required = [ref for row in told_rows[:1] for ref in (row["in"], *row["counts"]) if ref]
+    required += payload["types"]
+    if near.route is not None:
+        payload["duration"] = facts.duration(
+            round(near.route.seconds), space_id=near.route.destination
+        )
+        payload["distance"] = facts.distance(
+            round(near.route.metres), space_id=near.route.destination
+        )
+        required += [payload["duration"], payload["distance"]]
+    elif near.shared is not None:
+        payload["shared"] = _place(venue, facts, near.shared)
+        if payload["shared"]:
+            required.append(payload["shared"])
+    payload["required"] = required
+    payload["facts"] = facts.told()
+    return Answer(facts.items, payload, required, together, rows)
+
+
+def _label_of(venue: Venue, space_id: str) -> str | None:
+    label = venue.spaces[space_id].label
+    return label.value if label else None
 
 
 def _scope(venue: Venue, facts: Facts, found: ScopeResult) -> str | None:

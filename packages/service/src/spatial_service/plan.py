@@ -12,6 +12,9 @@ The tools, and what each produces:
     resolve_asset_type   an asset-type mention     -> asset types (a set)
     assets_in_scope      a scope and types, both optional references -> assets
     aggregate            assets, and a scale level to count them by  -> groups
+    places_matching      a description of places   -> a place set (one or many)
+    route                an origin and a destination -> a route
+    nearest              assets, and a place to be near -> the nearest of them
 
 A reference binds only to an earlier step that produces what it reads. Nothing
 reads groups, and nothing that resolves a mention reads assets, so a plan cannot
@@ -22,6 +25,11 @@ The step cap is six. The longest place chain worth reading in one question is
 three deep ("room 107 on level 1 of 50.34"), then a type, the assets and a count
 over them. Plans over the cap are rejected, never truncated: running a shortened
 plan would answer a different question.
+
+A route's destination is a place, a place set or assets, and it ends at the nearest.
+Its origin is a place, or where an earlier route ended, or left out for the persona's
+default origin. Step-free is a flag on the step, set only when the question asks.
+A plan holds at most two route steps, each with at most three alternatives.
 
 A plan that may not run raises a trigger, unbound-reference when a reference in
 it binds to nothing and plan-invalid otherwise, which buys it one recovery call.
@@ -41,6 +49,9 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from spatial_service.recovery import TriggerKind
 
 STEP_CAP = 6
+# Route caps. A route step may return runners-up to other places of a set.
+ROUTE_STEP_CAP = 2
+ALTERNATIVES_CAP = 3
 
 
 class QuestionShape(StrEnum):
@@ -51,6 +62,10 @@ class QuestionShape(StrEnum):
     ASSET_CONTAINMENT = "asset-containment"
     # "Which floor has the most lights?": assets counted per space of a scale level.
     ASSET_AGGREGATION = "asset-aggregation"
+    # "Where is the nearest extinguisher to room 107?": the nearest asset of some types.
+    PROXIMITY = "proximity"
+    # "How do I get to the Audimax?": a route between places, by modelled duration.
+    ROUTE = "route"
     # A question whose next step depends on what an earlier one finds. No steps:
     # the turn abstains, it does not loop.
     STEP_DEPENDENT = "step-dependent"
@@ -97,10 +112,11 @@ class StepRef(_Model):
 
 class _Step(_Model):
     id: str = Field(pattern=r"^s[0-9]+$")
-    # Each reference field, and what the step it names must produce.
-    READS: ClassVar[dict[str, str]] = {}
+    # Each reference field, and what the step it names must produce. A tuple where
+    # it may be one of several.
+    READS: ClassVar[dict[str, str | tuple[str, ...]]] = {}
 
-    def references(self) -> list[tuple[str, StepRef]]:
+    def references(self) -> list[tuple[str | tuple[str, ...], StepRef]]:
         """The references this step makes, as (what it reads, reference)."""
         found = [(reads, getattr(self, name)) for name, reads in self.READS.items()]
         return [(reads, ref) for reads, ref in found if ref is not None]
@@ -109,7 +125,7 @@ class _Step(_Model):
 class ResolvePlace(_Step):
     """Find the place a mention names, among what the persona can see."""
 
-    READS: ClassVar[dict[str, str]] = {"within": "places"}
+    READS: ClassVar[dict[str, str | tuple[str, ...]]] = {"within": "places"}
     RESOLVES: ClassVar[MentionKind] = MentionKind.PLACE
 
     tool: Literal["resolve_place"]
@@ -130,7 +146,10 @@ class ResolveAssetType(_Step):
 class AssetsInScope(_Step):
     """Every visible asset under one scope node. One step, however many spaces lie under it."""
 
-    READS: ClassVar[dict[str, str]] = {"scope": "places", "types": "asset-types"}
+    READS: ClassVar[dict[str, str | tuple[str, ...]]] = {
+        "scope": "places",
+        "types": "asset-types",
+    }
 
     tool: Literal["assets_in_scope"]
     # The place to look under. None is the whole venue.
@@ -142,7 +161,7 @@ class AssetsInScope(_Step):
 class Aggregate(_Step):
     """Count a step's assets per space of one scale level under its scope."""
 
-    READS: ClassVar[dict[str, str]] = {"assets": "assets"}
+    READS: ClassVar[dict[str, str | tuple[str, ...]]] = {"assets": "assets"}
 
     tool: Literal["aggregate"]
     assets: StepRef
@@ -150,16 +169,63 @@ class Aggregate(_Step):
     by: str = Field(min_length=1, max_length=40)
 
 
+class PlacesMatching(_Step):
+    """Find every visible place a description fits. A set: nobody is asked which."""
+
+    RESOLVES: ClassVar[MentionKind] = MentionKind.PLACE
+
+    tool: Literal["places_matching"]
+    mention: str
+
+
+class Route(_Step):
+    """The quickest route to a destination, by modelled duration, over what the persona may walk."""
+
+    READS: ClassVar[dict[str, str | tuple[str, ...]]] = {
+        "origin": "places",
+        "after": "route",
+        "destination": ("places", "place-set", "assets"),
+    }
+
+    tool: Literal["route"]
+    # Where it starts. None, with no `after`, is the persona's default origin.
+    origin: StepRef | None = None
+    # Start where that route ended, for a second route.
+    after: StepRef | None = None
+    # One place, a set of places or assets. The route ends at the nearest.
+    destination: StepRef
+    # Take every stair out. Only when the question asks for it.
+    step_free: bool = False
+    # How many places of a set to route to, nearest first.
+    alternatives: int = Field(default=1, ge=1, le=ALTERNATIVES_CAP)
+
+
+class Nearest(_Step):
+    """The nearest of a step's assets to a place, or to the default origin."""
+
+    READS: ClassVar[dict[str, str | tuple[str, ...]]] = {"assets": "assets", "to": "places"}
+
+    tool: Literal["nearest"]
+    assets: StepRef
+    # The place to be near. None is the persona's default origin.
+    to: StepRef | None = None
+
+
 # Every tool a step can call. A plain union, not a discriminated one: that would
 # put a oneOf in the schema, which strict structured output does not take.
-Step = ResolvePlace | ResolveAssetType | AssetsInScope | Aggregate
+Step = (
+    ResolvePlace | ResolveAssetType | AssetsInScope | Aggregate | PlacesMatching | Route | Nearest
+)
 # The steps that resolve a mention.
-Resolving = (ResolvePlace, ResolveAssetType)
+Resolving = (ResolvePlace, ResolveAssetType, PlacesMatching)
 STEPS: dict[str, type[_Step]] = {
     "resolve_place": ResolvePlace,
     "resolve_asset_type": ResolveAssetType,
     "assets_in_scope": AssetsInScope,
     "aggregate": Aggregate,
+    "places_matching": PlacesMatching,
+    "route": Route,
+    "nearest": Nearest,
 }
 
 # What each tool's steps produce. A reference binds only to an earlier step whose
@@ -169,6 +235,9 @@ PRODUCES = {
     "resolve_asset_type": "asset-types",
     "assets_in_scope": "assets",
     "aggregate": "groups",
+    "places_matching": "place-set",
+    "route": "route",
+    "nearest": "nearest",
 }
 
 # The tool a shape's last step calls: the one whose result is the answer.
@@ -176,6 +245,8 @@ ENDS_IN = {
     QuestionShape.PLACE_LOCATION: "resolve_place",
     QuestionShape.ASSET_CONTAINMENT: "assets_in_scope",
     QuestionShape.ASSET_AGGREGATION: "aggregate",
+    QuestionShape.PROXIMITY: "nearest",
+    QuestionShape.ROUTE: "route",
 }
 
 
@@ -258,10 +329,11 @@ def bind(plan: Plan) -> list[str]:
             source = earlier.get(ref.step)
             if source is None:
                 reasons.append(f"step {step.id} reads {ref.step}, which is not earlier")
-            elif PRODUCES[source.tool] != reads:
+            elif PRODUCES[source.tool] not in ((reads,) if isinstance(reads, str) else reads):
+                wanted = reads if isinstance(reads, str) else " or ".join(reads)
                 reasons.append(
                     f"step {step.id} reads {source.id}, which produces "
-                    f"{PRODUCES[source.tool]}, not {reads}"
+                    f"{PRODUCES[source.tool]}, not {wanted}"
                 )
         earlier.setdefault(step.id, step)
     for constraint in plan.constraints:
@@ -291,6 +363,13 @@ def check(plan: Plan) -> list[str]:
         reasons.append(
             f"a {plan.shape} plan ends in {ENDS_IN[plan.shape]}, not {plan.steps[-1].tool}"
         )
+
+    routes = [step for step in plan.steps if isinstance(step, Route)]
+    if len(routes) > ROUTE_STEP_CAP:
+        reasons.append(f"the plan has {len(routes)} route steps, over the cap of {ROUTE_STEP_CAP}")
+    for route in routes:
+        if route.origin is not None and route.after is not None:
+            reasons.append(f"step {route.id} starts at a place or after a route, not both")
 
     seen: set[str] = set()
     referenced: set[str] = set()

@@ -19,9 +19,10 @@ import psycopg
 from psycopg import sql
 from psycopg.rows import dict_row
 
-from spatial_core.records import Asset, AssetType, Persona, Space, VisibleSpace
+from spatial_core.records import Asset, AssetType, Edge, Persona, Space, VisibleSpace
 from spatial_core.stores import CONTROL_SCHEMA, READER_ROLE, snapshot_schemas
 from spatial_service.places import Venue
+from spatial_service.routes import door_counts, subgraph
 
 
 class StoreError(Exception):
@@ -52,6 +53,8 @@ class MemoryStore:
         asset_types: Iterable[AssetType] = (),
         visible_assets: Mapping[Persona, Collection[str]] | None = None,
         visible_asset_types: Mapping[Persona, Collection[str]] | None = None,
+        edges: Iterable[Edge] = (),
+        default_origin: str | None = None,
     ) -> None:
         self.snapshot = snapshot
         self.previous = previous
@@ -63,6 +66,8 @@ class MemoryStore:
         self._types = {kind.id: kind for kind in asset_types}
         self._visible_assets = visible_assets or {}
         self._visible_types = visible_asset_types or {}
+        self._edges = tuple(edges)
+        self._default_origin = default_origin
 
     def served(self) -> tuple[str | None, str | None]:
         return self.snapshot, self.previous
@@ -78,7 +83,21 @@ class MemoryStore:
             assets={i: a for i, a in self._assets.items() if i in assets},
             asset_types={i: t for i, t in self._types.items() if i in types},
             tiers=tiers_of(self._spaces.values()),
+            **circulation(self._edges, ids, persona, self._default_origin),
         )
+
+
+def circulation(
+    edges: Collection[Edge], visible: Collection[str], persona: Persona, default_origin: str | None
+) -> dict[str, Any]:
+    """What a venue holds for routes: the persona's edges, door counts, the default origin."""
+    taken = subgraph(edges, visible, persona)
+    usable = default_origin is not None and any(edge.id == default_origin for edge in taken)
+    return {
+        "edges": taken,
+        "doors": door_counts(edges, visible),
+        "default_origin": default_origin if usable else None,
+    }
 
 
 def tiers_of(spaces: Iterable[Space]) -> tuple[str, ...]:
@@ -156,9 +175,12 @@ class PostgresStore:
             "SELECT tier->>'value' AS tier, min(jsonb_array_length(ancestor_path)) AS depth"
             " FROM {views}.spaces GROUP BY 1 ORDER BY 2, 1"
         ).format(**names)
+        edges_query = sql.SQL("SELECT * FROM {views}.edges").format(**names)
         with self._connect() as conn:
             loaded = conn.execute(
-                "SELECT status FROM control.snapshots WHERE snapshot = %s", (snapshot,)
+                "SELECT status, manifest -> 'default_origin' ->> 'edge' AS default_origin"
+                " FROM control.snapshots WHERE snapshot = %s",
+                (snapshot,),
             ).fetchone()
             if loaded is None or loaded["status"] != "loaded":
                 raise StoreError(f"{snapshot} is not a loaded snapshot")
@@ -166,9 +188,13 @@ class PostgresStore:
             asset_rows = conn.execute(assets_query, (persona.value,)).fetchall()
             type_rows = conn.execute(types_query, (persona.value,)).fetchall()
             tier_rows = conn.execute(tiers_query).fetchall()
+            edge_rows = conn.execute(edges_query).fetchall()
         spaces = [Space.model_validate(row) for row in rows]
         assets = [Asset.model_validate(row) for row in asset_rows]
         types = [AssetType.model_validate(row) for row in type_rows]
+        # Every edge is read, and cut to the persona before anything else sees one.
+        edges = [Edge.model_validate(row) for row in edge_rows]
+        visible = {space.id for space in spaces}
         return Venue(
             snapshot,
             persona,
@@ -176,4 +202,5 @@ class PostgresStore:
             assets={asset.id: asset for asset in assets},
             asset_types={kind.id: kind for kind in types},
             tiers=tuple(row["tier"] for row in tier_rows),
+            **circulation(edges, visible, persona, loaded["default_origin"]),
         )

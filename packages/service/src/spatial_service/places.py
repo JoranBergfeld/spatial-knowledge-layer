@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from functools import cached_property
 
-from spatial_core.records import Asset, AssetType, Persona, Space
+from spatial_core.records import Asset, AssetType, Edge, Persona, Space
 
 # How many candidates a clarification names.
 CLARIFY_CAP = 6
@@ -83,6 +83,14 @@ class Venue:
     # word, not a place, so it is the one thing here that is not cut to the persona:
     # whether "floor" is a scale level must not depend on who asks.
     tiers: tuple[str, ...] = ()
+    # The circulation edges the persona may take, between spaces they can see.
+    edges: tuple[Edge, ...] = ()
+    # How many doors each visible space has. A fact about the room, whoever asks.
+    doors: Mapping[str, int] = field(default_factory=dict)
+    # The edge a route starts by when the question names no origin: one entrance,
+    # the same for every persona. None when the venue names none, or this persona
+    # may not take it.
+    default_origin: str | None = None
 
     def __contains__(self, space_id: object) -> bool:
         return space_id in self.spaces
@@ -150,6 +158,8 @@ class How(StrEnum):
     BUILDING_AND_ROOM = "building-and-room"
     BARE_NUMBER = "bare-number"
     NAME = "name"
+    # A description fitting a set of places. Only places_matching gives it.
+    DESCRIPTION = "description"
 
 
 @dataclass(frozen=True)
@@ -257,3 +267,68 @@ def _by_name(venue: Venue, pool: list[Space], query: str) -> _Found:
     if exact:
         return exact, False
     return [s for s in pool if s.name is not None and wanted <= _words(s.name.value)], False
+
+
+# --- a description, which names a set -----------------------------------------------------
+
+# Words a description uses for what a room is for, and the tag values that say so.
+# Short on purpose. Anything not here is looked for in names.
+_FUNCTIONS: dict[str, frozenset[str]] = {
+    "toilet": frozenset({"toilets", "toilet"}),
+    "wc": frozenset({"toilets", "toilet"}),
+    "restroom": frozenset({"toilets", "toilet"}),
+    "bathroom": frozenset({"toilets", "toilet"}),
+    "lift": frozenset({"elevator"}),
+    "elevator": frozenset({"elevator"}),
+    "stair": frozenset({"stairs"}),
+    "staircase": frozenset({"stairs"}),
+    "stairwell": frozenset({"stairs"}),
+    "auditorium": frozenset({"auditorium", "lecture"}),
+    "lecture": frozenset({"auditorium", "lecture"}),
+    "library": frozenset({"library"}),
+    "seminar": frozenset({"seminar", "seminar_room"}),
+    "classroom": frozenset({"class", "classroom"}),
+    "entrance": frozenset({"entrance"}),
+    "kitchen": frozenset({"kitchen"}),
+    "office": frozenset({"office"}),
+}
+# Words that describe the asking, not the place.
+_FILLER = frozenset({"nearest", "closest", "next", "a", "an", "any", "room", "hall"})
+_FUNCTION_KEYS = ("room", "amenity")
+
+
+def _stem(word: str) -> str:
+    return word[:-1] if len(word) > 3 and word.endswith("s") else word
+
+
+def places_matching(venue: Venue, text: str) -> PlaceResult:
+    """Every visible place a description fits: by what the room is for, else by name.
+
+    A set, and nobody is asked which: "the nearest toilet" is all the toilets, and
+    whoever reads the set picks. Rooms with no label count too. Nothing found is
+    nothing found, whether none exists or none the persona can see.
+    """
+    problems = check_arguments(text)
+    if problems:
+        raise ArgumentsRejected(problems)
+    words = {_stem(word) for word in _words(text)} - _FILLER or {
+        _stem(word) for word in _words(text)
+    }
+    wanted = [_FUNCTIONS[word] for word in words if word in _FUNCTIONS]
+    found: list[Space] = []
+    if wanted:
+        for space in venue.spaces.values():
+            functions = {
+                space.attributes[key].value for key in _FUNCTION_KEYS if key in space.attributes
+            }
+            if all(functions & values for values in wanted):
+                found.append(space)
+    if not found:
+        for space in venue.spaces.values():
+            named = {_stem(word) for word in _words(space.name.value)} if space.name else set()
+            if words and words <= named:
+                found.append(space)
+    if not found:
+        return PlaceResult(Outcome.NONE, (), None, 0)
+    ids = tuple(sorted(space.id for space in found))
+    return PlaceResult(Outcome.RESOLVED, ids, How.DESCRIPTION, len(ids))

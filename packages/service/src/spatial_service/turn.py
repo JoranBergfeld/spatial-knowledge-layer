@@ -22,6 +22,10 @@ A coverage gap is an abstention with a cause of its own, and says which gap: so
 far only that the scope asked about has no recorded installations, which is a gap
 in the data and not a count of zero.
 
+A route that cannot be found is one abstention, whatever stopped it: clearance,
+the crossing rule or a gap in the mapping. Told apart, they would say where the
+restricted corridors are.
+
 Nothing the persona cannot see reaches a model: the planner gets the question,
 the collapsed tree of visible spaces and the labels of pending candidates, and the
 composer gets references and kinds only. Nothing counts what was left out, so
@@ -33,21 +37,23 @@ from __future__ import annotations
 import asyncio
 import json
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from spatial_core.records import Asset, AssetType, Persona, Space
-from spatial_service import compose
+from spatial_service import compose, route_answer
 from spatial_service.assets import ScopeResult
 from spatial_service.compose import Answer, Citation, CompositionRejected, FactKind, Segment
 from spatial_service.executor import Execution, StepResult, execute
 from spatial_service.llm import Llm, LlmCall, LlmUnavailable, Purpose
 from spatial_service.places import Outcome, Venue
 from spatial_service.plan import (
+    ALTERNATIVES_CAP,
     DECLINED,
+    ROUTE_STEP_CAP,
     STEP_CAP,
     Plan,
     PlanRejected,
@@ -55,6 +61,7 @@ from spatial_service.plan import (
     parse_plan,
 )
 from spatial_service.recovery import PlanChange, RecoveryOutcome, Trigger, diff
+from spatial_service.route_answer import RouteOut, RouteTrace
 from spatial_service.store import Store
 from spatial_service.tree import NODE_CAP, Collapsed, collapse
 
@@ -125,6 +132,11 @@ class AbstentionCause(StrEnum):
     # The venue's data does not reach far enough. The turn's `gap` says where. The
     # metrics count it apart (metrics.py).
     COVERAGE_GAP = "coverage-gap"
+    # No route on the mapped graph for this persona. One cause for every reason
+    # there might be none, on purpose.
+    NO_ROUTE = "no-route"
+    # Nothing of the kind asked for can be placed near there, by route or by containment.
+    NOTHING_NEAR = "nothing-near"
 
 
 class CoverageGap(StrEnum):
@@ -314,6 +326,8 @@ class Trace(_Model):
     authored_defaults: list[AuthoredDefault] = []
     asset_types: list[TypeTrace] = []
     assets: AssetsTrace | None = None
+    # The persona's graph and what each route or nearest step did on it.
+    route: RouteTrace | None = None
     composition_rejection: list[str] = []
     unavailable: str | None = None
 
@@ -325,6 +339,8 @@ class Turn(_Model):
     gap: CoverageGap | None = None
     segments: list[Segment]
     candidates: list[Candidate] = []
+    # Every route the answer rests on, in plan order, each complete in itself.
+    routes: list[RouteOut] = []
     state: ConversationState
     trace: Trace
     llm_calls: list[LlmCall]
@@ -355,6 +371,9 @@ shape:
   type are within a place.
 - "asset-aggregation": it asks to compare a count across a scale level ("which
   floor has the most lights").
+- "proximity": it asks for the nearest asset of a type ("the nearest extinguisher
+  to room 107").
+- "route": it asks how to get somewhere, or how long or how far that is.
 - "step-dependent": answering needs the result of one step to decide the next
   ("what is in the room with the most lights"). No steps.
 - "unsupported": anything else. No steps.
@@ -380,6 +399,20 @@ steps: ids s1, s2, ..., at most {STEP_CAP}. Every step but the last feeds a late
   counts those assets per space of that tier. "by" is one of "tiers". A scale level
   named in the question sets both: the place it names is the scope, the tier it
   compares across is "by". An asset-aggregation plan ends in it.
+- places_matching, for a place mention that describes rather than names ("the
+  nearest toilet", "a lift"): every place that fits, as a set. Only a route reads it.
+- route: {{"destination": {{"step": "<id>"}}}}, the step for the place asked for: a
+  resolve_place step, a places_matching step, or an assets_in_scope step for a route
+  to an asset. It ends at the nearest. "origin": {{"step": "<a resolve_place step>"}}
+  only when the question says where to start, otherwise leave it out. "step_free":
+  true only when the question asks for no stairs, in whatever words. Never infer it.
+  "alternatives": 2 or 3 only when the question asks for more than one option.
+  For "to A and then to B", a second route with "after": {{"step": "<the first route>"}}.
+  At most {ROUTE_STEP_CAP} route steps, at most {ALTERNATIVES_CAP} alternatives each.
+  A route plan ends in a route step.
+- nearest: {{"assets": {{"step": "<the assets_in_scope step>"}}}}, and "to": {{"step":
+  "<a resolve_place step>"}} for the place to be near, left out when the question
+  names none. A proximity plan ends in it.
 
 If "pending" is present, the previous turn asked the user which place they meant
 and listed the candidates. Read the question as the answer to that, and resolve
@@ -432,6 +465,35 @@ COMPOSITION_INSTRUCTIONS = {
 "position_not_recorded" the assets found whose position is not recorded.
 """
     ),
+    QuestionShape.ROUTE: (
+        "You answer how to get somewhere, briefly, in the question's language.\n"
+        + _COMPOSE_RULES
+        + """
+"routes" are the routes found, in order. Each has its "destination", its "duration"
+and its "distance", the places it passes through in "via", and how it changes level
+in "changes_level_by". "origin" is where it starts, and "origin_is_default" says the
+question named no start. A duration placeholder fills in as seconds and says that it
+is modelled; a distance fills in as metres. Write no unit and no "about" yourself.
+"alternatives" are routes to the next nearest places. Name every fact in "required".
+Say only what the facts say: this is not a measurement and you do not know the way
+in more detail than "via".
+"""
+    ),
+    QuestionShape.PROXIMITY: (
+        "You answer which asset of a kind is nearest, briefly, in the question's language.\n"
+        + _COMPOSE_RULES
+        + "\n"
+        + _COUNT_RULES
+        + """
+"nearest" lists where the nearest ones are: "in" is the place and "counts" how many
+are there. "types" are what they are. "anchor" is the place they are nearest to.
+"basis" says what nearest means here. "modelled-duration": a route reaches them,
+and "duration" and "distance" give it, already saying they are modelled.
+"shared-containment": no route was found, and they are the ones in the same
+"shared" place as the anchor. Then say they share that place, and do not call it a
+distance.
+"""
+    ),
     QuestionShape.ASSET_AGGREGATION: (
         "You answer which spaces of one scale level hold the most of something, briefly, "
         "in the question's language.\n"
@@ -462,12 +524,17 @@ ABSTAIN = {
     AbstentionCause.UNSUPPORTED_QUESTION: "I can't answer that kind of question yet.",
     AbstentionCause.PLAN_REJECTED: "I couldn't work out how to answer that.",
     AbstentionCause.COMPOSITION_REJECTED: "I found the place but couldn't word the answer.",
+    AbstentionCause.NO_ROUTE: "There is no route on the mapped graph for this persona.",
+    AbstentionCause.NOTHING_NEAR: "I don't know of one near there.",
 }
 # What a step that found nothing makes of the turn, by its tool.
 _NOTHING = {
     "resolve_place": AbstentionCause.NO_SUCH_PLACE,
     "resolve_asset_type": AbstentionCause.NO_SUCH_ASSET_TYPE,
     "aggregate": AbstentionCause.NOTHING_AT_SCALE_LEVEL,
+    "places_matching": AbstentionCause.NO_SUCH_PLACE,
+    "route": AbstentionCause.NO_ROUTE,
+    "nearest": AbstentionCause.NOTHING_NEAR,
 }
 _DECLINED = {
     QuestionShape.STEP_DEPENDENT: AbstentionCause.STEP_DEPENDENT_QUESTION,
@@ -483,6 +550,7 @@ class _Turn:
     trace: Trace
     calls: list[LlmCall]
     recovery: RecoveryOutcome = RecoveryOutcome.NOT_NEEDED
+    routes: list[RouteOut] = field(default_factory=list)
 
     async def call(
         self,
@@ -523,6 +591,8 @@ class _Turn:
             gap=gap,
             segments=segments,
             candidates=candidates or [],
+            # Only an answer carries routes: a turn that says nothing shows none.
+            routes=self.routes if kind is TurnKind.ANSWER else [],
             state=state or self.state,
             trace=self.trace,
             llm_calls=self.calls,
@@ -657,6 +727,7 @@ class TurnService:
         turn.note(
             resolved=_resolved(execution, venue), resolved_types=_resolved_types(execution, venue)
         )
+        turn.note(route=route_answer.trace(venue, execution))
         last = execution.last
         if last.outcome is Outcome.NONE:
             return turn.abstain(_NOTHING[last.tool])
@@ -669,6 +740,22 @@ class TurnService:
             subject = venue.spaces[last.ids[0]]
             answer = compose.location(venue, question, subject)
             state = turn.state.model_copy(update={"place": subject.id, "asset_types": []})
+        elif shape is QuestionShape.ROUTE:
+            runs = [r.routed for r in execution.by_tool("route") if r.routed is not None]
+            answer = compose.route(venue, question, runs)
+            turn.routes = route_answer.routes_of(venue, execution)
+            # Where the last route ended. The route itself is in the turn.
+            state = turn.state.model_copy(update={"place": last.ids[0], "asset_types": []})
+        elif shape is QuestionShape.PROXIMITY:
+            assert last.near is not None and last.found is not None
+            answer = compose.proximity(venue, question, last.near)
+            turn.routes = route_answer.routes_of(venue, execution)
+            near = [venue.assets[i] for i in last.near.asset_ids]
+            types = [venue.asset_types[i] for i in sorted({asset.type_id for asset in near})]
+            turn.note(asset_types=[_type_trace(kind) for kind in types])
+            state = turn.state.model_copy(
+                update={"place": near[0].space_id, "asset_types": [kind.id for kind in types]}
+            )
         else:
             found = last.found
             assert found is not None

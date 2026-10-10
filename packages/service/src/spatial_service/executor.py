@@ -28,17 +28,29 @@ from spatial_service.assets import (
     check_type_arguments,
     resolve_asset_type,
 )
-from spatial_service.places import Outcome, Venue, check_arguments, resolve_place
+from spatial_service.places import (
+    Outcome,
+    Venue,
+    check_arguments,
+    places_matching,
+    resolve_place,
+)
 from spatial_service.plan import (
     Aggregate,
     AssetsInScope,
     Mention,
+    Nearest,
+    PlacesMatching,
     Plan,
     ResolveAssetType,
     ResolvePlace,
+    Resolving,
+    Route,
     Step,
 )
 from spatial_service.recovery import Trigger, TriggerKind
+from spatial_service.routes import Nearest as NearestFound
+from spatial_service.routes import Origin, Routed, Target, asset_targets, find, nearest
 
 
 @dataclass(frozen=True)
@@ -58,6 +70,9 @@ class StepResult:
     # What assets_in_scope found, and what aggregate made of it.
     found: ScopeResult | None = None
     aggregation: Aggregation | None = None
+    # What a route step came to, and what a nearest step picked.
+    routed: Routed | None = None
+    near: NearestFound | None = None
 
 
 @dataclass(frozen=True)
@@ -109,7 +124,7 @@ def execute(plan: Plan, venue: Venue) -> Execution:
 
 def _problems(step: Step, mentions: dict[str, Mention], venue: Venue) -> list[str]:
     """Why a step's arguments are malformed. Nothing here reads what a persona can see."""
-    if isinstance(step, ResolvePlace):
+    if isinstance(step, (ResolvePlace, PlacesMatching)):
         return check_arguments(mentions[step.mention].text)
     if isinstance(step, ResolveAssetType):
         return check_type_arguments(mentions[step.mention].text)
@@ -138,6 +153,37 @@ def _run(
         return _result(
             step, mentions, Outcome.RESOLVED, found.ids, matched=len(found.ids), found=found
         )
+    if isinstance(step, PlacesMatching):
+        fitting = places_matching(venue, mentions[step.mention].text)
+        return _result(
+            step, mentions, fitting.outcome, fitting.ids, how=fitting.how, matched=fitting.matched
+        )
+    if isinstance(step, Route):
+        origin = None
+        if step.origin is not None:
+            origin = Origin(space_id=done[step.origin.step].ids[0])
+        elif step.after is not None:
+            # A route step that got this far found a route. It starts where that ended.
+            origin = Origin(space_id=done[step.after.step].ids[0])
+        wanted = done[step.destination.step]
+        if wanted.found is not None:
+            # A route to an asset goes to its space.
+            targets = asset_targets(venue, (venue.assets[i] for i in wanted.ids))
+        else:
+            targets = [Target(space_id) for space_id in wanted.ids]
+        routed = find(
+            venue, origin, targets, step_free=step.step_free, alternatives=step.alternatives
+        )
+        ends = tuple(found.destination for found in routed.found)
+        outcome = Outcome.RESOLVED if ends else Outcome.NONE
+        return _result(step, mentions, outcome, ends, matched=len(ends), routed=routed)
+    if isinstance(step, Nearest):
+        anchor = Origin(space_id=done[step.to.step].ids[0]) if step.to is not None else None
+        among = done[step.assets.step]
+        near = nearest(venue, anchor, [venue.assets[i] for i in among.ids])
+        ids = near.asset_ids if near is not None else ()
+        outcome = Outcome.RESOLVED if near is not None else Outcome.NONE
+        return _result(step, mentions, outcome, ids, matched=len(ids), found=among.found, near=near)
     source = done[step.assets.step].found
     assert source is not None
     counted = aggregate(venue, source, step.by)
@@ -154,7 +200,7 @@ def _result(
     ids: tuple[str, ...] = (),
     **rest: Any,
 ) -> StepResult:
-    mention = step.mention if isinstance(step, (ResolvePlace, ResolveAssetType)) else None
+    mention = step.mention if isinstance(step, Resolving) else None
     return StepResult(
         step=step.id,
         tool=step.tool,
