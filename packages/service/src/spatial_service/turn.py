@@ -46,6 +46,14 @@ the collapsed tree of visible spaces, the earlier questions and the names of wha
 the state still holds once it is cut down, and the composer gets references and
 kinds only. Nothing counts what was left out, so
 nothing can say so.
+
+A document answer adds a second list to composition, the passages retrieved this
+turn (retrieval.py), which the composer does get the text of: they passed the
+clearance filter. It is settled apart (_settle_documents), since a segment about a
+passage can be dropped on its own where a wrong fact rejects the whole answer.
+Each segment goes out with the full text of the passages it cites, for the
+entailment check, which is not done here. A query embedding is a paid call but
+not a model call of the turn, so it is reported in a list of its own.
 """
 
 from __future__ import annotations
@@ -99,7 +107,15 @@ from spatial_service.plan import (
     QuestionShape,
     parse_plan,
 )
-from spatial_service.recovery import PlanChange, RecoveryOutcome, Trigger, diff
+from spatial_service.recovery import PlanChange, RecoveryOutcome, Trigger, TriggerKind, diff
+from spatial_service.retrieval import (
+    Documents,
+    DocumentsTrace,
+    DroppedSegment,
+    EmbeddingCall,
+    RetrievalUnavailable,
+)
+from spatial_service.retrieval import trace as documents_trace
 from spatial_service.route_answer import RouteOut, RouteTrace
 from spatial_service.store import Store
 from spatial_service.tree import NODE_CAP, Collapsed, collapse
@@ -152,6 +168,11 @@ class AbstentionCause(StrEnum):
     # The venue's data does not reach far enough. The turn's `gap` says where. The
     # metrics count it apart (metrics.py).
     COVERAGE_GAP = "coverage-gap"
+    # Retrieval returned nothing, twice. No document the persona can read is
+    # anchored there: none exists, or none within their clearance. One cause.
+    NO_DOCUMENT = "no-document"
+    # Passages were retrieved, and no segment written about them passed provenance.
+    UNGROUNDED = "ungrounded"
     # Nothing is recorded in the scope asked about, and it is too small a place to
     # call a gap in the venue's data. No reason is given.
     NOTHING_RECORDED = "nothing-recorded"
@@ -382,6 +403,10 @@ class Trace(_Model):
     authored_defaults: list[AuthoredDefault] = []
     asset_types: list[TypeTrace] = []
     assets: AssetsTrace | None = None
+    # What was searched and retrieved, each document with its date.
+    documents: DocumentsTrace | None = None
+    # Segments the provenance check dropped from the answer.
+    dropped_segments: list[DroppedSegment] = []
     # The persona's graph and what each route or nearest step did on it.
     route: RouteTrace | None = None
     composition_rejection: list[str] = []
@@ -400,6 +425,8 @@ class Turn(_Model):
     state: ConversationState
     trace: Trace
     llm_calls: list[LlmCall]
+    # Query embeddings made for retrieval. Paid, but not model calls of the turn.
+    embedding_calls: list[EmbeddingCall] = []
     # Whether this turn needed a second plan, and whether that one ran its steps.
     recovery: RecoveryOutcome = RecoveryOutcome.NOT_NEEDED
 
@@ -429,6 +456,11 @@ shape:
   type are within a place.
 - "asset-aggregation": it asks to compare a count across a scale level ("which
   floor has the most lights").
+- "asset-document": it asks what a document says about assets: a manual, about the
+  assets in a place or of a type ("what does the manual say about servicing the AC
+  unit in room 107").
+- "place-document": it asks what a place's own page says about it ("what does the
+  accessibility page say about the Audimax").
 - "attribute-filter": it asks for the assets in a place that have, lack, or fall
   before or after a date on one of "attributes" ("which lights have no serial
   number", "what falls due for service before June").
@@ -472,6 +504,12 @@ steps: ids s1, s2, ..., at most {STEP_CAP}. Every step but the last feeds a late
   counts those assets per space of that tier. "by" is one of "tiers". A scale level
   named in the question sets both: the place it names is the scope, the tier it
   compares across is "by". An asset-aggregation plan ends in it.
+- retrieve_documents: {{"anchors": {{"step": "<id>"}}, "query": "<a few words>"}}
+  searches the documents tied to what that step found. "query" is what to look
+  for in them, in English, from the question ("servicing", "step-free access").
+  An asset-document plan ends in it reading the assets_in_scope step: it searches
+  what is anchored to those assets and their types. A place-document plan ends in
+  it reading the resolve_place step for the place asked about.
 - places_matching, for a place mention that describes rather than names ("the
   nearest toilet", "a lift"): every place that fits, as a set. Only a route reads it.
 - route: {{"destination": {{"step": "<id>"}}}}, the step for the place asked for: a
@@ -538,6 +576,17 @@ do not add either word yourself. Counts listed together are one count split by
 provenance: name all of them or none, and never describe them as a single figure.
 Name every fact in "required". Say only what the facts say: do not explain, qualify
 or guess at anything they leave out.
+"""
+
+_PASSAGE_RULES = """
+"passages" is a second list, apart from the facts: what was retrieved from the
+documents, each with a ref (p1, p2, ...), a title and its text. Then say what the
+passages say about the question, one segment per passage you use, and put the
+passage's ref in that segment's "cites". A passage ref goes in "cites" only, never
+in braces. Say only what the passage says. To quote it, copy its words exactly
+inside double quotes. Do not use double quotes for anything else. A passage's
+numbers are not yours to write: leave out any wording that needs a digit. Use only
+the passages that answer the question, and none if none does.
 """
 
 COMPOSITION_INSTRUCTIONS = {
@@ -614,6 +663,28 @@ say so for each, and never rank them or give them a count. "scope" is the place
 the question was asked within and "total" the count across it.
 """
     ),
+    QuestionShape.ASSET_DOCUMENT: (
+        "You answer what the documents say about the assets in a place, briefly, in the "
+        "question's language.\n"
+        + _COMPOSE_RULES
+        + "\n"
+        + _COUNT_RULES
+        + """
+"scope" is the place asked about, "total" the count of the assets found there and
+"rows" its breakdown, as "rows_by" says. Say what was found first, from the facts.
+"""
+        + _PASSAGE_RULES
+    ),
+    QuestionShape.PLACE_DOCUMENT: (
+        "You answer what a place's documents say about it, briefly, in the question's "
+        "language.\n"
+        + _COMPOSE_RULES
+        + """
+"subject" is the place asked about; the other facts are the places it lies within.
+Name every fact in "required".
+"""
+        + _PASSAGE_RULES
+    ),
 }
 
 COMPOSITION_INSTRUCTIONS[QuestionShape.ATTRIBUTE_FILTER] = COMPOSITION_INSTRUCTIONS[
@@ -635,6 +706,8 @@ ABSTAIN = {
     AbstentionCause.UNSUPPORTED_QUESTION: "I can't answer that kind of question yet.",
     AbstentionCause.PLAN_REJECTED: "I couldn't work out how to answer that.",
     AbstentionCause.COMPOSITION_REJECTED: "I found the place but couldn't word the answer.",
+    AbstentionCause.NO_DOCUMENT: "I don't know of a document about that.",
+    AbstentionCause.UNGROUNDED: ("I found documents but couldn't tie an answer to what they say."),
     AbstentionCause.NOTHING_RECORDED: "I can't answer that from what is recorded.",
     AbstentionCause.NOTHING_REFERRED_TO: "I don't know what that refers to.",
     AbstentionCause.NO_ROUTE: "There is no route on the mapped graph for this persona.",
@@ -669,6 +742,7 @@ class _Turn:
     trace: Trace
     calls: list[LlmCall]
     recovery: RecoveryOutcome = RecoveryOutcome.NOT_NEEDED
+    embeddings: list[EmbeddingCall] = field(default_factory=list)
     question: str = ""
 
     @property
@@ -726,6 +800,7 @@ class _Turn:
             state=state or self.state,
             trace=self.trace,
             llm_calls=self.calls,
+            embedding_calls=self.embeddings,
             recovery=self.recovery,
         )
 
@@ -737,17 +812,26 @@ class _Turn:
             state=self.next(),
         )
 
-    def unavailable(self, error: LlmUnavailable) -> Turn:
+    def unavailable(self, error: LlmUnavailable | RetrievalUnavailable) -> Turn:
         # The state goes back as it came, so the client can ask again.
         self.note(unavailable=str(error.purpose))
         return self.finish(TurnKind.UNAVAILABLE, [Segment(text=ANSWER_UNAVAILABLE, citations=[])])
 
 
 class TurnService:
-    def __init__(self, store: Store, llm: Llm, node_cap: int = NODE_CAP) -> None:
+    def __init__(
+        self,
+        store: Store,
+        llm: Llm,
+        node_cap: int = NODE_CAP,
+        *,
+        documents: Documents | None = None,
+    ) -> None:
         self.store = store
         self.llm = llm
         self.node_cap = node_cap
+        # Document retrieval, bound here and not by any plan. None retrieves nothing.
+        self.documents = documents
 
     async def take(self, request: TurnRequest) -> Turn:
         snapshot = await asyncio.to_thread(self._snapshot, request)
@@ -775,9 +859,9 @@ class TurnService:
                 if second.execution is not None:
                     turn.recovery = RecoveryOutcome.REPAIRED
                 return await self._settle(turn, request.question, venue, second)
-        except LlmUnavailable as error:
+        except (LlmUnavailable, RetrievalUnavailable) as error:
             return turn.unavailable(error)
-        return _give_up(turn, venue)
+        return _give_up(turn, venue, second.trigger)
 
     async def _attempt(
         self,
@@ -843,7 +927,20 @@ class TurnService:
             attempt = _Attempt(written, None, None, trigger)
         else:
             written = plan.model_dump(mode="json", exclude_none=True)
-            execution = None if plan.shape in DECLINED else execute(plan, venue, turn.state)
+            execution = None
+            if plan.shape not in DECLINED:
+                # Off the loop: a retrieval step waits on the index.
+                execution = await asyncio.to_thread(
+                    execute, plan, venue, turn.state, self.documents
+                )
+                turn.embeddings.extend(
+                    EmbeddingCall(
+                        deployment=r.retrieval.embedding.deployment,
+                        input_tokens=r.retrieval.embedding.input_tokens,
+                    )
+                    for r in execution.results
+                    if r.retrieval is not None and r.retrieval.embedding is not None
+                )
             trigger = execution.trigger if execution is not None else None
             version = PlanVersion(
                 version=number,
@@ -881,6 +978,8 @@ class TurnService:
         if last.outcome is Outcome.AMBIGUOUS:
             assert last.text is not None
             return _clarify(turn, venue, last.text, last.ids)
+        if last.retrieval is not None:
+            return await self._settle_documents(turn, question, venue, shape, last)
 
         found: ScopeResult | None = None
         if shape is QuestionShape.PLACE_LOCATION:
@@ -959,6 +1058,55 @@ class TurnService:
             return turn.abstain(AbstentionCause.COMPOSITION_REJECTED)
         return turn.finish(TurnKind.ANSWER, segments, state=state)
 
+    async def _settle_documents(
+        self, turn: _Turn, question: str, venue: Venue, shape: QuestionShape, last: StepResult
+    ) -> Turn:
+        """An answer over two lists: the facts as before, and the passages retrieved."""
+        retrieved = last.retrieval
+        assert retrieved is not None
+        found = last.found
+        if found is not None:
+            answer = compose.asset_documents(venue, question, found, retrieved)
+            # The types the anchored assets are of, whether or not the question named any.
+            types = [venue.asset_types[i] for i in retrieved.anchors.asset_type_ids]
+            types.sort(key=lambda kind: kind.id)
+            turn.note(
+                asset_types=[_type_trace(kind) for kind in types],
+                assets=_assets_trace(venue, last, answer),
+            )
+            state = turn.next(**_carried(venue, last, found))
+        else:
+            assert retrieved.anchors.scope is not None
+            subject = venue.spaces[retrieved.anchors.scope]
+            answer = compose.place_documents(venue, question, subject, retrieved)
+            state = turn.next(place=subject.id)
+        places = [fact.space for fact in answer.facts if fact.space is not None]
+        turn.note(
+            documents=documents_trace(last.step, retrieved),
+            provenance=[_provenance(s) for s in places],
+            authored_defaults=_defaults(places),
+        )
+
+        text = await turn.call(
+            self.llm,
+            Purpose.COMPOSITION,
+            instructions=COMPOSITION_INSTRUCTIONS[shape],
+            payload=answer.payload,
+            response_format=compose.Draft,
+        )
+        try:
+            segments, dropped = compose.ground(
+                text, answer.facts, answer.required, answer.together, answer.passages, answer.banned
+            )
+        except CompositionRejected as rejected:
+            turn.note(composition_rejection=rejected.reasons)
+            return turn.abstain(AbstentionCause.COMPOSITION_REJECTED)
+        turn.note(dropped_segments=dropped)
+        # A document answer with no document segment left is not one.
+        if not any(segment.passages for segment in segments):
+            return turn.abstain(AbstentionCause.UNGROUNDED)
+        return turn.finish(TurnKind.ANSWER, segments, state=state)
+
     def _snapshot(self, request: TurnRequest) -> str:
         current, previous = self.store.served()
         held = request.state.snapshot if request.state else None
@@ -994,11 +1142,13 @@ def _json_object(text: str) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else None
 
 
-def _give_up(turn: _Turn, venue: Venue) -> Turn:
+def _give_up(turn: _Turn, venue: Venue, trigger: Trigger | None = None) -> Turn:
     """A second trigger: ask again what is pending, or else abstain. Never a third call."""
     pending = turn.state.pending
     if pending is not None:
         return _ask_again(turn, venue, pending)
+    if trigger is not None and trigger.kind is TriggerKind.EMPTY_RETRIEVAL:
+        return turn.abstain(AbstentionCause.NO_DOCUMENT)
     return turn.abstain(AbstentionCause.PLAN_REJECTED)
 
 

@@ -355,7 +355,8 @@ def test_every_cause_of_no_route_is_the_same_abstention() -> None:
     unmapped = refusal("Lager")
 
     assert restricted == behind_an_office == unmapped
-    assert restricted["segments"] == [{"text": NO_ROUTE, "citations": []}]
+    [segment] = restricted["segments"]
+    assert (segment["text"], segment["citations"]) == (NO_ROUTE, [])
     assert restricted["reason"] is None
 
 

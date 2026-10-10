@@ -28,6 +28,7 @@ from spatial_core.records import (
     Space,
     VisibleSpace,
 )
+from spatial_core.search import IndexRef
 from spatial_core.stores import CONTROL_SCHEMA, READER_ROLE, snapshot_schemas
 from spatial_service.places import Venue
 from spatial_service.routes import door_counts, subgraph
@@ -61,10 +62,12 @@ class MemoryStore:
         asset_types: Iterable[AssetType] = (),
         visible_assets: Mapping[Persona, Collection[str]] | None = None,
         visible_asset_types: Mapping[Persona, Collection[str]] | None = None,
+        index: IndexRef | None = None,
         service_events: Iterable[ServiceEvent] = (),
         edges: Iterable[Edge] = (),
         default_origin: str | None = None,
     ) -> None:
+        self.index = index
         self.snapshot = snapshot
         self.previous = previous
         self._spaces = {space.id: space for space in spaces}
@@ -93,6 +96,7 @@ class MemoryStore:
             assets={i: a for i, a in self._assets.items() if i in assets},
             asset_types={i: t for i, t in self._types.items() if i in types},
             tiers=tiers_of(self._spaces.values()),
+            index=self.index,
             service_events=by_asset(e for e in self._events if e.asset_id in assets),
             **circulation(self._edges, ids, persona, self._default_origin),
         )
@@ -202,7 +206,9 @@ class PostgresStore:
         edges_query = sql.SQL("SELECT * FROM {views}.edges").format(**names)
         with self._connect() as conn:
             loaded = conn.execute(
-                "SELECT status, manifest -> 'default_origin' ->> 'edge' AS default_origin"
+                "SELECT status, search_index,"
+                " manifest #>> '{documents,embedding,deployment}' AS embedding_deployment,"
+                " manifest -> 'default_origin' ->> 'edge' AS default_origin"
                 " FROM control.snapshots WHERE snapshot = %s",
                 (snapshot,),
             ).fetchone()
@@ -227,6 +233,10 @@ class PostgresStore:
             assets={asset.id: asset for asset in assets},
             asset_types={kind.id: kind for kind in types},
             tiers=tuple(row["tier"] for row in tier_rows),
+            # A snapshot loaded before documents were has no index, and retrieves nothing.
+            index=IndexRef(loaded["search_index"], loaded["embedding_deployment"])
+            if loaded["search_index"]
+            else None,
             service_events=by_asset(ServiceEvent.model_validate(row) for row in event_rows),
             **circulation(edges, visible, persona, loaded["default_origin"]),
         )

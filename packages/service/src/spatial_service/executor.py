@@ -8,6 +8,10 @@ with nothing under it, or a tool that rejected its arguments, which is a trigger
 
 An asset step that finds no assets has not come up short. An empty set is a result.
 
+A retrieval step that gets no passage has, and it is a trigger too: empty-retrieval.
+It is the one step that leaves the process (the index, the embedding deployment),
+so the host runs the executor off the event loop.
+
 A step whose mention is a follow-up reference looks nothing up. It reads the
 conversation state the host handed in, already cut to what the persona can see
 (conversation.py), and comes up short the same ways: nothing, or more than one.
@@ -52,12 +56,24 @@ from spatial_service.plan import (
     ResolveAssetType,
     ResolvePlace,
     Resolving,
+    RetrieveDocuments,
     Route,
     Step,
 )
 from spatial_service.recovery import Trigger, TriggerKind
+from spatial_service.retrieval import (
+    Documents,
+    Retrieval,
+    anchors_of_assets,
+    anchors_of_place,
+    check_query,
+    document_filter,
+)
 from spatial_service.routes import Nearest as NearestFound
 from spatial_service.routes import Origin, Routed, Target, asset_targets, find, nearest
+
+# The one reason an empty retrieval gives. It never says why nothing came back.
+NOTHING_RETRIEVED = "retrieval returned nothing"
 
 
 @dataclass(frozen=True)
@@ -77,6 +93,8 @@ class StepResult:
     # What assets_in_scope found, and what aggregate made of it.
     found: ScopeResult | None = None
     aggregation: Aggregation | None = None
+    # What retrieve_documents searched for and got.
+    retrieval: Retrieval | None = None
     # What a follow-up reference came to, when the step's mention was one.
     referred: Referred | None = None
     # What a route step came to, and what a nearest step picked.
@@ -99,7 +117,11 @@ class Execution:
 
     @property
     def trigger(self) -> Trigger | None:
-        """A trigger the run raised, which only a step whose arguments were rejected does."""
+        """A trigger the run raised: a tool rejected its arguments, or retrieval got nothing."""
+        if self.last.retrieval is not None and self.last.outcome is Outcome.NONE:
+            return Trigger(
+                kind=TriggerKind.EMPTY_RETRIEVAL, step=self.last.step, reasons=[NOTHING_RETRIEVED]
+            )
         if self.last.outcome is not Outcome.REJECTED:
             return None
         return Trigger(
@@ -112,7 +134,13 @@ class Execution:
         return [r for r in self.results if r.tool == tool]
 
 
-def execute(plan: Plan, venue: Venue, state: ConversationState | None = None) -> Execution:
+def execute(
+    plan: Plan,
+    venue: Venue,
+    state: ConversationState | None = None,
+    documents: Documents | None = None,
+) -> Execution:
+    """Run the plan. ``documents`` is the retrieval the host bound; with none, nothing is found."""
     mentions = {mention.id: mention for mention in plan.mentions}
     for step in plan.steps:
         problems = _problems(step, mentions, venue)
@@ -123,7 +151,9 @@ def execute(plan: Plan, venue: Venue, state: ConversationState | None = None) ->
     done: dict[str, StepResult] = {}
     results: list[StepResult] = []
     for step in plan.steps:
-        if isinstance(step, Resolving) and mentions[step.mention].refers is not None:
+        if isinstance(step, RetrieveDocuments):
+            result = _retrieve(step, mentions, venue, done, documents)
+        elif isinstance(step, Resolving) and mentions[step.mention].refers is not None:
             result = _refer(step, mentions, venue, state, done)
         else:
             result = _run(step, mentions, venue, done)
@@ -155,6 +185,8 @@ def _problems(step: Step, mentions: dict[str, Mention], venue: Venue) -> list[st
         return check_type_arguments(mentions[step.mention].text)
     if isinstance(step, Aggregate):
         return check_tier(venue, step.by)
+    if isinstance(step, RetrieveDocuments):
+        return check_query(step.query)
     if isinstance(step, AssetsInScope):
         return check_filters(venue, step.filters)
     return []
@@ -247,6 +279,36 @@ def _run(
     ids = (*(g.space_id for g in counted.ranked), *counted.unrecorded)
     return _result(
         step, mentions, counted.outcome, ids, matched=len(ids), found=source, aggregation=counted
+    )
+
+
+def _retrieve(
+    step: RetrieveDocuments,
+    mentions: dict[str, Mention],
+    venue: Venue,
+    done: dict[str, StepResult],
+    documents: Documents | None,
+) -> StepResult:
+    """The passages anchored to what an earlier step found. None at all is a trigger."""
+    source = done[step.anchors.step]
+    if source.found is not None:
+        anchors = anchors_of_assets(venue, source.found)
+    else:
+        # A place step that got this far resolved exactly one place.
+        anchors = anchors_of_place(venue, source.ids[0])
+    if documents is None:
+        found = Retrieval(step.query, anchors, document_filter(venue.persona, anchors))
+    else:
+        found = documents.retrieve(venue, anchors, step.query)
+    ids = tuple(passage.chunk.id for passage in found.passages)
+    return _result(
+        step,
+        mentions,
+        Outcome.RESOLVED if ids else Outcome.NONE,
+        ids,
+        matched=len(ids),
+        found=source.found,
+        retrieval=found,
     )
 
 

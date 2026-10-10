@@ -16,6 +16,13 @@ Configuration is from the environment:
                                      planner is shown, 200 by default
     OTEL_EXPORTER_OTLP_ENDPOINT      optional; where metrics are pushed (metrics.py).
                                      Unset, none are.
+    AZURE_SEARCH_ENDPOINT            optional: the Azure AI Search service the snapshots'
+                                     indexes are in, with AZURE_SEARCH_API_KEY
+    SPATIAL_SEARCH_DIR               optional: the stand-in index directory, when no
+                                     Azure service is named. With neither, no document
+                                     is ever retrieved.
+    SPATIAL_SEMANTIC_RANKER          optional: "on" reranks retrieved passages with the
+                                     semantic ranker. Off by default.
 """
 
 from __future__ import annotations
@@ -27,12 +34,16 @@ from dataclasses import dataclass
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
-from spatial_service import metrics
+from spatial_service import metrics, search
 from spatial_service.llm import Deployment, Llm
 from spatial_service.metrics import Metrics
+from spatial_service.retrieval import Documents, Retriever
 from spatial_service.store import PostgresStore, Store
 from spatial_service.tree import NODE_CAP
 from spatial_service.turn import Turn, TurnKind, TurnRefused, TurnRequest, TurnService
+
+SEMANTIC_RANKER_ENV = "SPATIAL_SEMANTIC_RANKER"
+_ON = ("on", "true", "1", "yes")
 
 
 class ConfigError(Exception):
@@ -49,6 +60,7 @@ class Settings:
     composition_deployment: str
     timeout_seconds: float
     tree_node_cap: int = NODE_CAP
+    semantic_ranker: bool = False
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] = os.environ) -> Settings:
@@ -74,6 +86,7 @@ class Settings:
             composition_deployment=env["SPATIAL_COMPOSITION_DEPLOYMENT"],
             timeout_seconds=float(env.get("SPATIAL_LLM_TIMEOUT_SECONDS", "30")),
             tree_node_cap=int(env.get("SPATIAL_TREE_NODE_CAP", str(NODE_CAP))),
+            semantic_ranker=env.get(SEMANTIC_RANKER_ENV, "off").strip().lower() in _ON,
         )
         if settings.planning_deployment == settings.composition_deployment:
             raise ConfigError("planning and composition need separate deployments")
@@ -101,10 +114,32 @@ def azure_llm(settings: Settings) -> Llm:
     )
 
 
+def documents_from_env(settings: Settings, env: Mapping[str, str] = os.environ) -> Documents | None:
+    """Document retrieval as the environment sets it up, or None when it names no index."""
+    try:
+        index = search.from_env(env)
+    except ValueError as error:
+        raise ConfigError(str(error)) from error
+    if index is None:
+        return None
+    embedder = search.AzureEmbedder(
+        endpoint=settings.endpoint,
+        api_key=settings.api_key,
+        api_version=settings.api_version,
+        timeout_seconds=settings.timeout_seconds,
+    )
+    return Retriever(index, embedder, semantic_ranker=settings.semantic_ranker)
+
+
 def create_app(
-    store: Store, llm: Llm, recorder: Metrics | None = None, *, tree_node_cap: int = NODE_CAP
+    store: Store,
+    llm: Llm,
+    recorder: Metrics | None = None,
+    *,
+    tree_node_cap: int = NODE_CAP,
+    documents: Documents | None = None,
 ) -> FastAPI:
-    service = TurnService(store, llm, tree_node_cap)
+    service = TurnService(store, llm, tree_node_cap, documents=documents)
     recorder = recorder or Metrics()
     app = FastAPI(title="spatial-knowledge-layer")
 
@@ -134,7 +169,13 @@ def main() -> None:
     recorder = metrics.from_env()
     try:
         uvicorn.run(
-            create_app(store, azure_llm(settings), recorder, tree_node_cap=settings.tree_node_cap),
+            create_app(
+                store,
+                azure_llm(settings),
+                recorder,
+                tree_node_cap=settings.tree_node_cap,
+                documents=documents_from_env(settings),
+            ),
             host=os.environ.get("SPATIAL_SERVICE_HOST", "127.0.0.1"),
             port=int(os.environ.get("SPATIAL_SERVICE_PORT", "8000")),
         )

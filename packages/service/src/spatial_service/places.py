@@ -32,6 +32,7 @@ from enum import StrEnum
 from functools import cached_property
 
 from spatial_core.records import Asset, AssetType, Edge, Persona, ServiceEvent, Space
+from spatial_core.search import IndexRef
 
 # How many candidates a clarification names.
 CLARIFY_CAP = 6
@@ -83,6 +84,9 @@ class Venue:
     # word, not a place, so it is the one thing here that is not cut to the persona:
     # whether "floor" is a scale level must not depend on who asks.
     tiers: tuple[str, ...] = ()
+    # The snapshot's search index, where it has one. Which chunks of it the
+    # persona may read is the retrieval filter's business, not the venue's.
+    index: IndexRef | None = None
     # The service events of visible assets, by asset. An event is hidden with its asset.
     service_events: Mapping[str, tuple[ServiceEvent, ...]] = field(default_factory=dict)
     # The circulation edges the persona may take, between spaces they can see.

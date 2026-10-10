@@ -7,8 +7,9 @@ A trigger is something the model got wrong that a second plan could fix:
     unbound-reference     a reference in the plan names nothing it can bind to: a
                           step resolving a mention the plan lacks, a step reading one
                           that is not earlier or whose output it cannot take
-    empty-retrieval       document retrieval returned nothing. No tool retrieves
-                          documents yet, so nothing raises it so far.
+    empty-retrieval       document retrieval returned nothing, for whatever reason:
+                          no document there, none within clearance, nothing to
+                          anchor to. The reason is never given.
     malformed-arguments   a tool rejected its arguments before looking anything up
 
 Outcomes that are answers are never triggers, and never buy a model call: nothing

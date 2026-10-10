@@ -14,14 +14,15 @@ The tools, and what each produces:
     assets_in_scope      a scope and types, both optional references,
                          and attribute filters                       -> assets
     aggregate            assets, and a scale level to count them by  -> groups
+    retrieve_documents   anchors (a step's assets, or its place) and a query -> passages
     places_matching      a description of places   -> a place set (one or many)
     route                an origin and a destination -> a route
     nearest              assets, and a place to be near -> the nearest of them
 
 A reference binds only to an earlier step that produces what it reads. Nothing
-reads groups, and nothing that resolves a mention reads assets, so a plan cannot
-say "take whichever came out on top and look inside it". A question like that is
-its own shape, step-dependent, and gets an abstention.
+reads groups or passages, and nothing that resolves a mention reads assets, so a
+plan cannot say "take whichever came out on top and look inside it". A question
+like that is its own shape, step-dependent, and gets an abstention.
 
 A filter is an attribute by name and one of four tests: recorded, not-recorded,
 before a date, after a date. That is the whole vocabulary. There is no field for a
@@ -41,6 +42,7 @@ points, at what an earlier turn resolved or at a candidate a clarification offer
 and the step that resolves it reads conversation state and looks nothing up
 (conversation.py). An asset mention is only ever one of these so far: nothing finds an
 asset by its name yet.
+
 A route's destination is a place, a place set or assets, and it ends at the nearest.
 Its origin is a place, or where an earlier route ended, or left out for the persona's
 default origin. Step-free is a flag on the step, set only when the question asks.
@@ -48,6 +50,9 @@ A plan holds at most two route steps, each with at most three alternatives.
 
 A plan that may not run raises a trigger, unbound-reference when a reference in
 it binds to nothing and plan-invalid otherwise, which buys it one recovery call.
+
+A document shape says what its retrieval is anchored by: assets for asset-document,
+a place for place-document. A plan that mixes them up is invalid.
 
 To add a tool: write its step model with READS for its references, add it to Step
 and STEPS, give it a row in PRODUCES, and teach the executor to run it.
@@ -78,6 +83,11 @@ class QuestionShape(StrEnum):
     ASSET_CONTAINMENT = "asset-containment"
     # "Which floor has the most lights?": assets counted per space of a scale level.
     ASSET_AGGREGATION = "asset-aggregation"
+    # "What does the manual say about servicing the unit in X?": the assets under a
+    # scope, and passages of the documents anchored to them or to their types.
+    ASSET_DOCUMENT = "asset-document"
+    # "What does the accessibility page say about X?": passages anchored to a place.
+    PLACE_DOCUMENT = "place-document"
     # "Which lights have no service record?", "What falls due before June?": the
     # assets under one scope that pass a filter on an attribute.
     ATTRIBUTE_FILTER = "attribute-filter"
@@ -160,11 +170,11 @@ class StepRef(_Model):
 
 class _Step(_Model):
     id: str = Field(pattern=r"^s[0-9]+$")
-    # Each reference field, and what the step it names must produce. A tuple where
-    # it may be one of several.
-    READS: ClassVar[dict[str, str | tuple[str, ...]]] = {}
+    # Each reference field, and what the step it names must produce. Several
+    # words split by "|" where it takes any of them.
+    READS: ClassVar[dict[str, str]] = {}
 
-    def references(self) -> list[tuple[str | tuple[str, ...], StepRef]]:
+    def references(self) -> list[tuple[str, StepRef]]:
         """The references this step makes, as (what it reads, reference)."""
         found = [(reads, getattr(self, name)) for name, reads in self.READS.items()]
         return [(reads, ref) for reads, ref in found if ref is not None]
@@ -173,7 +183,7 @@ class _Step(_Model):
 class ResolvePlace(_Step):
     """Find the place a mention names, among what the persona can see."""
 
-    READS: ClassVar[dict[str, str | tuple[str, ...]]] = {"within": "places"}
+    READS: ClassVar[dict[str, str]] = {"within": "places"}
     RESOLVES: ClassVar[MentionKind] = MentionKind.PLACE
 
     tool: Literal["resolve_place"]
@@ -227,7 +237,7 @@ class ResolveAsset(_Step):
 class AssetsInScope(_Step):
     """Every visible asset under one scope node. One step, however many spaces lie under it."""
 
-    READS: ClassVar[dict[str, str | tuple[str, ...]]] = {
+    READS: ClassVar[dict[str, str]] = {
         "scope": "places",
         "types": "asset-types",
     }
@@ -244,12 +254,23 @@ class AssetsInScope(_Step):
 class Aggregate(_Step):
     """Count a step's assets per space of one scale level under its scope."""
 
-    READS: ClassVar[dict[str, str | tuple[str, ...]]] = {"assets": "assets"}
+    READS: ClassVar[dict[str, str]] = {"assets": "assets"}
 
     tool: Literal["aggregate"]
     assets: StepRef
     # The scale level to count by, as the venue names its tiers: "floor", "building".
     by: str = Field(min_length=1, max_length=40)
+
+
+class RetrieveDocuments(_Step):
+    """Search the documents anchored to what a step found: its assets, or its place."""
+
+    READS: ClassVar[dict[str, str]] = {"anchors": "assets|places"}
+
+    tool: Literal["retrieve_documents"]
+    anchors: StepRef
+    # What to look for in them, in words. Only the index ever reads it.
+    query: str = Field(min_length=1, max_length=200)
 
 
 class PlacesMatching(_Step):
@@ -264,10 +285,10 @@ class PlacesMatching(_Step):
 class Route(_Step):
     """The quickest route to a destination, by modelled duration, over what the persona may walk."""
 
-    READS: ClassVar[dict[str, str | tuple[str, ...]]] = {
+    READS: ClassVar[dict[str, str]] = {
         "origin": "places",
         "after": "route",
-        "destination": ("places", "place-set", "assets", "asset"),
+        "destination": "places|place-set|assets|asset",
     }
 
     tool: Literal["route"]
@@ -287,9 +308,9 @@ class Route(_Step):
 class Nearest(_Step):
     """The nearest of a step's assets to a place, or to the default origin."""
 
-    READS: ClassVar[dict[str, str | tuple[str, ...]]] = {
+    READS: ClassVar[dict[str, str]] = {
         "assets": "assets",
-        "to": ("places", "asset"),
+        "to": "places|asset",
     }
 
     tool: Literal["nearest"]
@@ -307,6 +328,7 @@ Step = (
     | AssetsInScope
     | Aggregate
     | ResolveAsset
+    | RetrieveDocuments
     | PlacesMatching
     | Route
     | Nearest
@@ -318,6 +340,7 @@ STEPS: dict[str, type[_Step]] = {
     "resolve_asset_type": ResolveAssetType,
     "assets_in_scope": AssetsInScope,
     "aggregate": Aggregate,
+    "retrieve_documents": RetrieveDocuments,
     "resolve_asset": ResolveAsset,
     "places_matching": PlacesMatching,
     "route": Route,
@@ -331,6 +354,7 @@ PRODUCES = {
     "resolve_asset_type": "asset-types",
     "assets_in_scope": "assets",
     "aggregate": "groups",
+    "retrieve_documents": "passages",
     # A route reads one asset as where to go, a nearest step as where to be near.
     "resolve_asset": "asset",
     "places_matching": "place-set",
@@ -343,10 +367,18 @@ ENDS_IN = {
     QuestionShape.PLACE_LOCATION: "resolve_place",
     QuestionShape.ASSET_CONTAINMENT: "assets_in_scope",
     QuestionShape.ASSET_AGGREGATION: "aggregate",
+    QuestionShape.ASSET_DOCUMENT: "retrieve_documents",
+    QuestionShape.PLACE_DOCUMENT: "retrieve_documents",
     QuestionShape.ATTRIBUTE_FILTER: "assets_in_scope",
     QuestionShape.ASSET_LOCATION: "resolve_asset",
     QuestionShape.PROXIMITY: "nearest",
     QuestionShape.ROUTE: "route",
+}
+
+# What a document shape's retrieval is anchored by: what the step it reads produces.
+ANCHORED_BY = {
+    QuestionShape.ASSET_DOCUMENT: "assets",
+    QuestionShape.PLACE_DOCUMENT: "places",
 }
 
 
@@ -429,11 +461,10 @@ def bind(plan: Plan) -> list[str]:
             source = earlier.get(ref.step)
             if source is None:
                 reasons.append(f"step {step.id} reads {ref.step}, which is not earlier")
-            elif PRODUCES[source.tool] not in ((reads,) if isinstance(reads, str) else reads):
-                wanted = reads if isinstance(reads, str) else " or ".join(reads)
+            elif PRODUCES[source.tool] not in reads.split("|"):
                 reasons.append(
                     f"step {step.id} reads {source.id}, which produces "
-                    f"{PRODUCES[source.tool]}, not {wanted}"
+                    f"{PRODUCES[source.tool]}, not {reads.replace('|', ' or ')}"
                 )
         earlier.setdefault(step.id, step)
     for constraint in plan.constraints:
@@ -464,6 +495,14 @@ def check(plan: Plan) -> list[str]:
             f"a {plan.shape} plan ends in {ENDS_IN[plan.shape]}, not {plan.steps[-1].tool}"
         )
 
+    last = plan.steps[-1] if plan.steps else None
+    if isinstance(last, RetrieveDocuments) and plan.shape in ANCHORED_BY:
+        anchored = {step.id: PRODUCES[step.tool] for step in plan.steps}.get(last.anchors.step)
+        if anchored in ANCHORED_BY.values() and anchored != ANCHORED_BY[plan.shape]:
+            reasons.append(
+                f"a {plan.shape} plan retrieves by {ANCHORED_BY[plan.shape]}, "
+                f"but step {last.id} reads {anchored}"
+            )
     routes = [step for step in plan.steps if isinstance(step, Route)]
     if len(routes) > ROUTE_STEP_CAP:
         reasons.append(f"the plan has {len(routes)} route steps, over the cap of {ROUTE_STEP_CAP}")
