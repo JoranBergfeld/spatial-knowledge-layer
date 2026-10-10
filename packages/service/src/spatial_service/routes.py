@@ -15,8 +15,8 @@ Seconds, metres and those constants go back with every route. Metres are what is
 walked on the flat: a level change adds time, never distance.
 
 What a route may pass through (spatial_core.circulation): circulation by its
-sourced tags, and an untagged room with three or more doors, flagged derived
-wherever it is used. The rooms a route starts and ends in are always enterable.
+sourced tags, and an untagged room with three or more doors the persona may take,
+flagged derived wherever it is used. The rooms a route starts and ends in are always enterable.
 Lifts are in by default. Step-free takes every stair out and leaves the lifts.
 
 A destination is places before anything is routed. A set of places is reached at
@@ -89,18 +89,21 @@ def subgraph(edges: Iterable[Edge], visible: Collection[str], persona: Persona) 
     )
 
 
-def door_counts(edges: Iterable[Edge], visible: Collection[str]) -> dict[str, int]:
-    """How many doors each visible space has, whoever may use them.
+def door_counts(taken: Iterable[Edge]) -> dict[str, int]:
+    """How many doors each space has, counting only the persona's own edges.
 
-    Whether a room is crossable is a fact about the room, not about who asks, so
-    this counts every door on it. It is only ever read for spaces the persona sees.
+    ``taken`` is what `subgraph` kept. A door the persona may not take, or one into a
+    room that does not exist for them, is not counted: if it were, a hidden room
+    behind a third door would turn a room into a way through, and a route would
+    change with something the persona cannot see. So the same room can be crossable
+    for staff and not for a visitor.
     """
     doors: dict[str, set[str]] = {}
-    for edge in edges:
+    for edge in taken:
         if edge.door is None:
             continue
         for space_id in (edge.from_id, edge.to_id):
-            if space_id is not None and space_id in visible:
+            if space_id is not None:
                 doors.setdefault(space_id, set()).add(edge.door)
     return {space_id: len(found) for space_id, found in doors.items()}
 

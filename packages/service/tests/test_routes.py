@@ -6,11 +6,9 @@ or beside the test, from the drawing, never by running the router.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 from collections.abc import Iterator
-from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -19,12 +17,10 @@ import pytest
 from fastapi.testclient import TestClient
 from psycopg import sql
 from psycopg.conninfo import make_conninfo
-from pydantic import BaseModel
 
 import fixture
 import route_fixture as rf
 from route_fixture import nearby, nearest, route_to, route_to_asset, walked
-from spatial_core.records import PERSONAS, VisibleAsset, VisibleAssetType
 from spatial_core.stores import READER_ROLE
 from spatial_ingest.load import load
 from spatial_ingest.promote import promote
@@ -368,6 +364,23 @@ def test_a_room_with_a_function_is_never_crossed_even_with_three_doors() -> None
     assert (turn["kind"], turn["cause"]) == ("abstention", "no-route")
 
 
+def test_a_door_the_persona_may_not_take_does_not_make_a_room_crossable() -> None:
+    # Room 203 goes private. Room 201 keeps its three doors, and a visitor can use two:
+    # the one into 203 is not theirs. Two doors do not make a room a way through.
+    store = rf.store(private=(rf.ROOM_203,))
+    plan = route_to("20.20 room 202")
+
+    visitor = ask("visitor", "How do I get to room 202?", plan, store=store)
+    staff = ask("staff", "How do I get to room 202?", plan, store=store)
+
+    assert (visitor["kind"], visitor["cause"]) == ("abstention", "no-route")
+    assert rf.ROOM_203 not in json.dumps(visitor)
+    # Staff may take all three, so for them it is crossed, by the derived rule as before.
+    [route] = staff["routes"]
+    assert (route["seconds"], route["metres"]) == (41, 39)
+    assert rf.ROOM_201 in passed(route)
+
+
 def test_a_place_the_persona_cannot_see_is_no_such_place_before_any_route() -> None:
     turn = ask("visitor", "How do I get to the Bibliothek?", route_to("Bibliothek"))
 
@@ -643,47 +656,6 @@ def test_a_description_that_points_back_is_a_reference_like_any_other() -> None:
 ADMIN_URL_ENV = "SPATIAL_TEST_DATABASE_URL"
 
 
-def _bundle(root: Path) -> Path:
-    bundle = root / rf.SNAPSHOT
-    seen_assets, seen_types = rf.visible_assets()
-    records: dict[str, list[BaseModel]] = {
-        "osm/spaces.jsonl": list(rf.spaces()),
-        "osm/edges.jsonl": list(rf.edges()),
-        "osm/visible_spaces.jsonl": list(rf.visible()),
-    }
-    for half in ("osm", "seed"):
-        records |= {
-            f"{half}/asset_types.jsonl": [t for t in rf.asset_types() if t.id.startswith(half)],
-            f"{half}/assets.jsonl": [a for a in rf.assets() if a.id.startswith(half)],
-            f"{half}/visible_assets.jsonl": [
-                VisibleAsset(persona=persona, asset_id=asset_id)
-                for persona in PERSONAS
-                for asset_id in sorted(seen_assets[persona])
-                if asset_id.startswith(half)
-            ],
-            f"{half}/visible_asset_types.jsonl": [
-                VisibleAssetType(persona=persona, type_id=type_id)
-                for persona in PERSONAS
-                for type_id in sorted(seen_types[persona])
-                if type_id.startswith(half)
-            ],
-        }
-    parts = {}
-    for name, rows in records.items():
-        content = "".join(row.model_dump_json() + "\n" for row in rows).encode()
-        (bundle / name).parent.mkdir(parents=True, exist_ok=True)
-        (bundle / name).write_bytes(content)
-        parts[name] = {"sha256": hashlib.sha256(content).hexdigest(), "records": len(rows)}
-    manifest = {
-        "snapshot": rf.SNAPSHOT,
-        "venue": "routes",
-        "parts": parts,
-        "default_origin": {"door": "node/1", "edge": rf.ENTRANCE},
-    }
-    (bundle / "manifest.json").write_text(json.dumps(manifest))
-    return bundle
-
-
 @pytest.fixture(scope="module")
 def reader_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
     """A database holding the routes snapshot, current, and a reader's URL to it."""
@@ -698,7 +670,7 @@ def reader_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
     with psycopg.connect(admin_url, autocommit=True) as conn:
         conn.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
     owner_url = make_conninfo(admin_url, dbname=name)
-    result = load(bundle=_bundle(tmp_path_factory.mktemp("bundles")), database_url=owner_url)
+    result = load(bundle=rf.bundle(tmp_path_factory.mktemp("bundles")), database_url=owner_url)
     assert result.ok, result.failures
     promote(snapshot=rf.SNAPSHOT, database_url=owner_url)
     with psycopg.connect(owner_url, autocommit=True) as conn:

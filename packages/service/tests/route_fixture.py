@@ -36,6 +36,9 @@ with no room, at a point that lies in the Seminarraum. A panelboard (maintenance
 
 The default origin is the entrance E.
 
+Every builder takes ``private``: rooms to tag access=private on top of the drawing. With
+room 203 private a visitor's room 201 has two doors they can use and one they cannot.
+
 Sums the tests lean on, all door to door in straight lines at 1.34 m/s:
 
     E to the Seminarraum    10 + 19.026 + 2                         = 31.03 m, 23.2 s
@@ -47,8 +50,13 @@ Sums the tests lean on, all door to door in straight lines at 1.34 m/s:
 
 from __future__ import annotations
 
+import hashlib
 import json
+from collections.abc import Collection
+from pathlib import Path
 from typing import Any
+
+from pydantic import BaseModel
 
 from spatial_core import clearance
 from spatial_core.metres import Local
@@ -64,6 +72,8 @@ from spatial_core.records import (
     Space,
     Value,
     ValueProvenance,
+    VisibleAsset,
+    VisibleAssetType,
     VisibleSpace,
 )
 from spatial_service.store import MemoryStore
@@ -139,7 +149,7 @@ def _space(
     )
 
 
-def spaces() -> list[Space]:
+def spaces(private: Collection[str] = ()) -> list[Space]:
     site = _space(SITE, "site", None, label="Routes Campus")
     building = _space(BUILDING, "building", site, name="Physik", box=(0, 0, 64, 18))
     low = _space(LEVEL_0, "floor", building, label="20.20 level 0", levels="0")
@@ -147,6 +157,8 @@ def spaces() -> list[Space]:
 
     def room(id: str, floor: Space, box: tuple[float, float, float, float], **more: Any) -> Space:
         levels = more.pop("levels", floor.levels.value if floor.levels else None)
+        if id in private:
+            more["access"] = "private"
         return _space(id, "room", floor, box=box, levels=levels, **more)
 
     return [
@@ -220,8 +232,8 @@ _DOORS: list[tuple[int, float, float, str, tuple[str, ...]]] = [
 ]
 
 
-def edges() -> list[Edge]:
-    by_id = {space.id: space for space in spaces()}
+def edges(private: Collection[str] = ()) -> list[Edge]:
+    by_id = {space.id: space for space in spaces(private)}
 
     def edge(
         id: str, door: str | None, a: str | None, b: str, x: float, y: float, level: str, rule: str
@@ -259,12 +271,12 @@ def edges() -> list[Edge]:
     return built
 
 
-def _sets() -> dict[Persona, frozenset[str]]:
-    return clearance.visible_sets(spaces(), edges())
+def _sets(private: Collection[str] = ()) -> dict[Persona, frozenset[str]]:
+    return clearance.visible_sets(spaces(private), edges(private))
 
 
-def visible() -> list[VisibleSpace]:
-    sets = _sets()
+def visible(private: Collection[str] = ()) -> list[VisibleSpace]:
+    sets = _sets(private)
     return [
         VisibleSpace(persona=persona, space_id=space_id)
         for persona in PERSONAS
@@ -329,23 +341,67 @@ def assets() -> list[Asset]:
     return listed
 
 
-def visible_assets() -> tuple[dict[Persona, frozenset[str]], dict[Persona, frozenset[str]]]:
-    return clearance.visible_assets(assets(), asset_types(), _sets())
+def visible_assets(
+    private: Collection[str] = (),
+) -> tuple[dict[Persona, frozenset[str]], dict[Persona, frozenset[str]]]:
+    return clearance.visible_assets(assets(), asset_types(), _sets(private))
 
 
-def store(default_origin: str | None = ENTRANCE) -> MemoryStore:
-    seen_assets, seen_types = visible_assets()
+def store(default_origin: str | None = ENTRANCE, *, private: Collection[str] = ()) -> MemoryStore:
+    seen_assets, seen_types = visible_assets(private)
     return MemoryStore(
         SNAPSHOT,
-        spaces(),
-        visible(),
+        spaces(private),
+        visible(private),
         assets=assets(),
         asset_types=asset_types(),
         visible_assets=seen_assets,
         visible_asset_types=seen_types,
-        edges=edges(),
+        edges=edges(private),
         default_origin=default_origin,
     )
+
+
+def bundle(root: Path, private: Collection[str] = ()) -> Path:
+    """The drawing as a bundle on disk, for load to read."""
+    out = root / SNAPSHOT
+    seen_assets, seen_types = visible_assets(private)
+    records: dict[str, list[BaseModel]] = {
+        "osm/spaces.jsonl": list(spaces(private)),
+        "osm/edges.jsonl": list(edges(private)),
+        "osm/visible_spaces.jsonl": list(visible(private)),
+    }
+    for half in ("osm", "seed"):
+        records |= {
+            f"{half}/asset_types.jsonl": [t for t in asset_types() if t.id.startswith(half)],
+            f"{half}/assets.jsonl": [a for a in assets() if a.id.startswith(half)],
+            f"{half}/visible_assets.jsonl": [
+                VisibleAsset(persona=persona, asset_id=asset_id)
+                for persona in PERSONAS
+                for asset_id in sorted(seen_assets[persona])
+                if asset_id.startswith(half)
+            ],
+            f"{half}/visible_asset_types.jsonl": [
+                VisibleAssetType(persona=persona, type_id=type_id)
+                for persona in PERSONAS
+                for type_id in sorted(seen_types[persona])
+                if type_id.startswith(half)
+            ],
+        }
+    parts = {}
+    for name, rows in records.items():
+        content = "".join(row.model_dump_json() + "\n" for row in rows).encode()
+        (out / name).parent.mkdir(parents=True, exist_ok=True)
+        (out / name).write_bytes(content)
+        parts[name] = {"sha256": hashlib.sha256(content).hexdigest(), "records": len(rows)}
+    manifest = {
+        "snapshot": SNAPSHOT,
+        "venue": "routes",
+        "parts": parts,
+        "default_origin": {"door": "node/1", "edge": ENTRANCE},
+    }
+    (out / "manifest.json").write_text(json.dumps(manifest))
+    return out
 
 
 # --- plans and a composer -------------------------------------------------------------------

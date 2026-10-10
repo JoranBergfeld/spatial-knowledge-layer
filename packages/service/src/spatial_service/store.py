@@ -117,7 +117,7 @@ def circulation(
     usable = default_origin is not None and any(edge.id == default_origin for edge in taken)
     return {
         "edges": taken,
-        "doors": door_counts(edges, visible),
+        "doors": door_counts(taken),
         "default_origin": default_origin if usable else None,
     }
 

@@ -91,7 +91,7 @@ class Venue:
     service_events: Mapping[str, tuple[ServiceEvent, ...]] = field(default_factory=dict)
     # The circulation edges the persona may take, between spaces they can see.
     edges: tuple[Edge, ...] = ()
-    # How many doors each visible space has. A fact about the room, whoever asks.
+    # How many doors the persona may take each space has (routes.door_counts).
     doors: Mapping[str, int] = field(default_factory=dict)
     # The edge a route starts by when the question names no origin: one entrance,
     # the same for every persona. None when the venue names none, or this persona
