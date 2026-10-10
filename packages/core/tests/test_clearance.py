@@ -2,6 +2,7 @@ import pytest
 from pydantic import ValidationError
 
 from spatial_core.clearance import (
+    document_clearance,
     door_clearance,
     edge_clearance,
     from_access,
@@ -13,9 +14,11 @@ from spatial_core.clearance import (
 )
 from spatial_core.records import (
     Ancestor,
+    AnchorKind,
     Asset,
     AssetType,
     Clearance,
+    DocumentKind,
     Edge,
     Persona,
     RecordProvenance,
@@ -343,3 +346,59 @@ def test_a_type_with_no_visible_asset_is_not_visible() -> None:
 
     assert all(not ids for ids in seen.values())
     assert all(not ids for ids in types.values())
+
+
+PAGE, MANUAL = DocumentKind.ACCESSIBILITY_PAGE, DocumentKind.MANUAL
+SPACE, TYPE, ASSET = AnchorKind.SPACE, AnchorKind.ASSET_TYPE, AnchorKind.ASSET
+VISITOR, STAFF, MAINTENANCE = Persona.VISITOR, Persona.STAFF, Persona.MAINTENANCE
+
+
+@pytest.mark.parametrize(
+    ("kind", "anchors", "expected"),
+    [
+        # One anchor: its clearance.
+        (PAGE, [(SPACE, STAFF)], STAFF),
+        (MANUAL, [(TYPE, MAINTENANCE)], MAINTENANCE),
+        (MANUAL, [(ASSET, STAFF)], STAFF),
+        # Several: the strictest.
+        (PAGE, [(SPACE, VISITOR), (SPACE, STAFF)], STAFF),
+        (PAGE, [(SPACE, VISITOR), (ASSET, MAINTENANCE)], MAINTENANCE),
+        (PAGE, [(SPACE, STAFF), (SPACE, VISITOR), (SPACE, VISITOR)], STAFF),
+    ],
+)
+def test_a_document_takes_its_strictest_anchors_clearance(
+    kind: DocumentKind, anchors: list[tuple[AnchorKind, Persona | None]], expected: Persona
+) -> None:
+    assert document_clearance(kind, anchors) is expected
+
+
+@pytest.mark.parametrize(
+    ("anchors", "expected"),
+    [
+        ([(TYPE, MAINTENANCE), (TYPE, VISITOR)], VISITOR),
+        ([(TYPE, MAINTENANCE), (TYPE, STAFF), (TYPE, MAINTENANCE)], STAFF),
+        # The types count as one anchor. Its other anchors still bind.
+        ([(TYPE, MAINTENANCE), (TYPE, VISITOR), (SPACE, STAFF)], STAFF),
+        ([(TYPE, MAINTENANCE), (TYPE, VISITOR), (ASSET, MAINTENANCE)], MAINTENANCE),
+        ([(TYPE, MAINTENANCE), (TYPE, STAFF), (SPACE, VISITOR)], STAFF),
+    ],
+)
+def test_a_manual_shared_by_several_types_takes_the_least_restrictive_of_them(
+    anchors: list[tuple[AnchorKind, Persona | None]], expected: Persona
+) -> None:
+    assert document_clearance(MANUAL, anchors) is expected
+
+
+def test_only_a_manual_gets_the_shared_type_exception() -> None:
+    assert document_clearance(PAGE, [(TYPE, MAINTENANCE), (TYPE, VISITOR)]) is MAINTENANCE
+
+
+def test_an_anchor_with_no_clearance_of_its_own_limits_nothing() -> None:
+    # A building nobody tagged has none. It is visible only through its rooms.
+    assert document_clearance(PAGE, [(SPACE, None)]) is VISITOR
+    assert document_clearance(PAGE, [(SPACE, None), (SPACE, STAFF)]) is STAFF
+
+
+def test_a_document_with_no_anchor_has_no_clearance() -> None:
+    with pytest.raises(ValueError, match="at least one anchor"):
+        document_clearance(PAGE, [])

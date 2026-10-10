@@ -1,0 +1,11 @@
+{
+  "currency": "USD",
+  "note": "Keyed by deployment, per million tokens, list prices. `checked` is the day the price was last looked up. Same rows as the site's budget table. A deployment with no row is recorded with its tokens and no cost.",
+  "rates": [
+    {
+      "deployment": "text-embedding-3-small",
+      "usd_per_million_input": 0.02,
+      "checked": "2026-10-05"
+    }
+  ]
+}
