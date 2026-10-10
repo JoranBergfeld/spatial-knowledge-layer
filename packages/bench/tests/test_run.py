@@ -415,6 +415,36 @@ def test_an_answer_with_no_backed_segment_counts_as_the_abstention_the_site_woul
     assert matrix["answer"]["answer"] == 83
 
 
+def test_answered_when_it_should_have_declined_counts_what_the_layer_produced(
+    start: Start,
+) -> None:
+    def expect_declines(gold: dict[str, Any]) -> None:
+        # Two document questions the layer answers, which gold now says to decline.
+        answers = [
+            q
+            for q in gold["questions"]
+            if q["expected"]["kind"] == "answer" and q["shape"].endswith("-document")
+        ]
+        answers[0]["expected"] = {"kind": "abstention"}
+        answers[1]["expected"] = {"kind": "abstention"}
+
+    # The NLI model backs nothing, so the site would send an abstention for both.
+    run = start(gold=expect_declines, nli=Says(score=0.1))
+    kinds = run.template["turn_kinds"]
+
+    # The layer still answered them. The NLI drop downstream does not undo that.
+    assert kinds["answered_when_it_should_have_declined"] == {"count": 2, "of": 61}
+    # The matrix is what the site would send: an abstention where one was expected.
+    assert kinds["matrix"]["abstention"]["answer"] == 0
+    assert kinds["matrix"]["abstention"]["abstention"] == 53 + 2
+    assert "what the layer produced, before the NLI drop" in run.said
+    assert "what the site would send, after the NLI drop" in run.said
+    declined = [q for q in run.report["questions"] if q["expected"] == "abstention"]
+    assert sum(q["layer_produced"] == "answer" for q in declined) == 2
+    assert sum(q["produced"] == "answer" for q in declined) == 0
+    assert run.report["turn_kinds_are"]["produced"].startswith("what the site would send")
+
+
 def test_a_score_of_exactly_one_half_keeps_the_segment(start: Start) -> None:
     template = start(nli=Says(score=0.5)).template
 

@@ -383,6 +383,14 @@ def report_of(request: Request, prepared: Prepared, outcome: Outcome) -> dict[st
         "ceiling": request.ceiling,
         # Evaluation spend, in its own ledger category. Never part of a visitor's day.
         "spend": outcome.ledger.as_json(),
+        # Which of a question's two kinds each figure reads.
+        "turn_kinds_are": {
+            "produced": "what the site would send, after the NLI drop. The matrix is over this",
+            "layer_produced": (
+                "what the layer produced, before the NLI drop."
+                " Answered when it should have declined is over this"
+            ),
+        },
         "adoption_rules": [
             {
                 "rule": rule.name,
@@ -401,6 +409,7 @@ def report_of(request: Request, prepared: Prepared, outcome: Outcome) -> dict[st
                 "shape": one.shape,
                 "expected": one.expected,
                 "produced": one.produced,
+                "layer_produced": one.layer_produced,
                 "correct": one.correct,
                 "tools": one.tools,
                 "retrieval": one.retrieval,

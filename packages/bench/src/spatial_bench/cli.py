@@ -251,7 +251,9 @@ def _say_section(name: str, found: Section) -> None:
     print(f"  clarification candidates:   {_figure(found.clarification_candidates)}")
     declined = kinds.answered_when_it_should_have_declined
     print(f"  answered when it should have declined: {declined.count} of {declined.of}")
+    print("    counted on what the layer produced, before the NLI drop")
     print("  turn kinds, expected down and produced across:")
+    print("    produced is what the site would send, after the NLI drop")
     columns = list(next(iter(kinds.matrix.values())))
     print("    " + " " * 14 + "".join(f"{column:>15}" for column in columns))
     for expected, row in kinds.matrix.items():

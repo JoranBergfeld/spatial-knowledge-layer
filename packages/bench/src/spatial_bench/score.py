@@ -15,13 +15,21 @@ Three things decided here, since the spec leaves them open:
 
 - Retrieval holds when every document the question is after is in the top five.
 - A segment citing several passages is scored against each and keeps its best.
-- The kind produced is what the site would send. The backend drops a segment the
-  NLI model does not back and abstains when none is left, so an answer whose
-  document segments all fail counts as an abstention in the confusion matrix.
+- A turn has two kinds here. `layer_produced` is what the layer handed back.
+  `produced` is what the site would send: the backend drops a segment the NLI
+  model does not back and abstains when none is left, so an answer whose document
+  segments all fail is an abstention there. The confusion matrix is over
+  `produced`. "Answered when it should have declined" is over `layer_produced`:
+  the layer answered, and the NLI drop catching it later does not undo that.
 
-The numbers check looks for digits. The composer is not allowed to write any,
-so every digit in an answer came out of a placeholder. A number written out as a
-word by the model would get past it.
+The numbers check reads each number in a segment and looks for it among the facts
+the segment cites: a count, a route's seconds, its metres. Names and quoted spans
+are taken out first, since a room label has digits that count nothing. It reads
+the fact's number and not its wording, so "3 generated" is held to a count of 3.
+The composer is not allowed to write a digit, so every one came out of a
+placeholder, and a number written out as a word by the model would get past this.
+It does not go back to the trace: that a cited count is what the tools counted
+is the tools stage's to say, by exact match on ids and totals.
 """
 
 from __future__ import annotations
@@ -52,7 +60,10 @@ class Scored:
     persona: str
     shape: str
     expected: str
+    # What the site would send, after the NLI drop. The confusion matrix reads this.
     produced: str
+    # What the layer handed back, before it.
+    layer_produced: str
     tools: bool
     mismatches: tuple[str, ...]
     # None when the question is after no document.
@@ -89,7 +100,8 @@ class Scored:
 
     @property
     def answered_when_it_should_have_declined(self) -> bool:
-        return self.expected in DECLINES and self.produced == ExpectedKind.ANSWER.value
+        # On what the layer produced. An answer the NLI drop later empties was still one.
+        return self.expected in DECLINES and self.layer_produced == ExpectedKind.ANSWER.value
 
 
 def ranked_documents(turn: dict[str, Any]) -> list[str]:
@@ -107,18 +119,30 @@ def reciprocal_rank(ranked: Sequence[str], relevant: Sequence[str], top: int = T
     return next((1 / rank for rank, doc in enumerate(ranked[:top], 1) if doc in relevant), 0.0)
 
 
+# The fields of a citation that hold a number: a count, a route's seconds, its metres.
+NUMERIC = ("count", "seconds", "metres")
+_NUMBER = re.compile(r"\d+(?:[.,]\d+)*")
+
+
+def _number_of(citation: dict[str, Any]) -> int | None:
+    """The number a cited fact stands for. None for a name."""
+    return next((citation[key] for key in NUMERIC if citation.get(key) is not None), None)
+
+
 def numbers_are_facts(turn: dict[str, Any]) -> bool:
-    """Whether every number in the composed text is a count a citation carries."""
+    """Whether every number in the composed text is the number of a fact its segment cites."""
     for segment in turn["segments"]:
         text: str = segment["text"]
-        for citation in segment["citations"]:
-            if citation.get("count") is not None and citation["label"] != str(citation["count"]):
-                return False
-        cited = [citation["label"] for citation in segment["citations"]]
+        facts = {
+            str(number)
+            for citation in segment["citations"]
+            if (number := _number_of(citation)) is not None
+        }
+        names = [c["label"] for c in segment["citations"] if _number_of(c) is None]
         quoted = [quote for passage in segment["passages"] for quote in passage["quotes"]]
-        for known in sorted([*cited, *quoted], key=len, reverse=True):
+        for known in sorted([*names, *quoted], key=len, reverse=True):
             text = text.replace(known, " ")
-        if re.search(r"\d", text):
+        if any(number not in facts for number in _NUMBER.findall(text)):
             return False
     return True
 
@@ -148,7 +172,7 @@ def score(
 
     numbers = numbers_are_facts(turn) if answered else None
     segments, kept = entailed(turn, nli) if answered else (0, 0)
-    produced = raw.value if raw else UNAVAILABLE
+    layer_produced = produced = raw.value if raw else UNAVAILABLE
     if answered and segments and not kept:
         produced = ExpectedKind.ABSTENTION.value
 
@@ -172,6 +196,7 @@ def score(
         shape=question.shape,
         expected=question.expected.kind.value,
         produced=produced,
+        layer_produced=layer_produced,
         tools=verdict.ok,
         mismatches=verdict.mismatches,
         recall_at_5=recall,
