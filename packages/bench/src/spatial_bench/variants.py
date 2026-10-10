@@ -1,19 +1,30 @@
 """Copies of a bundle with the restricted things taken out, and with more of them put in.
 
-"Restricted" is whatever the lowest persona cannot see: assets hidden by their
-type or by their room, and the documents that go with them. The counterfactual
-leak check loads each copy into stores of its own and asks the visitor's
-questions again. Nothing a visitor can see is touched in either copy, so nothing
-a visitor is told may change.
+"Restricted" is whatever the lowest persona cannot see or use: spaces outside
+their visible set, edges they may not take, assets hidden by their type or by
+their room, and the documents that go with them. The counterfactual leak check
+loads each copy into stores of its own and asks the visitor's questions again.
+Nothing a visitor can see is touched in either copy, so nothing a visitor is told
+may change.
 
-    removed   every restricted asset, its service events and every restricted
-              document are gone
+    removed   every restricted space, every edge a visitor may not take, every
+              restricted asset, its service events and every restricted document
+              are gone
     added     every restricted asset and document is there twice. Every restricted
               type also gets an asset in rooms a visitor walks through, a type
               nobody had before shows up there too, all with an attribute only
               they carry. And every document a visitor can read gets a twin with
               the same words that only a restricted type is anchored to. If the
               filter let it through, it would rank right beside the real one.
+              Rooms a visitor walks through each get a hidden room next door,
+              behind as many doors as it takes to make a room crossable. If a
+              route counted doors a visitor may not take, it would change.
+
+An edge a visitor may not take is one they do not clear, or one with an end they
+cannot see. Said here in its own words on purpose, not borrowed from the service.
+
+A door asset a visitor sees can be left bound to a door whose edges are all gone.
+It keeps everything but the binding, which no turn reads.
 
 Both copies still pass every load invariant. That is checked by loading them.
 """
@@ -23,9 +34,11 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from pydantic import BaseModel
+from shapely.geometry import shape
 
-from spatial_bench.bundle import Bundle, replace_part
+from spatial_bench.bundle import Bundle, Visible, replace_part
 from spatial_core import clearance
+from spatial_core.circulation import CROSSABLE_DOORS
 from spatial_core.records import (
     PERSONAS,
     Ancestor,
@@ -34,15 +47,19 @@ from spatial_core.records import (
     Asset,
     AssetType,
     Chunk,
+    Clearance,
     Document,
     DocumentKind,
+    Edge,
     Persona,
     ServiceEvent,
     Space,
+    Span,
     Value,
     ValueProvenance,
     VisibleAsset,
     VisibleAssetType,
+    VisibleSpace,
 )
 from spatial_ingest import summaries
 from spatial_ingest.documents import (
@@ -60,6 +77,9 @@ MARK = "~cf"
 TWIN = "~twin"
 MARKER_ATTRIBUTE = "counterfactual_marker"
 HIDDEN_TYPE_NAME = "Counterfactual Hidden Unit"
+HIDDEN_ROOM_NAME = "Counterfactual Hidden Room"
+HIDDEN_DOOR_RULE = "counterfactual-hidden-door"
+EDGES_PART = "osm/edges.jsonl"
 # How many rooms a restricted type is dropped into, and how many documents get a twin.
 ROOM_CAP = 25
 TWIN_CAP = 25
@@ -134,13 +154,50 @@ def _set_documents(
     )
 
 
+def _takes(seen: Visible, edge: Edge) -> bool:
+    """Whether a persona may take an edge: they clear it and both its ends exist for them."""
+    return (
+        seen.persona.clears(edge.clearance)
+        and edge.to_id in seen.spaces
+        and (edge.from_id is None or edge.from_id in seen.spaces)
+    )
+
+
+def _without_spaces(bundle: Bundle, changed: Bundle, seen: Visible) -> set[str]:
+    """Take out the spaces ``seen`` lacks and the edges it may not take. The doors left."""
+
+    def keeps(record: BaseModel) -> bool:
+        if isinstance(record, Space):
+            return record.id in seen.spaces
+        if isinstance(record, Span):
+            return record.space_id in seen.spaces and record.floor_id in seen.spaces
+        if isinstance(record, VisibleSpace):
+            return record.space_id in seen.spaces
+        return isinstance(record, Edge) and _takes(seen, record)
+
+    for half in HALVES:
+        for table in ("spaces", "spans", "visible_spaces", "edges"):
+            part = f"{half}/{table}.jsonl"
+            if part in bundle.parts:
+                replace_part(changed, part, [r for r in bundle.parts[part] if keeps(r)])
+    return {edge.door for edge in changed.edges if edge.door is not None}
+
+
 def without_restricted(bundle: Bundle, below: Persona = Persona.VISITOR) -> Bundle:
-    """The bundle with everything ``below`` cannot see taken out: assets, events, documents."""
+    """The bundle with everything ``below`` cannot see or use taken out.
+
+    Spaces, the edges into and out of them, assets, events and documents.
+    """
     seen = bundle.visible(below)
     read = {document.id for document in bundle.documents if seen.reads(document)}
     changed = bundle.copy()
+    doors = _without_spaces(bundle, changed, seen)
     for half in HALVES:
-        assets = [a for a in bundle.parts.get(f"{half}/assets.jsonl", []) if a.id in seen.assets]  # type: ignore[attr-defined]
+        assets = [
+            a if a.door is None or a.door in doors else a.model_copy(update={"door": None})  # type: ignore[attr-defined]
+            for a in bundle.parts.get(f"{half}/assets.jsonl", [])
+            if a.id in seen.assets  # type: ignore[attr-defined]
+        ]
         events = [
             e
             for e in bundle.parts.get(f"{half}/service_events.jsonl", [])
@@ -150,14 +207,15 @@ def without_restricted(bundle: Bundle, below: Persona = Persona.VISITOR) -> Bund
         replace_part(changed, f"{half}/service_events.jsonl", events)
     _set_visible(changed)
 
-    # A document a visitor reads may also be tied to an asset that is now gone.
+    # A document a visitor reads may also be tied to an asset or a space that is now gone.
+    gone = {AnchorKind.ASSET: seen.assets, AnchorKind.SPACE: seen.spaces}
     documents = [
         document.model_copy(
             update={
                 "anchors": tuple(
                     anchor
                     for anchor in document.anchors
-                    if anchor.kind is not AnchorKind.ASSET or anchor.id in seen.assets
+                    if anchor.kind not in gone or anchor.id in gone[anchor.kind]
                 )
             }
         )
@@ -169,7 +227,10 @@ def without_restricted(bundle: Bundle, below: Persona = Persona.VISITOR) -> Bund
         if chunk.document_id not in read:
             continue
         kept = chunk.model_copy(
-            update={"asset_ids": tuple(i for i in chunk.asset_ids if i in seen.assets)}
+            update={
+                "asset_ids": tuple(i for i in chunk.asset_ids if i in seen.assets),
+                "space_ids": tuple(i for i in chunk.space_ids if i in seen.spaces),
+            }
         )
         chunks.append(kept.model_copy(update={"ancestor_ids": _ancestors(changed, kept)}))
     made = [s for s in bundle.summaries if s.document_id in read]
@@ -192,6 +253,74 @@ def _marked(asset: Asset, asset_id: str, space: Space | None = None) -> Asset:
     return asset.model_copy(update=update)
 
 
+def _add_hidden_rooms(
+    bundle: Bundle, changed: Bundle, rooms: Sequence[Space], below: Persona
+) -> None:
+    """Next to each of ``rooms``, a room ``below`` cannot see, behind CROSSABLE_DOORS doors."""
+    if below.rank + 1 >= len(PERSONAS):
+        return
+    above = PERSONAS[below.rank + 1]
+    cleared = Clearance(
+        persona=above, access=None, rule=clearance.DEFAULT_RULE, authored_default=True
+    )
+    spaces: dict[str, list[Space]] = {half: [] for half in HALVES}
+    seen_by: dict[str, list[VisibleSpace]] = {half: [] for half in HALVES}
+    edges: list[Edge] = []
+    for number, room in enumerate(rooms):
+        if room.clearance is None:
+            continue
+        half = bundle.half_of("spaces", room.id)
+        called = f"{HIDDEN_ROOM_NAME} {number}"
+        label = room.label or room.tier
+        hidden = room.model_copy(
+            update={
+                "id": room.id + MARK,
+                "source": None,
+                "name": None,
+                "ref": None,
+                "label": label.model_copy(update={"value": called}),
+                "addressable": True,
+                "clearance": cleared,
+            }
+        )
+        spaces[half].append(hidden)
+        seen_by[half] += [
+            VisibleSpace(persona=persona, space_id=hidden.id)
+            for persona in PERSONAS
+            if persona.rank >= above.rank
+        ]
+        lon = lat = None
+        if room.outline is not None and room.outline.get("type") in ("Polygon", "MultiPolygon"):
+            point = shape(room.outline).representative_point()
+            lon, lat = point.x, point.y
+        level = room.levels.value.split(";")[0] if room.levels else None
+        for door in (f"{hidden.id}-door-{n}" for n in range(CROSSABLE_DOORS)):
+            for a, b in ((room, hidden), (hidden, room)):
+                assert b.clearance is not None
+                edges.append(
+                    Edge(
+                        id=f"{door}:{a.id}>{b.id}",
+                        door=door,
+                        from_id=a.id,
+                        to_id=b.id,
+                        door_clearance=None,
+                        clearance=b.clearance,
+                        provenance=ValueProvenance.DERIVED,
+                        rule=HIDDEN_DOOR_RULE,
+                        lon=lon,
+                        lat=lat,
+                        level=level,
+                    )
+                )
+    for half in HALVES:
+        if spaces[half]:
+            for table, extra in (("spaces", spaces[half]), ("visible_spaces", seen_by[half])):
+                part = f"{half}/{table}.jsonl"
+                replace_part(changed, part, [*bundle.parts.get(part, []), *extra])
+    if edges:
+        replace_part(changed, EDGES_PART, [*bundle.parts.get(EDGES_PART, []), *edges])
+
+
 def with_restricted_added(bundle: Bundle, below: Persona = Persona.VISITOR) -> Bundle:
     """The bundle with more of what ``below`` cannot see. See the module's docstring."""
     seen = bundle.visible(below)
@@ -208,6 +337,7 @@ def with_restricted_added(bundle: Bundle, below: Persona = Persona.VISITOR) -> B
     restricted_types = sorted(
         (t for t in bundle.types if not below.clears(t.clearance)), key=lambda t: t.id
     )
+    _add_hidden_rooms(bundle, changed, rooms, below)
 
     added: dict[str, list[Asset]] = {half: [] for half in HALVES}
     added_types: dict[str, list[AssetType]] = {half: [] for half in HALVES}

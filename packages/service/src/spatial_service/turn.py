@@ -93,7 +93,7 @@ from spatial_service.conversation import (
 )
 from spatial_service.executor import Execution, StepResult, execute
 from spatial_service.llm import Llm, LlmCall, LlmUnavailable, Purpose
-from spatial_service.places import BUILDING, Outcome, Venue, tier
+from spatial_service.places import BUILDING, Outcome, Venue, labelled, tier
 from spatial_service.plan import (
     ALTERNATIVES_CAP,
     DECLINED,
@@ -106,6 +106,7 @@ from spatial_service.plan import (
     PlanRejected,
     QuestionShape,
     parse_plan,
+    resolves,
 )
 from spatial_service.recovery import PlanChange, RecoveryOutcome, Trigger, TriggerKind, diff
 from spatial_service.retrieval import (
@@ -508,8 +509,10 @@ steps: ids s1, s2, ..., at most {STEP_CAP}. Every step but the last feeds a late
   searches the documents tied to what that step found. "query" is what to look
   for in them, in English, from the question ("servicing", "step-free access").
   An asset-document plan ends in it reading the assets_in_scope step: it searches
-  what is anchored to those assets and their types. A place-document plan ends in
-  it reading the resolve_place step for the place asked about.
+  what is anchored to those assets and their types. Or reading a resolve_asset
+  step, for the documents of the one asset a follow-up points at ("what does its
+  manual say"). A place-document plan ends in it reading the resolve_place step
+  for the place asked about.
 - places_matching, for a place mention that describes rather than names ("the
   nearest toilet", "a lift"): every place that fits, as a set. Only a route reads it.
 - route: {{"destination": {{"step": "<id>"}}}}, the step for the place asked for: a
@@ -722,12 +725,6 @@ _NOTHING = {
     "route": AbstentionCause.NO_ROUTE,
     "nearest": AbstentionCause.NOTHING_NEAR,
 }
-# What kind of thing each resolving tool resolves.
-_KIND_OF = {
-    "resolve_place": MentionKind.PLACE,
-    "resolve_asset_type": MentionKind.ASSET_TYPE,
-    "resolve_asset": MentionKind.ASSET,
-}
 _DECLINED = {
     QuestionShape.STEP_DEPENDENT: AbstentionCause.STEP_DEPENDENT_QUESTION,
     QuestionShape.UNSUPPORTED: AbstentionCause.UNSUPPORTED_QUESTION,
@@ -744,6 +741,7 @@ class _Turn:
     recovery: RecoveryOutcome = RecoveryOutcome.NOT_NEEDED
     embeddings: list[EmbeddingCall] = field(default_factory=list)
     question: str = ""
+    routes: list[RouteOut] = field(default_factory=list)
 
     @property
     def number(self) -> int:
@@ -753,8 +751,6 @@ class _Turn:
     def next(self, **update: Any) -> ConversationState:
         """The state this turn hands back, with whatever it resolved (conversation.advance)."""
         return advance(self.state, self.question, **update)
-
-    routes: list[RouteOut] = field(default_factory=list)
 
     async def call(
         self,
@@ -1042,6 +1038,17 @@ class TurnService:
             if found.filters:
                 instructions += attribute_answers.RULES
 
+        composed = await self._compose(turn, instructions, answer)
+        if composed is None:
+            return turn.abstain(AbstentionCause.COMPOSITION_REJECTED)
+        # No passages, so nothing was dropped.
+        segments, _ = composed
+        return turn.finish(TurnKind.ANSWER, segments, state=state)
+
+    async def _compose(
+        self, turn: _Turn, instructions: str, answer: Answer
+    ) -> tuple[list[Segment], list[DroppedSegment]] | None:
+        """The composition call, checked. None for a rejected draft, and the trace says why."""
         text = await turn.call(
             self.llm,
             Purpose.COMPOSITION,
@@ -1050,13 +1057,12 @@ class TurnService:
             response_format=compose.Draft,
         )
         try:
-            segments = compose.fill(
-                text, answer.facts, answer.required, answer.together, answer.banned
+            return compose.ground(
+                text, answer.facts, answer.required, answer.together, answer.passages, answer.banned
             )
         except CompositionRejected as rejected:
             turn.note(composition_rejection=rejected.reasons)
-            return turn.abstain(AbstentionCause.COMPOSITION_REJECTED)
-        return turn.finish(TurnKind.ANSWER, segments, state=state)
+            return None
 
     async def _settle_documents(
         self, turn: _Turn, question: str, venue: Venue, shape: QuestionShape, last: StepResult
@@ -1087,20 +1093,10 @@ class TurnService:
             authored_defaults=_defaults(places),
         )
 
-        text = await turn.call(
-            self.llm,
-            Purpose.COMPOSITION,
-            instructions=COMPOSITION_INSTRUCTIONS[shape],
-            payload=answer.payload,
-            response_format=compose.Draft,
-        )
-        try:
-            segments, dropped = compose.ground(
-                text, answer.facts, answer.required, answer.together, answer.passages, answer.banned
-            )
-        except CompositionRejected as rejected:
-            turn.note(composition_rejection=rejected.reasons)
+        composed = await self._compose(turn, COMPOSITION_INSTRUCTIONS[shape], answer)
+        if composed is None:
             return turn.abstain(AbstentionCause.COMPOSITION_REJECTED)
+        segments, dropped = composed
         turn.note(dropped_segments=dropped)
         # A document answer with no document segment left is not one.
         if not any(segment.passages for segment in segments):
@@ -1246,9 +1242,9 @@ def _clarify(
         asset = venue.assets[item] if kind is MentionKind.ASSET else None
         space = venue.spaces[asset.space_id if asset else item]
         building = venue.building_of(space)
-        within = _label(building) if building and building.label else None
+        within = labelled(building) if building and building.label else None
         if asset is None:
-            candidates.append(Candidate(space_id=item, label=_label(space), building=within))
+            candidates.append(Candidate(space_id=item, label=labelled(space), building=within))
             citations.append(_place_citation(space))
             continue
         candidates.append(
@@ -1318,9 +1314,9 @@ def _attribute_gap(
 ) -> Turn:
     """Assets were asked about and none carries the attribute. Named, by the host."""
     scope = venue.spaces[found.scope] if found.scope is not None else None
-    labelled = scope is not None and scope.label is not None
-    text = attribute_answers.gap_text(unfilled, _label(scope) if scope and labelled else None)
-    citations = [_place_citation(scope)] if scope and labelled else []
+    has_label = scope is not None and scope.label is not None
+    text = attribute_answers.gap_text(unfilled, labelled(scope) if scope and has_label else None)
+    citations = [_place_citation(scope)] if scope and has_label else []
     return turn.finish(
         TurnKind.ABSTENTION,
         [Segment(text=text, citations=citations)],
@@ -1328,11 +1324,6 @@ def _attribute_gap(
         gap=CoverageGap.ATTRIBUTE_NOT_RECORDED,
         state=state,
     )
-
-
-def _label(space: Space) -> str:
-    assert space.label is not None
-    return space.label.value
 
 
 def _place_citation(space: Space) -> Citation:
@@ -1371,7 +1362,7 @@ def _resolved(execution: Execution, venue: Venue) -> list[Resolved]:
             text=r.text or "",
             step=r.step,
             space_id=r.ids[0],
-            label=_label(venue.spaces[r.ids[0]]),
+            label=labelled(venue.spaces[r.ids[0]]),
             how=r.how,
         )
         for r in execution.by_tool("resolve_place")
@@ -1404,7 +1395,7 @@ def _references(execution: Execution, venue: Venue) -> list[Reference]:
                 mention=r.mention or "",
                 text=r.text or "",
                 step=r.step,
-                kind=_KIND_OF[r.tool],
+                kind=resolves(r.tool),
                 to=referred.to,
                 ordinal=referred.ordinal,
                 outcome=r.outcome,
@@ -1468,6 +1459,18 @@ def _asset_provenance(asset: Asset) -> dict[str, Any]:
     }
 
 
+def _asset_trace(asset: Asset, fields: dict[str, Any]) -> AssetTrace:
+    """One asset as the trace lists it, with the provenance fields worked out for it."""
+    return AssetTrace(
+        asset_id=asset.id,
+        type_id=asset.type_id,
+        space_id=asset.space_id,
+        source=asset.source,
+        name=asset.name.value,
+        **fields,
+    )
+
+
 def _one_asset_trace(venue: Venue, asset: Asset) -> AssetsTrace:
     """The trace of an answer about one asset: itself, and how much its space holds."""
     fields = _asset_provenance(asset)
@@ -1477,16 +1480,7 @@ def _one_asset_trace(venue: Venue, asset: Asset) -> AssetsTrace:
         grouped_by=None,
         touched=1,
         installed_in_scope=len(venue.assets_under.get(asset.space_id, [])),
-        listed=[
-            AssetTrace(
-                asset_id=asset.id,
-                type_id=asset.type_id,
-                space_id=asset.space_id,
-                source=asset.source,
-                name=asset.name.value,
-                **fields,
-            )
-        ],
+        listed=[_asset_trace(asset, fields)],
         classes=[ProvenanceClass(**fields, assets=1)],
         rows=[],
     )
@@ -1505,14 +1499,7 @@ def _assets_trace(venue: Venue, last: StepResult, answer: Answer) -> AssetsTrace
         touched=len(assets),
         installed_in_scope=found.installed,
         listed=[
-            AssetTrace(
-                asset_id=asset.id,
-                type_id=asset.type_id,
-                space_id=asset.space_id,
-                source=asset.source,
-                name=asset.name.value,
-                **fields,
-            )
+            _asset_trace(asset, fields)
             for asset, fields in list(zip(assets, provenance, strict=True))[:TRACE_ASSET_CAP]
         ],
         classes=[ProvenanceClass(**dict(key), assets=count) for key, count in classes.items()],

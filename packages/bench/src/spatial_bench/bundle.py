@@ -23,6 +23,7 @@ from spatial_core.records import (
     AssetType,
     Chunk,
     Document,
+    Edge,
     Persona,
     ServiceEvent,
     Space,
@@ -100,6 +101,10 @@ class Bundle:
     @property
     def spaces(self) -> list[Space]:
         return cast(list[Space], self._both("spaces"))
+
+    @property
+    def edges(self) -> list[Edge]:
+        return cast(list[Edge], self._both("edges"))
 
     @property
     def types(self) -> list[AssetType]:

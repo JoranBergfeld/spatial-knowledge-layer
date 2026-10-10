@@ -395,7 +395,14 @@ class _Join:
             for space_id in self.shapes
             if circulation.is_circulation(_tags(self.spaces[space_id]))
         ]
-        found = snap.snaps(self.shapes, self.shapes.keys() - with_door, walkable)
+        # Rooms only. A corridor or an area with no door is not a room nobody can get
+        # into, it is circulation somebody drew without doors, and stays as mapped.
+        doorless = [
+            space_id
+            for space_id in self.shapes.keys() - with_door
+            if circulation.is_room(_tags(self.spaces[space_id]))
+        ]
+        found = snap.snaps(self.shapes, doorless, walkable)
         self.counts["snapped_rooms"] = len(found)
         for joined in found:
             for from_id, to_id in (

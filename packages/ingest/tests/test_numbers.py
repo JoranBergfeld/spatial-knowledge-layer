@@ -39,6 +39,10 @@ def test_a_count_that_is_not_small_stays_as_digits(text: str) -> None:
         ("The lift is locked after 18:05.", "The lift is locked after eighteen oh five."),
         ("Doors open at 07:45", "Doors open at seven forty-five"),
         ("Closed from 0:15", "Closed from zero fifteen"),
+        # A range of two times, however the dash is typed. The dash stays as written.
+        ("Staffed 8:00-16:00.", "Staffed eight o'clock-sixteen o'clock."),
+        ("Staffed 8:00–16:30 daily", "Staffed eight o'clock–sixteen thirty daily"),
+        ("Staffed 7:30 - 9:05", "Staffed seven thirty - nine oh five"),
     ],
 )
 def test_a_clock_time_is_written_in_words(text: str, expected: str) -> None:
@@ -74,6 +78,13 @@ def test_a_floor_ordinal_is_written_in_words(text: str, expected: str) -> None:
         "Runs at 5 °C",
         "Draws 16 A at 230 V",
         "Tighten to 8 Nm",
+        # A handover manual measures in pounds and feet.
+        "Charge to 5 psi",
+        "Keep 2 ft clear in front of the panel",
+        "Keep 3 ft. clear",
+        "It weighs 12 lb",
+        "Holds 10 gal",
+        "Moves 15 cfm",
     ],
 )
 def test_a_measured_value_with_a_unit_stays_as_digits(text: str) -> None:
@@ -99,6 +110,8 @@ def test_a_measured_value_with_a_unit_stays_as_digits(text: str) -> None:
         "Version 1.2",
         "The 3rd edition",
         "A gradient of 1:12",
+        "A gradient of 1:12-1:20",
+        "Tel. 608-42812, 8:00-9",
     ],
 )
 def test_a_number_that_names_something_is_left_alone(text: str) -> None:

@@ -9,7 +9,7 @@ import pytest
 
 import fixture
 from fixture import counted, filtered, having, installed, where
-from spatial_core.records import PERSONAS, Persona
+from spatial_core.records import PERSONAS, Persona, Value
 from spatial_service.plan import Plan
 from test_turn import ask, repaired_by
 
@@ -300,6 +300,31 @@ def test_the_planner_is_shown_the_attributes_the_persona_can_filter_on() -> None
     assert planned("staff")["attributes"] == everyday
     # Only a panelboard in the Serverraum carries a breaker rating.
     assert planned("maintenance")["attributes"] == ["breaker_rating", *everyday]
+
+
+def test_an_attribute_named_like_an_osm_tag_can_be_filtered_on() -> None:
+    # Fire equipment keeps its sourced tags as attributes, colon and all. The planner is
+    # shown the name, so a filter on it has to parse.
+    tag = "fire_extinguisher:type"
+    store = fixture.store()
+    extinguisher = store._assets["osm:asset:node/9001"]
+    store._assets[extinguisher.id] = extinguisher.model_copy(
+        update={"attributes": {tag: Value.sourced("powder")}}
+    )
+    seen: list[dict[str, Any]] = []
+    plan = having(tag, "recorded", place="Audimax", kind="fire extinguishers")
+
+    def planner(payload: dict[str, Any]) -> str:
+        seen.append(payload)
+        return plan
+
+    turn = ask("visitor", "Which extinguishers say what type?", planner, filtered, store=store)
+
+    assert tag in seen[0]["venue"]["attributes"]
+    assert turn["kind"] == "answer"
+    fill = filter_trace(turn)
+    assert (fill["attribute"], fill["carried"], fill["of"]) == (tag, 1, 1)
+    assert turn["trace"]["plans"][0]["steps"][-1]["ids"] == [extinguisher.id]
 
 
 def test_a_constraint_outside_the_catalogue_is_a_typed_rejection() -> None:

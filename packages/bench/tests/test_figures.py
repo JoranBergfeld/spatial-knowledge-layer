@@ -101,6 +101,29 @@ def test_every_number_in_an_answer_has_to_be_a_count_a_citation_carries() -> Non
     assert numbers_are_facts(quoted)
 
 
+def test_a_number_is_held_to_the_fact_it_cites_and_not_to_how_the_fact_is_worded() -> None:
+    # A generated count fills in as "3 generated", and a route's as "41 seconds (modelled)".
+    generated = {"label": "3 generated", "count": 3}
+    sourced = {"label": "1 sourced", "count": 1}
+    duration = {"label": "41 seconds (modelled)", "count": None, "seconds": 41, "metres": None}
+    distance = {"label": "39 metres", "count": None, "seconds": None, "metres": 39}
+    mixed = {"segments": [segment("It holds 3 generated and 1 sourced.", generated, sourced)]}
+    walked = {"segments": [segment("41 seconds (modelled), 39 metres.", duration, distance)]}
+    # The label says one number and the fact behind it is another.
+    drifted = {"segments": [segment("It holds 3 generated.", {"label": "3 generated", "count": 2})]}
+    slower = {"segments": [segment("41 seconds (modelled).", {**duration, "seconds": 45})]}
+    # A fact of another segment is not this segment's to state.
+    elsewhere = {
+        "segments": [segment("It holds 3 generated.", generated), segment("Or 3.", sourced)]
+    }
+
+    assert numbers_are_facts(mixed)
+    assert numbers_are_facts(walked)
+    assert not numbers_are_facts(drifted)
+    assert not numbers_are_facts(slower)
+    assert not numbers_are_facts(elsewhere)
+
+
 def test_the_committed_hand_written_file_is_readable_and_empty() -> None:
     committed = Path(__file__).resolve().parents[3] / questions.HAND_WRITTEN_FILE
 

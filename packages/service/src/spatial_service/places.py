@@ -91,7 +91,7 @@ class Venue:
     service_events: Mapping[str, tuple[ServiceEvent, ...]] = field(default_factory=dict)
     # The circulation edges the persona may take, between spaces they can see.
     edges: tuple[Edge, ...] = ()
-    # How many doors each visible space has. A fact about the room, whoever asks.
+    # How many doors the persona may take each space has (routes.door_counts).
     doors: Mapping[str, int] = field(default_factory=dict)
     # The edge a route starts by when the question names no origin: one entrance,
     # the same for every persona. None when the venue names none, or this persona
@@ -141,6 +141,17 @@ class Venue:
 
 def tier(space: Space) -> str:
     return space.tier.value
+
+
+def label(space: Space) -> str | None:
+    """A space's label, or None where no rule can address it."""
+    return space.label.value if space.label else None
+
+
+def labelled(space: Space) -> str:
+    """The label of a space that is known to have one."""
+    assert space.label is not None
+    return space.label.value
 
 
 class Outcome(StrEnum):
@@ -303,7 +314,8 @@ _FILLER = frozenset({"nearest", "closest", "next", "a", "an", "any", "room", "ha
 _FUNCTION_KEYS = ("room", "amenity")
 
 
-def _stem(word: str) -> str:
+def stem(word: str) -> str:
+    # Enough to fold "lights" onto "light". Not a stemmer.
     return word[:-1] if len(word) > 3 and word.endswith("s") else word
 
 
@@ -317,9 +329,7 @@ def places_matching(venue: Venue, text: str) -> PlaceResult:
     problems = check_arguments(text)
     if problems:
         raise ArgumentsRejected(problems)
-    words = {_stem(word) for word in _words(text)} - _FILLER or {
-        _stem(word) for word in _words(text)
-    }
+    words = {stem(word) for word in _words(text)} - _FILLER or {stem(word) for word in _words(text)}
     wanted = [_FUNCTIONS[word] for word in words if word in _FUNCTIONS]
     found: list[Space] = []
     if wanted:
@@ -331,7 +341,7 @@ def places_matching(venue: Venue, text: str) -> PlaceResult:
                 found.append(space)
     if not found:
         for space in venue.spaces.values():
-            named = {_stem(word) for word in _words(space.name.value)} if space.name else set()
+            named = {stem(word) for word in _words(space.name.value)} if space.name else set()
             if words and words <= named:
                 found.append(space)
     if not found:

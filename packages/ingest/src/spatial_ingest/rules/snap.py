@@ -3,7 +3,9 @@
 A room nobody mapped a door on has no edge, so no route could start or end there.
 Such a room is joined to the nearest circulation space on a level they share, if
 their outlines come within SNAP_M of each other. It joins a room to circulation
-and nothing else: never two rooms through a wall.
+and nothing else: never two rooms through a wall. And a room only: a corridor or
+an area with no door is left as mapped. Which spaces are rooms is the caller's to
+say (structure.py hands in the indoor=room ones).
 
 The snap is for routes only. It is not a door, so it shows nobody a room and no
 door asset hangs on it.

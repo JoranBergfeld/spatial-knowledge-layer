@@ -7,6 +7,8 @@ Every point is labelled with the run it came from:
     snapshot                 the snapshot it measured
     planning_deployment      the deployments it measured
     composition_deployment
+    embedding_deployment     "none" when the run retrieved by keyword alone
+    nli_deployment           the NLI model that scored entailment
     question_set             template or hand-written
     expected_turn_kind       what gold expects
     turn_kind                what came back
@@ -29,6 +31,8 @@ from spatial_bench.score import Scored
 from spatial_service.evaluation import Run
 
 SERVICE_NAME = "spatial-bench"
+# A label cannot be empty. What a run that embedded nothing says.
+NO_EMBEDDING = "none"
 
 
 class EvalMetrics:
@@ -50,6 +54,8 @@ class EvalMetrics:
                     "snapshot": run.snapshot,
                     "planning_deployment": run.deployments.planning,
                     "composition_deployment": run.deployments.composition,
+                    "embedding_deployment": run.deployments.embedding or NO_EMBEDDING,
+                    "nli_deployment": run.deployments.nli,
                     "question_set": question_set,
                     "expected_turn_kind": expected,
                     "turn_kind": produced,

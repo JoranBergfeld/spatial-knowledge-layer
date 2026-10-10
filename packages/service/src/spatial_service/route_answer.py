@@ -5,9 +5,9 @@ metres, the constants they were modelled with, every space passed through, and
 everything derived that it leaned on. Rounding further and wording are the page's.
 
 The trace says how big the persona's graph was and what each route step did. When
-there is no route it gives a reason only where the reason cannot be clearance. A
-graph that does not connect says nothing, since a restricted corridor and a missing
-door look the same from here, and are meant to.
+there is no route it says so and gives no reason, whatever the cause: a restricted
+corridor, a missing door, no lift and no default origin all look the same from
+here, and are meant to.
 """
 
 from __future__ import annotations
@@ -15,9 +15,8 @@ from __future__ import annotations
 from pydantic import BaseModel, ConfigDict
 
 from spatial_core import circulation
-from spatial_core.records import Space
 from spatial_service.executor import Execution
-from spatial_service.places import Venue
+from spatial_service.places import Venue, label
 from spatial_service.routes import (
     CONSTANTS,
     OPEN_SPACE_RULE,
@@ -103,8 +102,6 @@ class RouteStepTrace(_Model):
     # The places it could have ended at.
     targets: list[str]
     found: bool
-    # Why not, only where the reason cannot be clearance.
-    reason: str | None = None
     # What a nearest step measured by.
     basis: str | None = None
 
@@ -115,10 +112,6 @@ class RouteTrace(_Model):
     subgraph_edges: int
     constants: Constants = CONSTANTS
     steps: list[RouteStepTrace]
-
-
-def _label(space: Space) -> str | None:
-    return space.label.value if space.label else None
 
 
 def _one(venue: Venue, step: str, found: Found, target: Target | None, run: Routed) -> RouteOut:
@@ -150,7 +143,7 @@ def _one(venue: Venue, step: str, found: Found, target: Target | None, run: Rout
         passages.append(
             Passage(
                 space_id=space.id,
-                label=_label(space),
+                label=label(space),
                 mode=leg.mode,
                 levels=leg.levels,
                 seconds=round(leg.seconds, 1),
@@ -176,13 +169,13 @@ def _one(venue: Venue, step: str, found: Found, target: Target | None, run: Rout
         step=step,
         origin=Endpoint(
             space_id=start.id,
-            label=_label(start),
+            label=label(start),
             default=run.default_origin,
             door=found.entered_by.door if found.entered_by else None,
         ),
         destination=Endpoint(
             space_id=end.id,
-            label=_label(end),
+            label=label(end),
             asset_ids=list(target.assets) if target else [],
             snapped_m=round(target.snapped_m, 1)
             if target and target.snapped_m is not None
@@ -229,7 +222,6 @@ def trace(venue: Venue, execution: Execution) -> RouteTrace | None:
                     default_origin=run.default_origin,
                     targets=[target.space_id for target in run.targets],
                     found=bool(run.found),
-                    reason=run.reason,
                 )
             )
         elif result.tool == "nearest":

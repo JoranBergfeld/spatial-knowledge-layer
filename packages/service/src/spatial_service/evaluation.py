@@ -95,14 +95,19 @@ class Stages(_Model):
 
 
 class Declined(_Model):
-    """Answered when gold says to decline. ``of`` is how many should have been declined."""
+    """Answered when gold says to decline. ``of`` is how many should have been declined.
+
+    Counted on what the layer produced, before the site's NLI model drops anything.
+    """
 
     count: int
     of: int
 
 
 class TurnKinds(_Model):
-    # Expected turn kind, then the kind produced, then how many.
+    # Expected turn kind, then the kind produced, then how many. Produced is what the
+    # site would send: an answer whose document segments the NLI model all drops is
+    # an abstention here.
     matrix: dict[str, dict[str, int]]
     answered_when_it_should_have_declined: Declined
 

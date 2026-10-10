@@ -26,7 +26,19 @@ from pydantic import BaseModel
 import fixture
 import papers
 from fixture import counted, filtered, having, located, most, where
-from spatial_core.records import PERSONAS, Persona, VisibleAsset, VisibleAssetType
+from spatial_core.records import (
+    PERSONAS,
+    Anchor,
+    AnchorKind,
+    Chunk,
+    Document,
+    LinkCheck,
+    Persona,
+    RecordProvenance,
+    ValueProvenance,
+    VisibleAsset,
+    VisibleAssetType,
+)
 from spatial_core.search import SEARCH_DIR_ENV, IndexRef, LocalIndex
 from spatial_core.stores import READER_ROLE
 from spatial_ingest.documents import Vector
@@ -49,6 +61,41 @@ def admin_url() -> str:
             pytest.fail(message)
         pytest.skip(message)
     return url
+
+
+def _written(passages: list[Chunk]) -> list[Document]:
+    """The document each passage came from. Load holds a chunk to its document's anchors."""
+    first = {passage.document_id: passage for passage in reversed(passages)}
+    sourced = ValueProvenance.SOURCED
+    return [
+        Document(
+            id=document_id,
+            record_provenance=RecordProvenance.SOURCED,
+            kind=passage.kind,
+            title=passage.title,
+            url=passage.url,
+            language=passage.language,
+            original_sha256=passage.original_text_sha256,
+            anchors=(
+                *(
+                    Anchor(kind=AnchorKind.SPACE, id=i, provenance=sourced)
+                    for i in passage.space_ids
+                ),
+                *(
+                    Anchor(kind=AnchorKind.ASSET_TYPE, id=i, provenance=sourced)
+                    for i in passage.asset_type_ids
+                ),
+                *(
+                    Anchor(kind=AnchorKind.ASSET, id=i, provenance=sourced)
+                    for i in passage.asset_ids
+                ),
+            ),
+            clearance_class=passage.clearance_class,
+            link=LinkCheck(status=passage.link_status, checked_on=passage.link_checked_on),
+            chunks=sum(1 for other in passages if other.document_id == document_id),
+        )
+        for document_id, passage in sorted(first.items())
+    ]
 
 
 def _documents() -> dict[str, list[BaseModel]]:
@@ -83,6 +130,7 @@ def _documents() -> dict[str, list[BaseModel]]:
         for entry in papers.entries()
     ]
     return {
+        "documents/documents.jsonl": list(_written(passages)),
         "documents/chunks.jsonl": list(passages),
         "documents/summaries.jsonl": list(summarised),
         "documents/vectors.jsonl": list(vectors),

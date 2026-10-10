@@ -165,9 +165,11 @@ def _check(args: argparse.Namespace) -> int:
         print(f"    {wrong['question']}: {'; '.join(wrong['mismatches'])}")
     for name in ("input", "counterfactual"):
         found = leaks[name].get("leaks", leaks[name].get("differences"))
+        probes = leaks[name].get("route_probes")
         print(
             f"  {name} leak check: {'pass' if leaks[name]['passed'] else 'FAIL'}"
             f" over {leaks[name]['turns']} turns"
+            + (f" and {probes} route probes" if probes else "")
         )
         for one in found[:10]:
             print(f"    {json.dumps(one)}")
@@ -249,7 +251,9 @@ def _say_section(name: str, found: Section) -> None:
     print(f"  clarification candidates:   {_figure(found.clarification_candidates)}")
     declined = kinds.answered_when_it_should_have_declined
     print(f"  answered when it should have declined: {declined.count} of {declined.of}")
+    print("    counted on what the layer produced, before the NLI drop")
     print("  turn kinds, expected down and produced across:")
+    print("    produced is what the site would send, after the NLI drop")
     columns = list(next(iter(kinds.matrix.values())))
     print("    " + " " * 14 + "".join(f"{column:>15}" for column in columns))
     for expected, row in kinds.matrix.items():
@@ -321,7 +325,10 @@ def _run(args: argparse.Namespace, wiring: Wiring | None, confirm: Callable[[str
         report = args.out / f"run-{prepared.run.id}.json"
         said = evalrun.report_of(request, prepared, outcome)
         report.write_text(json.dumps(said, indent=1) + "\n", encoding="utf-8")
+        segments = args.out / evalrun.segments_file(prepared.run)
+        evalrun.write_segments(segments, outcome)
         _say_outcome(request, prepared, outcome)
+        print(f"Scored segments, private, in {segments}")
         if not outcome.completed:
             print(
                 f"Stopped after {len(outcome.scored)} of {len(request.questions)} questions:"

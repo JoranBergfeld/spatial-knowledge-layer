@@ -15,8 +15,8 @@ Seconds, metres and those constants go back with every route. Metres are what is
 walked on the flat: a level change adds time, never distance.
 
 What a route may pass through (spatial_core.circulation): circulation by its
-sourced tags, and an untagged room with three or more doors, flagged derived
-wherever it is used. The rooms a route starts and ends in are always enterable.
+sourced tags, and an untagged room with three or more doors the persona may take,
+flagged derived wherever it is used. The rooms a route starts and ends in are always enterable.
 Lifts are in by default. Step-free takes every stair out and leaves the lifts.
 
 A destination is places before anything is routed. A set of places is reached at
@@ -89,18 +89,21 @@ def subgraph(edges: Iterable[Edge], visible: Collection[str], persona: Persona) 
     )
 
 
-def door_counts(edges: Iterable[Edge], visible: Collection[str]) -> dict[str, int]:
-    """How many doors each visible space has, whoever may use them.
+def door_counts(taken: Iterable[Edge]) -> dict[str, int]:
+    """How many doors each space has, counting only the persona's own edges.
 
-    Whether a room is crossable is a fact about the room, not about who asks, so
-    this counts every door on it. It is only ever read for spaces the persona sees.
+    ``taken`` is what `subgraph` kept. A door the persona may not take, or one into a
+    room that does not exist for them, is not counted: if it were, a hidden room
+    behind a third door would turn a room into a way through, and a route would
+    change with something the persona cannot see. So the same room can be crossable
+    for staff and not for a visitor.
     """
     doors: dict[str, set[str]] = {}
-    for edge in edges:
+    for edge in taken:
         if edge.door is None:
             continue
         for space_id in (edge.from_id, edge.to_id):
-            if space_id is not None and space_id in visible:
+            if space_id is not None:
                 doors.setdefault(space_id, set()).add(edge.door)
     return {space_id: len(found) for space_id, found in doors.items()}
 
@@ -457,18 +460,12 @@ class Routed:
     default_origin: bool
     step_free: bool
     targets: tuple[Target, ...]
-    # Nearest first. Empty when there is no route.
+    # Nearest first. Empty when there is no route. Why not is kept nowhere: every
+    # cause of no route is the same abstention, and the trace gives no reason either.
     found: tuple[Found, ...] = ()
-    # Why there is none, only where the reason cannot be clearance.
-    reason: str | None = None
 
     def target(self, space_id: str) -> Target:
         return next(t for t in self.targets if t.space_id == space_id)
-
-
-NO_DEFAULT_ORIGIN = "the venue names no default origin"
-NO_DESTINATION = "the destination came to no place"
-ONLY_BY_STAIRS = "there is a route, but not a step-free one"
 
 
 def find(
@@ -487,9 +484,9 @@ def find(
         start = Origin(entrance=venue.default_origin)
     listed = tuple(targets)
     if start is None:
-        return Routed(Origin(), default, step_free, listed, reason=NO_DEFAULT_ORIGIN)
+        return Routed(Origin(), default, step_free, listed)
     if not listed:
-        return Routed(start, default, step_free, listed, reason=NO_DESTINATION)
+        return Routed(start, default, step_free, listed)
 
     ids = {target.space_id for target in listed}
     snapped = [target for target in listed if target.snapped_m is not None]
@@ -502,11 +499,7 @@ def find(
         found = reached[:1]
     else:
         found = graph.routes(start, ids, step_free=step_free, limit=alternatives)
-    reason = None
-    if not found and step_free and graph.routes(start, ids):
-        # Read off the same graph, so it says nothing the persona could not find out.
-        reason = ONLY_BY_STAIRS
-    return Routed(start, default, step_free, listed, tuple(found), reason)
+    return Routed(start, default, step_free, listed, tuple(found))
 
 
 @dataclass(frozen=True)

@@ -10,8 +10,8 @@
 A room with a sourced function that is not circulation is never crossed. Origin and
 destination rooms are always enterable, whatever they are.
 
-Ingestion uses this to pick what a doorless room snaps to, the service to build the
-graph a route runs over.
+Ingestion uses this to pick which doorless spaces are rooms and what they snap to,
+the service to build the graph a route runs over.
 """
 
 from __future__ import annotations
@@ -42,6 +42,11 @@ def is_lift(tags: Mapping[str, str]) -> bool:
     return tags.get("room") == "elevator" or tags.get("highway") == "elevator"
 
 
+def is_room(tags: Mapping[str, str]) -> bool:
+    """Mapped as a room: indoor=room, whatever its function. Not a corridor, not an area."""
+    return tags.get("indoor") == "room"
+
+
 def is_circulation(tags: Mapping[str, str]) -> bool:
     """Circulation by sourced tags. Stairs and lifts are circulation too."""
     return (
@@ -57,7 +62,7 @@ def crossable_rule(tags: Mapping[str, str], doors: int) -> str | None:
     """The rule that makes a space crossable, or None when a route may only start or end in it."""
     if is_circulation(tags):
         return TAGS_RULE
-    untagged = tags.get("indoor") == "room" and not any(key in tags for key in _FUNCTION_KEYS)
+    untagged = is_room(tags) and not any(key in tags for key in _FUNCTION_KEYS)
     if untagged and doors >= CROSSABLE_DOORS:
         return DOOR_COUNT_RULE
     return None

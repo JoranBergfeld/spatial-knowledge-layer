@@ -8,6 +8,9 @@ what a deployment costs today:
      "per_million_tokens": {"<deployment>": {"input": 0.0, "output": 0.0}, ...}}
 
 Every deployment the run will call has to be in it, or the run does not start.
+One that turns up mid-run with no rate stops the run there (evalrun.execute): its
+calls are counted, their cost is not, and a run that cannot be costed has no
+business going on.
 
 The estimate is a worst case over assumed call sizes: every turn plans twice and
 composes once. The assumptions are guesses until a real run has reported its
@@ -122,7 +125,8 @@ class Ledger:
     entries: dict[tuple[str, str], _Entry] = field(default_factory=dict)
     # Calls that reported no usage. Costed at the assumed size, and counted here.
     unmetered: int = 0
-    # Deployments that were called and are not in the rates. Their cost is not counted.
+    # Deployments that were called and are not in the rates. Their cost is not counted,
+    # and the run stops after the turn that met one.
     unpriced: set[str] = field(default_factory=set)
     largest_turn: float = 0.0
 
@@ -138,7 +142,7 @@ class Ledger:
             )
         if deployment not in self.rates.per_million_tokens:
             # prepare checks every deployment it knows of, so this is one it did not
-            # expect. Mid-run is no time to fall over: count the calls and say so.
+            # expect. The rest of the turn is still counted, then the run stops.
             self.unpriced.add(deployment)
             cost = 0.0
         else:

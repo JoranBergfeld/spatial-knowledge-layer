@@ -7,7 +7,7 @@ The chunk checks do the same over the chunks read back from the search index.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -17,9 +17,11 @@ from psycopg import sql
 from spatial_core import clearance
 from spatial_core.records import (
     PERSONAS,
+    Anchor,
     AnchorKind,
     Chunk,
     ChunkRole,
+    Document,
     Persona,
     RecordProvenance,
 )
@@ -295,16 +297,46 @@ def _failure(name: str, offending: Sequence[str]) -> list[str]:
     return [f"{name}: fails for {shown}{more}"]
 
 
+def _class_of(
+    chunk: Chunk,
+    anchored: Mapping[str, Sequence[Anchor]],
+    spaces: Mapping[str, tuple[Persona | None, list[str]]],
+    types: Mapping[str, Persona | None],
+    assets: Mapping[str, tuple[str, list[str]]],
+) -> Persona | None:
+    """The class a chunk's document's anchors give it. None when one is not in the snapshot."""
+    found: list[tuple[AnchorKind, Persona | None]] = []
+    for anchor in anchored[chunk.document_id]:
+        if anchor.kind is AnchorKind.SPACE and anchor.id in spaces:
+            found.append((anchor.kind, spaces[anchor.id][0]))
+        elif anchor.kind is AnchorKind.ASSET_TYPE and anchor.id in types:
+            found.append((anchor.kind, types[anchor.id]))
+        elif (
+            anchor.kind is AnchorKind.ASSET
+            and anchor.id in assets
+            and assets[anchor.id][0] in types
+        ):
+            found.append((anchor.kind, types[assets[anchor.id][0]]))
+        else:
+            return None
+    return clearance.document_clearance(chunk.kind, found) if found else None
+
+
 def check_chunks(
     conn: psycopg.Connection[Any],
     schemas: SnapshotSchemas,
     chunks: Sequence[Chunk],
     manifest: dict[str, Any],
     summaries: Sequence[Summary] = (),
+    documents: Sequence[Document] = (),
 ) -> list[str]:
     """What does not hold of the chunks the index holds, against the stores and the manifest.
 
-    ``summaries`` is the bundle's record of what each summary was made from.
+    ``summaries`` is the bundle's record of what each summary was made from, and
+    ``documents`` its record of what each document is anchored to. A chunk's own id
+    lists are held to its document's anchors, and its clearance class is worked out
+    from those. Worked out from the chunk's own lists, a chunk that dropped its
+    strictest anchor and filed itself lower would agree with itself.
     """
 
     def rows(query: str) -> list[tuple[Any, ...]]:
@@ -333,8 +365,22 @@ def check_chunks(
         )
     }
 
-    unanchored, misfiled, mispathed = [], [], []
+    anchored = {document.id: document.anchors for document in documents}
+
+    def ids_of(chunk: Chunk, kind: AnchorKind) -> list[str]:
+        return sorted(a.id for a in anchored[chunk.document_id] if a.kind is kind)
+
+    orphaned, strayed, unanchored, misfiled, mispathed = [], [], [], [], []
     for chunk in chunks:
+        if chunk.document_id not in anchored:
+            orphaned.append(chunk.id)
+            continue
+        if (
+            sorted(chunk.space_ids) != ids_of(chunk, AnchorKind.SPACE)
+            or sorted(chunk.asset_type_ids) != ids_of(chunk, AnchorKind.ASSET_TYPE)
+            or sorted(chunk.asset_ids) != ids_of(chunk, AnchorKind.ASSET)
+        ):
+            strayed.append(chunk.id)
         known = (
             all(space_id in spaces for space_id in chunk.space_ids)
             and all(type_id in types for type_id in chunk.asset_type_ids)
@@ -345,12 +391,7 @@ def check_chunks(
         if not known or not (chunk.space_ids or chunk.asset_type_ids or chunk.asset_ids):
             unanchored.append(chunk.id)
             continue
-        anchors = [
-            *((AnchorKind.SPACE, spaces[space_id][0]) for space_id in chunk.space_ids),
-            *((AnchorKind.ASSET_TYPE, types[type_id]) for type_id in chunk.asset_type_ids),
-            *((AnchorKind.ASSET, types[assets[asset_id][0]]) for asset_id in chunk.asset_ids),
-        ]
-        if chunk.clearance_class is not clearance.document_clearance(chunk.kind, anchors):
+        if chunk.clearance_class is not _class_of(chunk, anchored, spaces, types, assets):
             misfiled.append(chunk.id)
         above: set[str] = set()
         for space_id in chunk.space_ids:
@@ -361,6 +402,8 @@ def check_chunks(
             mispathed.append(chunk.id)
 
     failures = [
+        *_failure("a chunk belongs to a document of the bundle", orphaned),
+        *_failure("a chunk carries its document's anchors", strayed),
         *_failure("a chunk's anchors are spaces, types and assets of the snapshot", unanchored),
         *_failure("a chunk's clearance class is its strictest anchor's", misfiled),
         *_failure("a chunk's ancestor paths agree with the tree", mispathed),
@@ -386,7 +429,7 @@ def check_chunks(
     counted: dict[str, int] = {}
     for chunk in summarised:
         counted[chunk.document_id] = counted.get(chunk.document_id, 0) + 1
-    documents = {chunk.document_id for chunk in passages.values()} | set(counted)
+    indexed = {chunk.document_id for chunk in passages.values()} | set(counted)
     failures += [
         *_failure(
             "a summary is built from passages of its own document and clearance class", crossed
@@ -394,7 +437,7 @@ def check_chunks(
         *_failure("a summary chunk is a summary the bundle recorded", unrecorded),
         *_failure(
             "every document in the index has one summary",
-            [document for document in documents if counted.get(document, 0) != 1],
+            [document for document in indexed if counted.get(document, 0) != 1],
         ),
     ]
 

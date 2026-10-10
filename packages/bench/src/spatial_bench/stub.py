@@ -50,6 +50,11 @@ def plan_for(question: Question) -> dict[str, Any]:
     place = resolve(slots.place, "place", "resolve_place")
     if question.shape == "place-location":
         return {"shape": question.shape, "mentions": mentions, "steps": steps}
+    if question.shape == "route":
+        # From the default origin, to the one place named. Only the counterfactual
+        # check asks these: routes have no gold.
+        add({"tool": "route", "destination": place})
+        return {"shape": question.shape, "mentions": mentions, "steps": steps}
     if question.shape == "place-document":
         add({"tool": "retrieve_documents", "anchors": place, "query": slots.query})
         return {"shape": question.shape, "mentions": mentions, "steps": steps}

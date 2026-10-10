@@ -14,7 +14,8 @@ The tools, and what each produces:
     assets_in_scope      a scope and types, both optional references,
                          and attribute filters                       -> assets
     aggregate            assets, and a scale level to count them by  -> groups
-    retrieve_documents   anchors (a step's assets, or its place) and a query -> passages
+    retrieve_documents   anchors (a step's assets, its one asset, or its place)
+                         and a query                                 -> passages
     places_matching      a description of places   -> a place set (one or many)
     route                an origin and a destination -> a route
     nearest              assets, and a place to be near -> the nearest of them
@@ -52,7 +53,8 @@ A plan that may not run raises a trigger, unbound-reference when a reference in
 it binds to nothing and plan-invalid otherwise, which buys it one recovery call.
 
 A document shape says what its retrieval is anchored by: assets for asset-document,
-a place for place-document. A plan that mixes them up is invalid.
+or the one asset a follow-up points at ("what does its manual say"), and a place
+for place-document. A plan that mixes them up is invalid.
 
 To add a tool: write its step model with READS for its references, add it to Step
 and STEPS, give it a row in PRODUCES, and teach the executor to run it.
@@ -70,6 +72,8 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 from spatial_service.recovery import TriggerKind
 
 STEP_CAP = 6
+# How long a mention's words may be.
+MENTION_CAP = 200
 # Route caps. A route step may return runners-up to other places of a set.
 ROUTE_STEP_CAP = 2
 ALTERNATIVES_CAP = 3
@@ -150,7 +154,7 @@ class Refers(_Model):
 class Mention(_Model):
     id: str = Field(pattern=r"^m[0-9]+$")
     # The words of the question that name it, as written.
-    text: str = Field(min_length=1, max_length=200)
+    text: str = Field(min_length=1, max_length=MENTION_CAP)
     kind: MentionKind
     # Set when the words are a follow-up reference. Then nothing is looked up by them.
     refers: Refers | None = None
@@ -219,7 +223,8 @@ FILTER_CAP = 3
 class Filter(_Model):
     """One test on one attribute. The attribute is one the venue's catalogue names."""
 
-    attribute: str = Field(pattern=r"^[a-z][a-z0-9_]{0,59}$")
+    # A colon too: a fire asset's attributes are OSM keys, "fire_extinguisher:type".
+    attribute: str = Field(pattern=r"^[a-z][a-z0-9_:]{0,59}$")
     test: FilterTest
     # The date to compare against, for before and after. None for the other two.
     date: datetime.date | None = None
@@ -265,7 +270,8 @@ class Aggregate(_Step):
 class RetrieveDocuments(_Step):
     """Search the documents anchored to what a step found: its assets, or its place."""
 
-    READS: ClassVar[dict[str, str]] = {"anchors": "assets|places"}
+    # "asset" is the one a follow-up points at.
+    READS: ClassVar[dict[str, str]] = {"anchors": "assets|asset|places"}
 
     tool: Literal["retrieve_documents"]
     anchors: StepRef
@@ -347,6 +353,14 @@ STEPS: dict[str, type[_Step]] = {
     "nearest": Nearest,
 }
 
+
+def resolves(tool: str) -> MentionKind:
+    """The kind of mention a resolving tool resolves, read off its step class."""
+    step = STEPS[tool]
+    assert issubclass(step, Resolving)
+    return step.RESOLVES
+
+
 # What each tool's steps produce. A reference binds only to an earlier step whose
 # output is the kind it reads.
 PRODUCES = {
@@ -377,8 +391,8 @@ ENDS_IN = {
 
 # What a document shape's retrieval is anchored by: what the step it reads produces.
 ANCHORED_BY = {
-    QuestionShape.ASSET_DOCUMENT: "assets",
-    QuestionShape.PLACE_DOCUMENT: "places",
+    QuestionShape.ASSET_DOCUMENT: ("assets", "asset"),
+    QuestionShape.PLACE_DOCUMENT: ("places",),
 }
 
 
@@ -498,10 +512,12 @@ def check(plan: Plan) -> list[str]:
     last = plan.steps[-1] if plan.steps else None
     if isinstance(last, RetrieveDocuments) and plan.shape in ANCHORED_BY:
         anchored = {step.id: PRODUCES[step.tool] for step in plan.steps}.get(last.anchors.step)
-        if anchored in ANCHORED_BY.values() and anchored != ANCHORED_BY[plan.shape]:
+        wanted = ANCHORED_BY[plan.shape]
+        # Anything else it might read is not something a retrieval reads at all,
+        # and bind() has said so already.
+        if anchored in RetrieveDocuments.READS["anchors"].split("|") and anchored not in wanted:
             reasons.append(
-                f"a {plan.shape} plan retrieves by {ANCHORED_BY[plan.shape]}, "
-                f"but step {last.id} reads {anchored}"
+                f"a {plan.shape} plan retrieves by {wanted[0]}, but step {last.id} reads {anchored}"
             )
     routes = [step for step in plan.steps if isinstance(step, Route)]
     if len(routes) > ROUTE_STEP_CAP:

@@ -52,7 +52,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from spatial_core.records import Asset, AssetType, RecordProvenance, Space
 from spatial_service.assets import Aggregation, ScopeResult, Tally
-from spatial_service.places import Venue, tier
+from spatial_service.places import Venue, label, tier
 from spatial_service.retrieval import DroppedSegment, Passage, Retrieval, link
 from spatial_service.routes import Found, Nearest, Routed
 
@@ -564,7 +564,7 @@ def proximity(venue: Venue, question: str, near: Nearest) -> Answer:
     for asset in assets:
         by_space.setdefault(asset.space_id, []).append(asset)
     rows = [
-        Row(Tally.of(members), space_id=space_id, label=_label_of(venue, space_id))
+        Row(Tally.of(members), space_id=space_id, label=label(venue.spaces[space_id]))
         for space_id, members in sorted(by_space.items())
     ]
     payload: dict[str, Any] = {
@@ -603,11 +603,6 @@ def proximity(venue: Venue, question: str, near: Nearest) -> Answer:
     payload["required"] = required
     payload["facts"] = facts.told()
     return Answer(facts.items, payload, required, together, rows)
-
-
-def _label_of(venue: Venue, space_id: str) -> str | None:
-    label = venue.spaces[space_id].label
-    return label.value if label else None
 
 
 def _scope(venue: Venue, facts: Facts, found: ScopeResult) -> str | None:
@@ -649,18 +644,6 @@ class Segment(_Model):
     citations: list[Citation]
     # The passages a document segment cites. Empty for a segment of facts alone.
     passages: list[PassageCitation] = []
-
-
-def fill(
-    text: str,
-    facts: list[Fact],
-    required: Iterable[str] = (),
-    together: Iterable[list[str]] = (),
-    banned: Iterable[str] = (),
-) -> list[Segment]:
-    """Turn a model's raw output into segments, or raise CompositionRejected."""
-    segments, _ = ground(text, facts, required, together, banned=banned)
-    return segments
 
 
 def _squash(text: str) -> str:
