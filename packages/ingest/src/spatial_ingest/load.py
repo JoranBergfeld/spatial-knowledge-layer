@@ -326,6 +326,17 @@ def load(*, bundle: Path, database_url: str, index: SearchIndex | None = None) -
         db.apply_control(conn)
         current, previous = db.pointer(conn)
         log.info("current snapshot %s, previous %s", current, previous)
+        # A database holds one venue. That is what keeps the test bench out of the
+        # demo venue's stores, and the demo venue out of the bench's.
+        others = conn.execute(
+            "SELECT DISTINCT venue FROM control.snapshots WHERE venue <> %s ORDER BY venue",
+            (manifest["venue"],),
+        ).fetchall()
+        if others:
+            raise LoadError(
+                f"this database holds {', '.join(venue for (venue,) in others)}. "
+                f"{manifest['venue']} gets a database of its own."
+            )
         if snapshot in (current, previous):
             role = "current" if snapshot == current else "previous"
             raise LoadError(

@@ -283,6 +283,9 @@ class DocumentKind(StrEnum):
     ACCESSIBILITY_PAGE = "accessibility-page"
     # A maker's manual for an asset type. Quoted and linked, never hosted.
     MANUAL = "manual"
+    # Something else handed over with a building: a test report, a schedule, a
+    # closeout submittal. Only the test bench has these.
+    HANDOVER_RECORD = "handover-record"
 
 
 class AnchorKind(StrEnum):

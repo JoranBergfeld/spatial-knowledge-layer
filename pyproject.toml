@@ -25,6 +25,7 @@ dev = [
     "ruff",
     "mypy",
     "types-shapely",
+    "types-openpyxl>=3.1.5.20260827",
 ]
 
 [tool.pytest.ini_options]

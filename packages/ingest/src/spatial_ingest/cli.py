@@ -21,9 +21,14 @@ from pathlib import Path
 
 import psycopg
 
-from spatial_ingest.build import MANIFEST_FILE, BuildError, build
+from spatial_ingest.build import MANIFEST_FILE, BuildError, build, build_handover
 from spatial_ingest.corpus import CorpusError
 from spatial_ingest.documents import DocumentsError
+from spatial_ingest.handover.cobie import CobieError
+from spatial_ingest.handover.definition import Definition, DefinitionError, load_definition
+from spatial_ingest.handover.fetch import fetch_handover
+from spatial_ingest.handover.ifc import IfcError
+from spatial_ingest.handover.records import HandoverError
 from spatial_ingest.load import LoadError, load
 from spatial_ingest.models import ModelError
 from spatial_ingest.promote import PromoteError, promote
@@ -34,6 +39,8 @@ from spatial_ingest.summaries import SummaryError
 from spatial_ingest.venue import load_venue
 
 DATABASE_URL_ENV = "SPATIAL_DATABASE_URL"
+# The built-in handover venue: the test bench.
+TEST_BENCH = "test-bench"
 # Each load and promote leaves its log here, inside the bundle it ran for.
 RUNS_DIR = "runs"
 
@@ -79,6 +86,19 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="fetch every document source again, which checks its link again too",
     )
+    build_cmd.add_argument(
+        "--handover",
+        type=Path,
+        help="for a handover venue (the test bench): the directory its pinned files are in",
+    )
+
+    fetch_cmd = commands.add_parser(
+        "fetch-handover", help="fetch a handover venue's pinned files and check their hashes"
+    )
+    fetch_cmd.add_argument(
+        "--venue", default=TEST_BENCH, help="a handover venue, or a definition .json file"
+    )
+    fetch_cmd.add_argument("--to", type=Path, required=True, help="the directory to fetch into")
 
     for name, help_text in (
         ("load", "load a bundle into the stores and check it; it does not become current"),
@@ -118,7 +138,76 @@ def _run_log(bundle: Path, command: str) -> Iterator[Path | None]:
             handler.close()
 
 
+_HANDOVER_ERRORS = (
+    BuildError,
+    CobieError,
+    DefinitionError,
+    DocumentsError,
+    HandoverError,
+    IfcError,
+    ModelError,
+    SummaryError,
+    ValueError,
+    KeyError,
+    OSError,
+)
+
+
+def _build_handover(args: argparse.Namespace, definition: Definition) -> int:
+    if args.handover is None:
+        print(
+            f"ingest build: {definition.id} is built from a handover. "
+            "Pass --handover with the directory its files are in.",
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        bundle = build_handover(
+            definition=definition,
+            date=args.date,
+            out=args.out,
+            handover=args.handover,
+            refetch_documents=args.refetch_documents,
+        )
+    except _HANDOVER_ERRORS as error:
+        print(f"ingest build failed: {error}", file=sys.stderr)
+        return 1
+    manifest = json.loads((bundle / MANIFEST_FILE).read_text(encoding="utf-8"))
+    print(f"built {bundle}")
+    print(json.dumps(manifest["counts"], indent=2))
+    print(f"visible assets: {json.dumps(manifest['inventory']['visible_assets'])}")
+    prose = manifest["documents"]
+    print(
+        f"documents: {prose['documents']} in {prose['chunks']} chunks, "
+        f"{len(prose['skipped'])} skipped, ${prose['spend']['total_usd']} spent"
+    )
+    for skipped in prose["skipped"]:
+        print(f"  skipped {skipped['id']}: {skipped['reason']}")
+    return 0
+
+
+def _fetch_handover(args: argparse.Namespace) -> int:
+    try:
+        definition = load_definition(args.venue)
+        if definition is None:
+            raise DefinitionError(f"{args.venue} is not a handover venue")
+        done = fetch_handover(definition, args.to)
+    except (DefinitionError, ValueError, OSError) as error:
+        print(f"ingest fetch-handover failed: {error}", file=sys.stderr)
+        return 1
+    for name, what in done.items():
+        print(f"{what}: {args.to / name}")
+    return 0
+
+
 def _build(args: argparse.Namespace) -> int:
+    try:
+        definition = load_definition(args.venue)
+    except (DefinitionError, ValueError, OSError) as error:
+        print(f"ingest build failed: {error}", file=sys.stderr)
+        return 1
+    if definition is not None:
+        return _build_handover(args, definition)
     try:
         bundle = build(
             venue=load_venue(args.venue),
@@ -192,6 +281,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.command == "build":
         return _build(args)
+    if args.command == "fetch-handover":
+        return _fetch_handover(args)
     if not args.database_url:
         print(
             f"ingest {args.command}: pass --database-url or set {DATABASE_URL_ENV}",

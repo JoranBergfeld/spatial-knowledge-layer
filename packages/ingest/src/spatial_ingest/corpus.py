@@ -49,10 +49,14 @@ class AnchorSpec(_Entry):
     space: str | None = None
     asset_type: str | None = None
     asset: str | None = None
+    # Set when a published rule found the anchor and the source did not name it:
+    # a handover document keyed to a system, anchored to that system's components.
+    rule: str | None = None
 
     @model_validator(mode="after")
     def _names_one_thing(self) -> Self:
-        if len([value for value in self.model_dump().values() if value]) != 1:
+        named = (self.building, self.space, self.asset_type, self.asset)
+        if len([value for value in named if value]) != 1:
             raise ValueError("an anchor names exactly one of building, space, asset_type or asset")
         return self
 

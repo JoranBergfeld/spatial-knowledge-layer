@@ -1,0 +1,3 @@
+Fire alarm test report.
+
+Every smoke detector was tested with canned smoke and reported to the panel. The sounders were heard in each corridor.

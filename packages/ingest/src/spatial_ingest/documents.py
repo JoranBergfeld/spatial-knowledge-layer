@@ -174,6 +174,9 @@ def fetch(url: str) -> tuple[bytes, str] | None:
     return response.content, response.headers.get("content-type", "")
 
 
+Fetcher = Callable[[str], tuple[bytes, str] | None]
+
+
 def _read_jsonl[R: BaseModel](path: Path, model: type[R]) -> list[R]:
     if not path.is_file():
         return []
@@ -258,6 +261,9 @@ class _Snapshot:
         """The anchors a corpus entry stands for, or why it stands for none."""
 
         def sourced(kind: AnchorKind, anchor_id: str) -> list[Anchor]:
+            if spec.rule is not None:
+                derived = ValueProvenance.DERIVED
+                return [Anchor(kind=kind, id=anchor_id, provenance=derived, rule=spec.rule)]
             return [Anchor(kind=kind, id=anchor_id, provenance=ValueProvenance.SOURCED)]
 
         if spec.building is not None:
@@ -321,11 +327,13 @@ def ingest(
     models: Callable[[], Models],
     today: str,
     refetch: bool = False,
+    fetcher: Fetcher | None = None,
 ) -> Ingested:
     """The corpus as documents and chunks for this snapshot.
 
     ``models`` is only called once there is a passage to translate or a chunk to
-    embed that the bundle does not already hold.
+    embed that the bundle does not already hold. ``fetcher`` gets an original by
+    its URL. The test bench passes one that reads OCR'd text from disk.
     """
     directory = bundle / DIR
     originals = directory / ORIGINALS_DIR
@@ -376,7 +384,9 @@ def ingest(
             continue
         anchored = tuple(anchors[key] for key in sorted(anchors))
 
-        entry = _original(source, fetched.get(source.id), originals, today, refetch)
+        entry = _original(
+            source, fetched.get(source.id), originals, today, refetch, fetcher or fetch
+        )
         kept[source.id] = entry
         link = LinkCheck.model_validate(entry["link"])
         links.append({"document": source.id, "url": source.url, **link.model_dump(mode="json")})
@@ -523,6 +533,9 @@ def ingest(
         "by_kind": {
             kind.value: sum(1 for document in documents if document.kind is kind)
             for kind in DocumentKind
+            # Handover records are the test bench's. A venue with none does not list them.
+            if kind is not DocumentKind.HANDOVER_RECORD
+            or any(document.kind is kind for document in documents)
         },
         "chunks_by_clearance_class": {
             persona.value: sum(1 for chunk in chunks if chunk.clearance_class is persona)
@@ -561,6 +574,7 @@ def _original(
     originals: Path,
     today: str,
     refetch: bool,
+    fetcher: Fetcher,
 ) -> dict[str, Any]:
     """Where a source's original is in the bundle, fetching it when it has to.
 
@@ -572,7 +586,7 @@ def _original(
     if stored is not None and not refetch:
         return stored
     have = stored if stored is not None and stored.get("file") else None
-    got = fetch(source.url)
+    got = fetcher(source.url)
     if got is None:
         link = {"status": LinkStatus.OFFLINE.value, "checked_on": today}
         if have is not None and (originals / have["file"]).is_file():

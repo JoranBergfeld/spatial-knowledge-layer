@@ -6,6 +6,7 @@ from spatial_core.clearance import (
     door_clearance,
     edge_clearance,
     from_access,
+    space_category_clearance,
     space_clearance,
     stricter,
     type_clearance,
@@ -402,3 +403,53 @@ def test_an_anchor_with_no_clearance_of_its_own_limits_nothing() -> None:
 def test_a_document_with_no_anchor_has_no_clearance() -> None:
     with pytest.raises(ValueError, match="at least one anchor"):
         document_clearance(PAGE, [])
+
+
+@pytest.mark.parametrize(
+    ("category", "persona"),
+    [
+        ("13-85 11 11: Corridor", Persona.VISITOR),
+        ("13-85 21 11: Stairway", Persona.VISITOR),
+        ("13-41 11 14 21: Restroom", Persona.VISITOR),
+        ("13-51 31 11: Waiting Room", Persona.VISITOR),
+        ("13-11 11 31: Reception Space", Persona.VISITOR),
+        ("13-85 31 11: Entry Vestibule", Persona.VISITOR),
+        ("13-85 31 99: Other Transitional Circulation Spaces", Persona.VISITOR),
+        ("13-81 21 21: Electrical Room", Persona.MAINTENANCE),
+        ("13-81 21 11: Equipment Room", Persona.MAINTENANCE),
+        ("13-81 21 17: Mechanical Room", Persona.MAINTENANCE),
+        ("13-81 11 99: Other General Facility Service Spaces", Persona.MAINTENANCE),
+        ("13-75 41 24: Hazardous Material Storage Space", Persona.MAINTENANCE),
+        ("13-91 11 11 33: Loading Dock", Persona.MAINTENANCE),
+        ("13-81 21 31: Elevator Shaft", Persona.MAINTENANCE),
+        ("13-81 31: Service Distribution Spaces", Persona.MAINTENANCE),
+        ("13-15 11 34 11: Office", Persona.STAFF),
+        ("13-75 11 11: Storage Room", Persona.STAFF),
+        ("13-41 41 14: Physical Examination Room", Persona.STAFF),
+    ],
+)
+def test_a_test_bench_space_takes_the_clearance_its_table_13_category_maps_to(
+    category: str, persona: Persona
+) -> None:
+    cleared = space_category_clearance(category)
+
+    assert cleared.persona is persona
+    assert cleared.rule == "clearance-from-space-category@1"
+
+
+@pytest.mark.parametrize("category", [None, "", "n/a", "Corridor", "13-99 99: Something New"])
+def test_a_missing_or_unlisted_space_category_is_staff(category: str | None) -> None:
+    assert space_category_clearance(category).persona is Persona.STAFF
+
+
+def test_a_space_category_is_matched_on_its_numeric_code_never_the_title() -> None:
+    assert space_category_clearance("13-15 11 34 11: Corridor").persona is Persona.STAFF
+    assert space_category_clearance("13-85 11 11").persona is Persona.VISITOR
+    assert space_category_clearance("13-85 11 11: Bureau").persona is Persona.VISITOR
+
+
+def test_every_space_category_clearance_is_an_authored_default() -> None:
+    for category in ("13-85 11 11: Corridor", "13-81 21 21: Electrical Room", None):
+        cleared = space_category_clearance(category)
+        assert cleared.authored_default
+        assert cleared.access is None
