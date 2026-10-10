@@ -5,6 +5,7 @@
         floor:way/100:0           50.34 level 0
           osm:way/1002            "Audimax"            auditorium, untagged: visitor
           osm:way/1009            "Serverraum"         access=staff_only: maintenance
+          osm:way/1010            "Treppenhaus"        stairs on levels 0 and 1: visitor
         floor:way/100:1           50.34 level 1
           osm:way/1003            50.34 room 107       corridor, untagged: visitor
           osm:way/1004            50.34 room 108       access=private: staff
@@ -19,6 +20,19 @@
 So a visitor asking for "107" has two candidates and staff three, nobody but
 maintenance sees the Serverraum, and there is no Bibliothek at all. No edges: each
 space is visible by its own clearance.
+
+What is installed (lights and the extinguisher are visitor types, panelboards
+maintenance; all generated but the extinguisher, which OSM maps):
+
+    Audimax            3 Light Fixture B1, 1 Fire extinguisher (sourced), 1 Panelboard P1
+    Serverraum         2 Panelboard P1, 1 Light Fixture B1
+    Treppenhaus        1 Light Fixture Q4
+    50.34 room 107     2 Light Fixture B1, one of them with no placement
+    50.34 room 108     1 Light Fixture B1
+    Seminarraum Nord   1 Light Fixture B1
+
+Nothing in 30.10 room 107, Seminarraum Süd or anywhere in the Mensa. So a visitor
+counts 8 assets, staff 9 and maintenance 13.
 """
 
 from __future__ import annotations
@@ -33,10 +47,15 @@ from spatial_core import clearance
 from spatial_core.records import (
     PERSONAS,
     Ancestor,
+    Asset,
+    AssetType,
     Clearance,
+    Persona,
+    Position,
     RecordProvenance,
     Space,
     Value,
+    ValueProvenance,
     VisibleSpace,
 )
 from spatial_service.llm import Deployment, Llm
@@ -56,6 +75,7 @@ def _space(
     ref: str | None = None,
     label: Value | None = None,
     cleared: Clearance | None = None,
+    levels: str | None = None,
 ) -> Space:
     path = (*parent.ancestor_path, Ancestor(tier=parent.tier.value, id=parent.id)) if parent else ()
     if label is None and name is not None:
@@ -71,6 +91,7 @@ def _space(
         ref=Value.sourced(ref) if ref else None,
         label=label,
         addressable=label is not None,
+        levels=Value.derived(levels, "level-parse@1") if levels else None,
         clearance=cleared,
     )
 
@@ -108,6 +129,15 @@ def spaces() -> list[Space]:
             a0,
             name="Serverraum",
             cleared=clearance.from_access("staff_only"),
+        ),
+        # Covers two floors, hangs from the lower one.
+        _space(
+            "osm:way/1010",
+            "room",
+            a0,
+            name="Treppenhaus",
+            levels="0;1",
+            cleared=clearance.space_clearance({"indoor": "room", "room": "stairs"}),
         ),
         _space(
             "osm:way/1003",
@@ -167,8 +197,112 @@ def visible() -> list[VisibleSpace]:
     ]
 
 
+LIGHT_B1 = "seed:type:light-fixture-b1"
+LIGHT_Q4 = "seed:type:light-fixture-q4"
+PANEL = "seed:type:panelboard-p1"
+EXTINGUISHER = "osm:type:fire_extinguisher"
+FIRE_RULE = "fire-assets-from-emergency@1"
+BASIS = "seed-inventory@1, seed 7"
+
+
+def _generated_type(id: str, name: str, code: str) -> AssetType:
+    return AssetType(
+        id=id,
+        record_provenance=RecordProvenance.SEED,
+        name=Value(value=name, provenance=ValueProvenance.INFERRED, basis=BASIS),
+        omniclass=Value(value=code, provenance=ValueProvenance.INFERRED, basis=BASIS),
+        clearance=clearance.type_clearance(code),
+    )
+
+
+def asset_types() -> list[AssetType]:
+    return [
+        _generated_type(LIGHT_B1, "Light Fixture B1", "23-80 70 11 14 11"),
+        _generated_type(LIGHT_Q4, "Light Fixture Q4", "23-80 70 11 11"),
+        _generated_type(PANEL, "Panelboard P1", "23-80 30 20 11"),
+        AssetType(
+            id=EXTINGUISHER,
+            record_provenance=RecordProvenance.SOURCED,
+            name=Value.derived("Fire extinguisher", FIRE_RULE),
+            omniclass=Value.derived("23-65 70 17 11", FIRE_RULE),
+            clearance=clearance.type_clearance("23-65 70 17 11"),
+        ),
+    ]
+
+
+# (asset id, type, space, placed)
+_INSTALLED = [
+    ("seed:asset:L1", LIGHT_B1, "osm:way/1002", True),
+    ("seed:asset:L2", LIGHT_B1, "osm:way/1002", True),
+    ("seed:asset:L3", LIGHT_B1, "osm:way/1002", True),
+    ("osm:asset:node/9001", EXTINGUISHER, "osm:way/1002", True),
+    ("seed:asset:P1", PANEL, "osm:way/1002", True),
+    ("seed:asset:P2", PANEL, "osm:way/1009", True),
+    ("seed:asset:P3", PANEL, "osm:way/1009", True),
+    ("seed:asset:L4", LIGHT_B1, "osm:way/1009", True),
+    ("seed:asset:L5", LIGHT_Q4, "osm:way/1010", True),
+    ("seed:asset:L6", LIGHT_B1, "osm:way/1003", True),
+    ("seed:asset:L7", LIGHT_B1, "osm:way/1003", False),
+    ("seed:asset:L8", LIGHT_B1, "osm:way/1004", True),
+    ("seed:asset:L9", LIGHT_B1, "osm:way/2002", True),
+]
+
+
+def assets() -> list[Asset]:
+    by_id = {space.id: space for space in spaces()}
+    names = {kind.id: kind.name.value for kind in asset_types()}
+    listed = []
+    for number, (id, type_id, space_id, placed) in enumerate(_INSTALLED, start=1):
+        space = by_id[space_id]
+        sourced = id.startswith("osm:")
+        position = None
+        if placed and sourced:
+            position = Position(lon=8.41, lat=49.01, provenance=ValueProvenance.SOURCED)
+        elif placed:
+            position = Position(
+                lon=8.41, lat=49.01, provenance=ValueProvenance.DERIVED, rule="layout-in-outline@1"
+            )
+        listed.append(
+            Asset(
+                id=id,
+                record_provenance=RecordProvenance.SOURCED if sourced else RecordProvenance.SEED,
+                source=id.removeprefix("osm:asset:") if sourced else None,
+                type_id=type_id,
+                space_id=space_id,
+                ancestor_path=(
+                    *space.ancestor_path,
+                    Ancestor(tier=space.tier.value, id=space.id),
+                ),
+                name=Value.derived(names[type_id], FIRE_RULE)
+                if sourced
+                else Value(
+                    value=f"{names[type_id]} {number}",
+                    provenance=ValueProvenance.INFERRED,
+                    basis=BASIS,
+                ),
+                position=position,
+            )
+        )
+    return listed
+
+
+def visible_assets() -> tuple[dict[Persona, frozenset[str]], dict[Persona, frozenset[str]]]:
+    """The asset ids, then the type ids, each persona can see."""
+    return clearance.visible_assets(assets(), asset_types(), clearance.visible_sets(spaces(), []))
+
+
 def store() -> MemoryStore:
-    return MemoryStore(SNAPSHOT, spaces(), visible(), previous=PREVIOUS)
+    seen_assets, seen_types = visible_assets()
+    return MemoryStore(
+        SNAPSHOT,
+        spaces(),
+        visible(),
+        previous=PREVIOUS,
+        assets=assets(),
+        asset_types=asset_types(),
+        visible_assets=seen_assets,
+        visible_asset_types=seen_types,
+    )
 
 
 # --- the model ---------------------------------------------------------------------------
@@ -248,3 +382,63 @@ def located(payload: dict[str, Any]) -> str:
     subject, rest = facts[0]["ref"], [f["ref"] for f in facts[1:]]
     text = f"{{{subject}}} is in " + ", ".join(f"{{{ref}}}" for ref in rest) + "."
     return json.dumps({"segments": [{"text": text, "cites": [f["ref"] for f in facts]}]})
+
+
+def installed(place: str | None = None, kind: str | None = None) -> str:
+    """An asset-containment plan: what is in ``place``, of type ``kind`` if given."""
+    return _asset_plan("asset-containment", place, kind, None)
+
+
+def most(by: str, kind: str | None = None, place: str | None = None) -> str:
+    """An asset-aggregation plan: counts per ``by`` under ``place``, or the whole venue."""
+    return _asset_plan("asset-aggregation", place, kind, by)
+
+
+def _asset_plan(shape: str, place: str | None, kind: str | None, by: str | None) -> str:
+    mentions: list[dict[str, Any]] = []
+    steps: list[dict[str, Any]] = []
+    scope: dict[str, Any] = {"id": "", "tool": "assets_in_scope"}
+    for text, mention_kind, tool, reads in (
+        (place, "place", "resolve_place", "scope"),
+        (kind, "asset-type", "resolve_asset_type", "types"),
+    ):
+        if text is None:
+            continue
+        mentions.append({"id": f"m{len(mentions) + 1}", "text": text, "kind": mention_kind})
+        steps.append({"id": f"s{len(steps) + 1}", "tool": tool, "mention": mentions[-1]["id"]})
+        scope[reads] = {"step": steps[-1]["id"]}
+    scope["id"] = f"s{len(steps) + 1}"
+    steps.append(scope)
+    if by is not None:
+        steps.append(
+            {
+                "id": f"s{len(steps) + 1}",
+                "tool": "aggregate",
+                "assets": {"step": scope["id"]},
+                "by": by,
+            }
+        )
+    return json.dumps({"shape": shape, "mentions": mentions, "steps": steps})
+
+
+def _named(refs: list[str]) -> str:
+    return " and ".join(f"{{{ref}}}" for ref in refs)
+
+
+def counted(payload: dict[str, Any]) -> str:
+    """A composer for the asset shapes: the scope, its total, then every row, by placeholder."""
+    scope = f"{{{payload['scope']}}}" if payload.get("scope") else "The venue"
+    text = f"{scope} holds {_named(payload['total'])}."
+    cites = [*([payload["scope"]] if payload.get("scope") else []), *payload["total"]]
+    segments = [{"text": text, "cites": cites}]
+    for row in payload["rows"]:
+        segments.append(
+            {
+                "text": f"{{{row['of']}}}: {_named(row['counts'])}.",
+                "cites": [row["of"], *row["counts"]],
+            }
+        )
+    if payload.get("no_recorded_installations"):
+        refs = payload["no_recorded_installations"]
+        segments.append({"text": f"No recorded installations: {_named(refs)}.", "cites": refs})
+    return json.dumps({"segments": segments})

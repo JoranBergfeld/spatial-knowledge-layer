@@ -73,6 +73,7 @@ def test_an_answer_names_the_place_and_what_holds_it() -> None:
         "persona": "visitor",
         "turns": 1,
         "place": ROOM_107_A,
+        "asset_types": [],
         "pending": None,
     }
 
@@ -545,7 +546,7 @@ def test_a_recovery_call_that_cannot_be_made_answers_nothing() -> None:
     assert turn["kind"] == "unavailable"
     assert turn["recovery"] == "unrepaired"
     assert turn["trace"]["unavailable"] == "recovery"
-    assert turn["state"] == {**state, "pending": None}
+    assert turn["state"] == {**state, "asset_types": [], "pending": None}
     assert [c["purpose"] for c in turn["llm_calls"]] == ["planning"]
 
 
@@ -641,7 +642,7 @@ def test_an_unreachable_model_answers_nothing(
     ]
     assert all(s["citations"] == [] for s in turn["segments"])
     assert turn["candidates"] == []
-    assert turn["state"] == {**state, "pending": None}
+    assert turn["state"] == {**state, "asset_types": [], "pending": None}
     assert [call["purpose"] for call in turn["llm_calls"]] == calls
     assert turn["recovery"] == "not-needed"
 

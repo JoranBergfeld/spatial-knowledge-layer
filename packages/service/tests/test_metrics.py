@@ -11,7 +11,7 @@ from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 
 import fixture
-from fixture import located, where
+from fixture import installed, located, where
 from spatial_service import metrics
 from spatial_service.app import create_app
 from spatial_service.metrics import Metrics
@@ -129,7 +129,7 @@ def test_a_turn_that_made_a_repair_call_is_counted_repaired_or_not() -> None:
 
 
 def test_a_coverage_gap_is_a_turn_kind_of_its_own_and_is_counted() -> None:
-    # Nothing ends a turn in a coverage gap yet, so this one is an abstention relabelled.
+    # An abstention relabelled, so the count does not lean on any one cause of a gap.
     service = Service()
     abstention = service.ask("visitor", "Where is the Bibliothek?", where("Bibliothek"))
     gap = Turn.model_validate({**abstention, "cause": "coverage-gap"})
@@ -142,6 +142,16 @@ def test_a_coverage_gap_is_a_turn_kind_of_its_own_and_is_counted() -> None:
     ]
     assert (labels("visitor", "place-location", "coverage-gap"), 1) in series["spatial.turns"]
     assert (labels("visitor", "place-location", "abstention"), 1) in series["spatial.turns"]
+
+
+def test_a_scope_with_nothing_installed_is_counted_as_a_coverage_gap() -> None:
+    service = Service()
+
+    service.ask("visitor", "What is in 30.10 room 107?", installed("30.10 room 107"))
+
+    assert service.series()["spatial.coverage_gaps"] == [
+        (labels("visitor", "asset-containment", "coverage-gap"), 1)
+    ]
 
 
 def test_the_labels_are_shape_persona_turn_kind_and_snapshot_and_nothing_else() -> None:

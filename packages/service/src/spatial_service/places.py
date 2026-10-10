@@ -27,11 +27,11 @@ from __future__ import annotations
 import re
 import unicodedata
 from collections.abc import Collection, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from functools import cached_property
 
-from spatial_core.records import Persona, Space
+from spatial_core.records import Asset, AssetType, Persona, Space
 
 # How many candidates a clarification names.
 CLARIFY_CAP = 6
@@ -71,14 +71,43 @@ def first_ref(space: Space) -> str | None:
 
 @dataclass(frozen=True)
 class Venue:
-    """One snapshot as one persona sees it: their visible spaces and nothing else."""
+    """One snapshot as one persona sees it: what is visible to them and nothing else."""
 
     snapshot: str
     persona: Persona
     spaces: Mapping[str, Space]
+    assets: Mapping[str, Asset] = field(default_factory=dict)
+    # Only the types of visible assets: a type is visible through one or not at all.
+    asset_types: Mapping[str, AssetType] = field(default_factory=dict)
+    # Every tier the snapshot has, outermost first, whoever is asking. A tier is a
+    # word, not a place, so it is the one thing here that is not cut to the persona:
+    # whether "floor" is a scale level must not depend on who asks.
+    tiers: tuple[str, ...] = ()
 
     def __contains__(self, space_id: object) -> bool:
         return space_id in self.spaces
+
+    @cached_property
+    def root(self) -> Space | None:
+        return next((s for s in self.spaces.values() if s.parent_id is None), None)
+
+    @cached_property
+    def assets_under(self) -> dict[str, list[Asset]]:
+        """Each space's assets, its own and those of every space inside it.
+
+        By ancestor path, which is containment and nothing else, so an asset in a
+        space spanning several floors sits under the one floor that space hangs from.
+        """
+        index: dict[str, list[Asset]] = {}
+        for asset in self.assets.values():
+            for ancestor in asset.ancestor_path:
+                index.setdefault(ancestor.id, []).append(asset)
+        return index
+
+    @cached_property
+    def memo(self) -> dict[object, object]:
+        """Scratch space for whatever is worked out once per venue, such as the collapsed tree."""
+        return {}
 
     def ancestors(self, space: Space) -> list[Space]:
         """Enclosing spaces, innermost first. All visible, since visibility closes upward."""
