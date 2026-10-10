@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from functools import cached_property
 
-from spatial_core.records import Asset, AssetType, Persona, Space
+from spatial_core.records import Asset, AssetType, Persona, ServiceEvent, Space
 
 # How many candidates a clarification names.
 CLARIFY_CAP = 6
@@ -83,6 +83,8 @@ class Venue:
     # word, not a place, so it is the one thing here that is not cut to the persona:
     # whether "floor" is a scale level must not depend on who asks.
     tiers: tuple[str, ...] = ()
+    # The service events of visible assets, by asset. An event is hidden with its asset.
+    service_events: Mapping[str, tuple[ServiceEvent, ...]] = field(default_factory=dict)
 
     def __contains__(self, space_id: object) -> bool:
         return space_id in self.spaces

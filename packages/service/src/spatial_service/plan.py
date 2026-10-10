@@ -10,13 +10,21 @@ The tools, and what each produces:
 
     resolve_place        a place mention           -> places (one, or the turn stops)
     resolve_asset_type   an asset-type mention     -> asset types (a set)
-    assets_in_scope      a scope and types, both optional references -> assets
+    assets_in_scope      a scope and types, both optional references,
+                         and attribute filters                       -> assets
     aggregate            assets, and a scale level to count them by  -> groups
 
 A reference binds only to an earlier step that produces what it reads. Nothing
 reads groups, and nothing that resolves a mention reads assets, so a plan cannot
 say "take whichever came out on top and look inside it". A question like that is
 its own shape, step-dependent, and gets an abstention.
+
+A filter is an attribute by name and one of four tests: recorded, not-recorded,
+before a date, after a date. That is the whole vocabulary. There is no field for a
+free predicate, and an attribute's name is a name and nothing else, so text that
+compares or computes does not parse. Which names count is the venue's to say (its
+attribute catalogue, attributes.py), so that is checked with the other arguments,
+before any step runs.
 
 The step cap is six. The longest place chain worth reading in one question is
 three deep ("room 107 on level 1 of 50.34"), then a type, the assets and a count
@@ -32,6 +40,7 @@ and STEPS, give it a row in PRODUCES, and teach the executor to run it.
 
 from __future__ import annotations
 
+import datetime
 import json
 from enum import StrEnum
 from typing import Any, ClassVar, Literal
@@ -51,6 +60,9 @@ class QuestionShape(StrEnum):
     ASSET_CONTAINMENT = "asset-containment"
     # "Which floor has the most lights?": assets counted per space of a scale level.
     ASSET_AGGREGATION = "asset-aggregation"
+    # "Which lights have no service record?", "What falls due before June?": the
+    # assets under one scope that pass a filter on an attribute.
+    ATTRIBUTE_FILTER = "attribute-filter"
     # A question whose next step depends on what an earlier one finds. No steps:
     # the turn abstains, it does not loop.
     STEP_DEPENDENT = "step-dependent"
@@ -127,6 +139,30 @@ class ResolveAssetType(_Step):
     mention: str
 
 
+class FilterTest(StrEnum):
+    # The asset carries the attribute, or does not. Not carrying it is a gap in
+    # the data and says nothing about the asset.
+    RECORDED = "recorded"
+    NOT_RECORDED = "not-recorded"
+    # The attribute is a date, and falls before or after the one given.
+    BEFORE = "before"
+    AFTER = "after"
+
+
+# The tests that compare against a date.
+DATED = (FilterTest.BEFORE, FilterTest.AFTER)
+FILTER_CAP = 3
+
+
+class Filter(_Model):
+    """One test on one attribute. The attribute is one the venue's catalogue names."""
+
+    attribute: str = Field(pattern=r"^[a-z][a-z0-9_]{0,59}$")
+    test: FilterTest
+    # The date to compare against, for before and after. None for the other two.
+    date: datetime.date | None = None
+
+
 class AssetsInScope(_Step):
     """Every visible asset under one scope node. One step, however many spaces lie under it."""
 
@@ -137,6 +173,8 @@ class AssetsInScope(_Step):
     scope: StepRef | None = None
     # Only assets of the types that step resolved. None is any type.
     types: StepRef | None = None
+    # Only assets passing every one of these.
+    filters: list[Filter] = Field(default=[], max_length=FILTER_CAP)
 
 
 class Aggregate(_Step):
@@ -176,6 +214,7 @@ ENDS_IN = {
     QuestionShape.PLACE_LOCATION: "resolve_place",
     QuestionShape.ASSET_CONTAINMENT: "assets_in_scope",
     QuestionShape.ASSET_AGGREGATION: "aggregate",
+    QuestionShape.ATTRIBUTE_FILTER: "assets_in_scope",
 }
 
 
@@ -300,6 +339,8 @@ def check(plan: Plan) -> list[str]:
         seen.add(step.id)
         referenced.update(ref.step for _, ref in step.references())
 
+    reasons.extend(_filter_reasons(plan))
+
     resolving = [step for step in plan.steps if isinstance(step, Resolving)]
     resolved = [step.mention for step in resolving]
     for mention in plan.mentions:
@@ -333,4 +374,24 @@ def check(plan: Plan) -> list[str]:
                 f"{constraint.mention} lies within {constraint.container}, "
                 f"but step {inner.id} does not read step {outer.id}"
             )
+    return reasons
+
+
+def _filter_reasons(plan: Plan) -> list[str]:
+    """What is wrong with a plan's filters, short of whether the venue has the attribute."""
+    reasons: list[str] = []
+    filtering = False
+    for step in plan.steps:
+        if not isinstance(step, AssetsInScope):
+            continue
+        filtering = filtering or bool(step.filters)
+        for number, one in enumerate(step.filters, start=1):
+            if one.test in DATED and one.date is None:
+                reasons.append(f"step {step.id} filter {number}: {one.test} needs a date")
+            if one.test not in DATED and one.date is not None:
+                reasons.append(f"step {step.id} filter {number}: {one.test} takes no date")
+    if plan.shape is QuestionShape.ATTRIBUTE_FILTER and not filtering:
+        reasons.append("an attribute-filter plan filters by at least one attribute")
+    if plan.shape is QuestionShape.ASSET_CONTAINMENT and filtering:
+        reasons.append("an asset-containment plan has no filters; with one it is attribute-filter")
     return reasons

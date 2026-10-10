@@ -11,9 +11,11 @@ from fastapi.testclient import TestClient
 
 import fixture
 from fixture import counted, installed, most
-from spatial_core.records import PERSONAS, Persona
+from spatial_core import clearance
+from spatial_core.records import PERSONAS, Ancestor, Persona
 from spatial_service.app import create_app
 from spatial_service.plan import Plan
+from spatial_service.store import MemoryStore
 from test_turn import ask, repaired_by
 
 AUDIMAX = "osm:way/1002"
@@ -117,18 +119,82 @@ def test_none_of_a_type_where_other_things_are_installed_is_a_count_of_zero() ->
 # --- no recorded installations ------------------------------------------------------------
 
 
+MENSA = "osm:way/300"
+
+
 @pytest.mark.parametrize("kind", [None, "lights"])
-def test_a_scope_with_nothing_installed_is_a_coverage_gap_not_a_zero(kind: str | None) -> None:
-    turn = ask("visitor", "What is in 30.10 room 107?", installed("30.10 room 107", kind), None)
+def test_a_building_with_nothing_installed_is_a_coverage_gap_not_a_zero(kind: str | None) -> None:
+    turn = ask("staff", "What is in the Mensa?", installed("Mensa", kind), None)
 
     assert (turn["kind"], turn["cause"]) == ("abstention", "coverage-gap")
     assert turn["gap"] == "no-recorded-installations"
-    assert texts(turn) == ["No installations are recorded for 30.10 room 107."]
-    assert [c["space_id"] for c in turn["segments"][0]["citations"]] == ["osm:way/2001"]
+    assert texts(turn) == ["No installations are recorded for Mensa."]
+    assert [c["space_id"] for c in turn["segments"][0]["citations"]] == [MENSA]
     # The host says it. No model is asked to word a gap, so none can dress it up as a count.
     assert [c["purpose"] for c in turn["llm_calls"]] == ["planning"]
     assert turn["trace"]["assets"]["installed_in_scope"] == 0
     assert turn["state"]["turns"] == 1
+
+
+def test_a_gap_below_building_level_is_stated_for_the_building_when_all_of_it_is_one() -> None:
+    turn = ask("staff", "What is in 10.50 room 107?", installed("10.50 room 107"), None)
+
+    # The room is in the Mensa, and nothing is recorded anywhere in the Mensa.
+    assert (turn["cause"], turn["gap"]) == ("coverage-gap", "no-recorded-installations")
+    assert texts(turn) == ["No installations are recorded for Mensa."]
+    assert [c["space_id"] for c in turn["segments"][0]["citations"]] == [MENSA]
+
+
+@pytest.mark.parametrize("kind", [None, "lights"])
+def test_an_empty_room_in_a_building_with_installations_is_not_called_a_gap(
+    kind: str | None,
+) -> None:
+    turn = ask("visitor", "What is in 30.10 room 107?", installed("30.10 room 107", kind), None)
+
+    # 30.10 has a light in Seminarraum Nord, so the building is no gap, and a room is
+    # too small a place to call one. No zero either: nothing recorded is not none.
+    assert (turn["kind"], turn["cause"], turn["gap"]) == ("abstention", "nothing-recorded", None)
+    assert texts(turn) == ["I can't answer that from what is recorded."]
+    assert turn["segments"][0]["citations"] == []
+    assert [c["purpose"] for c in turn["llm_calls"]] == ["planning"]
+    assert turn["trace"]["assets"]["installed_in_scope"] == 0
+    assert turn["state"]["turns"] == 1
+
+
+def test_a_room_whose_assets_are_all_beyond_clearance_reads_like_an_empty_one() -> None:
+    # Hang a panelboard in 30.10 room 107, which a visitor can enter. They see the
+    # room and not the panelboard, so for them nothing changed.
+    panel = next(a for a in fixture.assets() if a.id == "seed:asset:P1")
+    room = next(s for s in fixture.spaces() if s.id == "osm:way/2001")
+    moved = panel.model_copy(
+        update={
+            "id": "seed:asset:P9",
+            "space_id": room.id,
+            "ancestor_path": (*room.ancestor_path, Ancestor(tier="room", id=room.id)),
+        }
+    )
+    all_assets = [*fixture.assets(), moved]
+    seen_assets, seen_types = clearance.visible_assets(
+        all_assets, fixture.asset_types(), clearance.visible_sets(fixture.spaces(), [])
+    )
+    assert moved.id not in seen_assets[Persona.VISITOR]
+    store = MemoryStore(
+        fixture.SNAPSHOT,
+        fixture.spaces(),
+        fixture.visible(),
+        assets=all_assets,
+        asset_types=fixture.asset_types(),
+        visible_assets=seen_assets,
+        visible_asset_types=seen_types,
+    )
+    body = {"persona": "visitor", "question": "What is in 30.10 room 107?"}
+
+    def taken(held: Any) -> dict[str, Any]:
+        llm = fixture.llm(lambda _p: installed("30.10 room 107"), counted, [])
+        turn: dict[str, Any] = TestClient(create_app(held, llm)).post("/turn", json=body).json()
+        return turn
+
+    assert taken(store) == taken(fixture.store())
 
 
 # --- counts across a scale level ----------------------------------------------------------

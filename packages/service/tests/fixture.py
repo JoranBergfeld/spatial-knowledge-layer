@@ -33,6 +33,24 @@ maintenance; all generated but the extinguisher, which OSM maps):
 
 Nothing in 30.10 room 107, Seminarraum Süd or anywhere in the Mensa. So a visitor
 counts 8 assets, staff 9 and maintenance 13.
+
+What the assets carry (L is a light, P a panelboard; the extinguisher carries nothing):
+
+          installation_date   serial_number   service events        service due
+    L1    2024-03-01          B1-0001         2025-05-20            2026-05-20
+    L2    2024-03-01                                                2025-03-01
+    L3                                                              not recorded
+    L4    2021-07-07
+    L5    2023-06-15          Q4-0005         2025-12-01            2026-12-01
+    L6    2025-01-10                                                2026-01-10
+    L7                                        2025-11-11            2026-11-11
+    L8    2022-05-05
+    L9    2024-09-01                          2025-02-02, 2025-10-10  2026-10-10
+    P1    2020-01-01          P1-0001
+    P2    2020-01-01          P1-0002         2024-08-08
+    P3
+
+P2 also carries a breaker_rating, which nothing a visitor or staff can see does.
 """
 
 from __future__ import annotations
@@ -53,6 +71,7 @@ from spatial_core.records import (
     Persona,
     Position,
     RecordProvenance,
+    ServiceEvent,
     Space,
     Value,
     ValueProvenance,
@@ -248,6 +267,50 @@ _INSTALLED = [
 ]
 
 
+INSTALLED = "installation_date"
+SERIAL = "serial_number"
+BREAKER = "breaker_rating"
+_CARRIED: dict[str, dict[str, str]] = {
+    "seed:asset:L1": {INSTALLED: "2024-03-01", SERIAL: "B1-0001"},
+    "seed:asset:L2": {INSTALLED: "2024-03-01"},
+    "seed:asset:L4": {INSTALLED: "2021-07-07"},
+    "seed:asset:L5": {INSTALLED: "2023-06-15", SERIAL: "Q4-0005"},
+    "seed:asset:L6": {INSTALLED: "2025-01-10"},
+    "seed:asset:L8": {INSTALLED: "2022-05-05"},
+    "seed:asset:L9": {INSTALLED: "2024-09-01"},
+    "seed:asset:P1": {INSTALLED: "2020-01-01", SERIAL: "P1-0001"},
+    "seed:asset:P2": {INSTALLED: "2020-01-01", SERIAL: "P1-0002", BREAKER: "63 A"},
+}
+# (asset id, the day it started). L9 has two, so the later one has to win.
+_SERVICED = [
+    ("seed:asset:L1", "2025-05-20"),
+    ("seed:asset:L5", "2025-12-01"),
+    ("seed:asset:L7", "2025-11-11"),
+    ("seed:asset:L9", "2025-10-10"),
+    ("seed:asset:L9", "2025-02-02"),
+    ("seed:asset:P2", "2024-08-08"),
+]
+
+
+def _inferred(value: str) -> Value:
+    return Value(value=value, provenance=ValueProvenance.INFERRED, basis=BASIS)
+
+
+def service_events() -> list[ServiceEvent]:
+    return [
+        ServiceEvent(
+            id=f"seed:event:{asset_id.rsplit(':', 1)[1]}:{start}",
+            record_provenance=RecordProvenance.SEED,
+            asset_id=asset_id,
+            task_id=None,
+            name=_inferred("Service"),
+            start=_inferred(start),
+            performer=_inferred("Facility services"),
+        )
+        for asset_id, start in _SERVICED
+    ]
+
+
 def assets() -> list[Asset]:
     by_id = {space.id: space for space in spaces()}
     names = {kind.id: kind.name.value for kind in asset_types()}
@@ -281,6 +344,7 @@ def assets() -> list[Asset]:
                     basis=BASIS,
                 ),
                 position=position,
+                attributes={k: _inferred(v) for k, v in _CARRIED.get(id, {}).items()},
             )
         )
     return listed
@@ -302,6 +366,7 @@ def store() -> MemoryStore:
         asset_types=asset_types(),
         visible_assets=seen_assets,
         visible_asset_types=seen_types,
+        service_events=service_events(),
     )
 
 
@@ -389,6 +454,23 @@ def installed(place: str | None = None, kind: str | None = None) -> str:
     return _asset_plan("asset-containment", place, kind, None)
 
 
+def having(
+    attribute: str,
+    test: str,
+    date: str | None = None,
+    *,
+    place: str | None = None,
+    kind: str | None = None,
+    by: str | None = None,
+) -> str:
+    """An attribute-filter plan, or an aggregation over filtered assets when ``by`` is given."""
+    shape = "attribute-filter" if by is None else "asset-aggregation"
+    plan = json.loads(_asset_plan(shape, place, kind, by))
+    scope = next(step for step in plan["steps"] if step["tool"] == "assets_in_scope")
+    scope["filters"] = [{"attribute": attribute, "test": test, "date": date}]
+    return json.dumps(plan)
+
+
 def most(by: str, kind: str | None = None, place: str | None = None) -> str:
     """An asset-aggregation plan: counts per ``by`` under ``place``, or the whole venue."""
     return _asset_plan("asset-aggregation", place, kind, by)
@@ -442,3 +524,17 @@ def counted(payload: dict[str, Any]) -> str:
         refs = payload["no_recorded_installations"]
         segments.append({"text": f"No recorded installations: {_named(refs)}.", "cites": refs})
     return json.dumps({"segments": segments})
+
+
+def filtered(payload: dict[str, Any]) -> str:
+    """A composer for a filtered answer: what counted says, then each filter by placeholder."""
+    draft = json.loads(counted(payload))
+    for told in payload["filters"]:
+        condition = told["condition"]
+        draft["segments"].append({"text": f"Counted: {{{condition}}}.", "cites": [condition]})
+        if "not_recorded" in told:
+            counts, lacking = told["not_recorded"]["counts"], told["not_recorded"]["as"]
+            draft["segments"].append(
+                {"text": f"{_named(counts)} with {{{lacking}}}.", "cites": [*counts, lacking]}
+            )
+    return json.dumps(draft)
