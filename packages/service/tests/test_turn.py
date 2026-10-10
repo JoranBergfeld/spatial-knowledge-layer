@@ -22,6 +22,18 @@ ROOM_107_C = "osm:way/3001"
 SERVERRAUM = "osm:way/1009"
 AUDIMAX = "osm:way/1002"
 
+# What a state holds besides its snapshot, persona and turn count, when nothing is in it.
+NOTHING_HELD: dict[str, Any] = {
+    "questions": [],
+    "place": None,
+    "asset_types": [],
+    "assets": [],
+    "since": {},
+    "constraints": [],
+    "route": None,
+    "pending": None,
+}
+
 
 def client(llm: Llm) -> TestClient:
     return TestClient(create_app(fixture.store(), llm))
@@ -68,13 +80,15 @@ def test_an_answer_names_the_place_and_what_holds_it() -> None:
     ]
     cited = [c["space_id"] for c in turn["segments"][0]["citations"]]
     assert cited == [ROOM_107_A, "floor:way/100:1", "osm:way/100", "site:mini"]
+    # The question is carried, the composed answer is not.
     assert turn["state"] == {
+        **NOTHING_HELD,
         "snapshot": fixture.SNAPSHOT,
         "persona": "visitor",
         "turns": 1,
+        "questions": ["Where is 50.34 room 107?"],
         "place": ROOM_107_A,
-        "asset_types": [],
-        "pending": None,
+        "since": {"place": 1},
     }
 
 
@@ -173,7 +187,12 @@ def test_a_bare_room_number_asks_which_among_what_the_persona_sees(
     assert turn["kind"] == "clarification"
     assert [c["space_id"] for c in turn["candidates"]] == expected
     assert set(expected) <= visible_to(Persona(persona))
-    assert turn["state"]["pending"] == {"mention": "107", "candidates": expected}
+    assert turn["state"]["pending"] == {
+        "mention": "107",
+        "candidates": expected,
+        "kind": "place",
+        "turn": 1,
+    }
     assert [s["text"] for s in turn["segments"]] == [
         "More than one place matches. Which one do you mean?"
     ]
@@ -206,6 +225,7 @@ def test_the_next_turn_answers_the_clarification() -> None:
 
     assert seen[0]["pending"] == {
         "mention": "107",
+        "kind": "place",
         "candidates": ["30.10 room 107", "50.34 room 107"],
     }
     assert second["kind"] == "answer"
@@ -546,7 +566,7 @@ def test_a_recovery_call_that_cannot_be_made_answers_nothing() -> None:
     assert turn["kind"] == "unavailable"
     assert turn["recovery"] == "unrepaired"
     assert turn["trace"]["unavailable"] == "recovery"
-    assert turn["state"] == {**state, "asset_types": [], "pending": None}
+    assert turn["state"] == {**NOTHING_HELD, **state}
     assert [c["purpose"] for c in turn["llm_calls"]] == ["planning"]
 
 
@@ -642,7 +662,7 @@ def test_an_unreachable_model_answers_nothing(
     ]
     assert all(s["citations"] == [] for s in turn["segments"])
     assert turn["candidates"] == []
-    assert turn["state"] == {**state, "asset_types": [], "pending": None}
+    assert turn["state"] == {**NOTHING_HELD, **state}
     assert [call["purpose"] for call in turn["llm_calls"]] == calls
     assert turn["recovery"] == "not-needed"
 
@@ -677,6 +697,22 @@ def test_a_request_the_service_cannot_serve_is_refused(body: dict[str, Any], sta
     request = {"persona": "visitor", "question": "Where is the Audimax?", **body}
 
     assert client(llm).post("/turn", json=request).status_code == status
+
+
+@pytest.mark.parametrize("snapshot", ["2026-09-01", "1999-01-01", "not a snapshot"])
+@pytest.mark.parametrize("held_in", ["snapshot", "state"])
+def test_an_unknown_snapshot_is_reported_as_a_dropped_one(snapshot: str, held_in: str) -> None:
+    llm = fixture.llm(lambda _p: where("Audimax"), located, [])
+    request: dict[str, Any] = {"persona": "visitor", "question": "Where is the Audimax?"}
+    if held_in == "snapshot":
+        request["snapshot"] = snapshot
+    else:
+        request["state"] = {"snapshot": snapshot, "persona": "visitor", "turns": 1}
+
+    response = client(llm).post("/turn", json=request)
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "snapshot-dropped"
 
 
 # --- what the model is shown --------------------------------------------------------------

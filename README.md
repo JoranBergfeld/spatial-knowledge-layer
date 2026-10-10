@@ -480,6 +480,10 @@ Three question shapes run on four tools. `place-location` is "where is room X".
 | `resolve_asset_type` | The visible asset types a mention names: an exact name, else every word of the mention in a type's name ("lights" is every type of light). A set, so nobody is asked which. |
 | `assets_in_scope` | Every visible asset under one scope node, or under the whole venue, of the given types if any. One step and one pass over ancestor paths, however many spaces lie under the scope. No call per space. |
 | `aggregate` | Those assets counted per space of one tier under the scope. |
+| `resolve_asset` | The one asset a follow-up reference points back at. See Follow-ups. It does not find an asset by name. |
+
+That fifth tool came with a fourth shape: `asset-location` is "where is that one", and
+ends in `resolve_asset`.
 
 A scale level named in the question sets two things. The place it names is the scope
 ("the Informatik building"), and the tier it compares across is the grouping ("which
@@ -534,8 +538,8 @@ A turn is one of four kinds:
 | Kind | When |
 | --- | --- |
 | `answer` | Every step found what it needed and the composition passed its checks. |
-| `clarification` | A step matched several places, or the mention was a bare room number, which is never a label. The candidates are all visible to the persona, at most six. The state carries them, and the next turn's planner sees their labels. |
-| `abstention` | `no-such-place` when nothing the persona can see matches. A place beyond clearance and a place that does not exist give the same abstention, and the same trace but for the words asked. `no-such-asset-type` is the same for a type. Also `nothing-at-scale-level`, `step-dependent-question`, `unsupported-question`, `plan-rejected` and `composition-rejected`. And `coverage-gap`, with the turn's `gap` saying which: so far only `no-recorded-installations`, when nothing the persona can see is installed in the scope asked about. A gap in the data, not a count of zero. |
+| `clarification` | A step matched several places, or the mention was a bare room number, which is never a label. Or a follow-up reference pointed at more than one asset. The candidates are all visible to the persona, at most six. The state carries them, and the next turn's planner sees their labels. |
+| `abstention` | `no-such-place` when nothing the persona can see matches. A place beyond clearance and a place that does not exist give the same abstention, and the same trace but for the words asked. `no-such-asset-type` is the same for a type. Also `nothing-at-scale-level`, `step-dependent-question`, `unsupported-question`, `plan-rejected` and `composition-rejected`. `nothing-referred-to` when a follow-up reference has nothing to point at. And `coverage-gap`, with the turn's `gap` saying which: so far only `no-recorded-installations`, when nothing the persona can see is installed in the scope asked about. A gap in the data, not a count of zero. |
 | `unavailable` | A model could not be reached. HTTP 503, no answer, and the prior state back unchanged. |
 
 Every turn carries its trace, the new conversation state, each model call's token usage
@@ -556,9 +560,9 @@ first as JSON Pointer paths. Steps and mentions are matched by id, so one added 
 dropped at the front shows as one change.
 
 A conversation keeps the persona and snapshot it began with, and is refused once its
-snapshot is neither current nor previous. State a client sends back is cut down to what
-the persona can see before anything reads it. It holds the place and the asset types the
-last answer was about.
+snapshot is neither current nor previous. That refusal is a 409 with
+`"code": "snapshot-dropped"`, and a snapshot id that never existed gets the very same
+one. The caller ends the conversation on that code, it does not parse the message.
 
 Rough or not done yet on the asset side:
 
@@ -573,6 +577,60 @@ Rough or not done yet on the asset side:
 - Clarifications, abstentions and coverage gaps are worded by the host, not composed.
 - The plan schema is a plain union of step types, because strict structured output
   refuses `oneOf`. Whether the real deployment takes it has not been tried.
+
+### Follow-ups
+
+The service keeps nothing between turns. The state comes in with the request and the
+new one goes back out. It holds:
+
+| Field | What |
+| --- | --- |
+| `questions` | The text of earlier questions, oldest first, the last three. Composed answers are not carried. |
+| `place` | The last place a turn resolved: the one located, the scope looked under, or the one space that came out on top of a count. |
+| `asset_types` | The asset types the last asset question asked for. |
+| `assets` | The assets the last containment answer rested on, if there were six or fewer. An answer over more leaves none: nobody can point at one of forty. |
+| `since` | For each of those three, the turn that set it. |
+| `constraints` | The constraints in force. Nothing fills it yet. |
+| `route` | The last route. Nothing fills it yet. |
+| `pending` | The candidates a clarification offered, their kind (place or asset) and the turn that offered them. |
+
+A turn that resolves nothing for a slot leaves it alone. So a third question can reach
+back past the second, and the trace says which turn it reached.
+
+A follow-up reference is a mention the planner marks with `refers`. The model says
+where it points and what kind of thing is meant. Code finds what:
+
+| The words | In the plan | Resolves to |
+| --- | --- | --- |
+| "that one" | kind `asset`, `{"to": "earlier-turn"}` | The asset in state. Several is a clarification. |
+| "like it" | kind `asset-type`, `{"to": "earlier-turn"}` | The type of the asset in state. Assets of several types is a clarification over the assets. No asset held, then the types in state. |
+| "there" | kind `place`, `{"to": "earlier-turn"}` | The place in state. |
+| "the second one" | any kind, `{"to": "candidate", "ordinal": 2}` | The second candidate the pending clarification offered. Read as an asset type, that asset's type. |
+
+A step over such a mention reads state and looks nothing up. The trace lists each one
+under `references`: the words, the kind, where it pointed, the outcome, the ids and
+names it came to, the turn those are from, and for "like it" the asset it went through.
+
+Nothing to point at is a `nothing-referred-to` abstention, and buys no recovery call.
+An ordinal past the last candidate offers the same candidates again. An asset candidate
+carries its id, the room it is in and whether its position is recorded, since two
+lights of one type in one room share everything else.
+
+None of the incoming state is trusted. Before anything reads it, every id is checked
+against what the persona can see in this snapshot, and whatever fails is dropped. A
+tampered id, a stale one and one a persona was handed but cannot see all go the same
+way, and the turn that follows is identical to one where the id was never there. A
+constraint or a route is dropped whole if any id in it fails. Dropped candidates go
+before ordinals are counted.
+
+Rough here:
+
+- An asset can only be reached by pointing back at it. "Where is Light Fixture B1 10"
+  is a rejected plan.
+- The planner has to work out the ordinal for "the one in 30.10" from the candidate
+  labels. The old way, copying the label into a mention, still runs for places.
+- "Those", meaning several assets at once, has no tool to feed. It asks which one.
+- Whether the planning model writes `refers` reliably is untested. Every test stubs it.
 
 ## Develop
 
