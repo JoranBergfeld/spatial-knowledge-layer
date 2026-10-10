@@ -1,7 +1,7 @@
 [project]
 name = "spatial-bench"
 version = "0.1.0"
-description = "The evaluation harness: question sets, a scripted model, tool correctness and the two leak checks."
+description = "The evaluation harness: question sets, a scripted model, tool correctness, the two leak checks and evaluation runs."
 requires-python = ">=3.12"
 dependencies = [
     "spatial-core",
@@ -9,6 +9,17 @@ dependencies = [
     "spatial-service",
     "psycopg[binary]>=3.2",
     "httpx>=0.27",
+    "fastapi>=0.115",
+    "opentelemetry-sdk>=1.30",
+    "opentelemetry-exporter-otlp-proto-http>=1.30",
+]
+
+[project.optional-dependencies]
+# The NLI model an evaluation run scores entailment with. Only a real run needs it.
+nli = [
+    "onnxruntime>=1.19",
+    "tokenizers>=0.20",
+    "numpy>=1.26",
 ]
 
 [project.scripts]

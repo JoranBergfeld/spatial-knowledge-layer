@@ -2,6 +2,8 @@
 
     POST /turn   a persona, a snapshot (or none, for the current one), prior state
                  and a question; returns the turn with its trace
+    GET /eval    the eval snapshot the last evaluation run wrote, or the one empty
+                 answer when there has been no run (evaluation.py)
 
 Configuration is from the environment:
 
@@ -23,6 +25,8 @@ Configuration is from the environment:
                                      is ever retrieved.
     SPATIAL_SEMANTIC_RANKER          optional: "on" reranks retrieved passages with the
                                      semantic ranker. Off by default.
+    SPATIAL_EVAL_SNAPSHOT            optional: the file an evaluation run wrote its eval
+                                     snapshot to. Unset or not there yet, /eval says so.
 """
 
 from __future__ import annotations
@@ -30,10 +34,13 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
+from spatial_service import evaluation as eval_contract
 from spatial_service import metrics, search
 from spatial_service.llm import Deployment, Llm
 from spatial_service.metrics import Metrics
@@ -138,6 +145,7 @@ def create_app(
     *,
     tree_node_cap: int = NODE_CAP,
     documents: Documents | None = None,
+    evaluation: Path | None = None,
 ) -> FastAPI:
     service = TurnService(store, llm, tree_node_cap, documents=documents)
     recorder = recorder or Metrics()
@@ -157,7 +165,21 @@ def create_app(
             return JSONResponse(status_code=503, content=taken.model_dump(mode="json"))
         return taken
 
+    @app.get("/eval")
+    def eval_snapshot() -> Any:
+        # Read on every request: a run writes the file while the service is up.
+        try:
+            return eval_contract.read(evaluation)
+        except eval_contract.EvalSnapshotError as error:
+            content = {"detail": str(error), "code": "eval-snapshot-unreadable"}
+            return JSONResponse(status_code=500, content=content)
+
     return app
+
+
+def _eval_snapshot(env: Mapping[str, str]) -> Path | None:
+    named = env.get(eval_contract.SNAPSHOT_ENV)
+    return Path(named) if named else None
 
 
 def main() -> None:
@@ -175,6 +197,7 @@ def main() -> None:
                 recorder,
                 tree_node_cap=settings.tree_node_cap,
                 documents=documents_from_env(settings),
+                evaluation=_eval_snapshot(os.environ),
             ),
             host=os.environ.get("SPATIAL_SERVICE_HOST", "127.0.0.1"),
             port=int(os.environ.get("SPATIAL_SERVICE_PORT", "8000")),

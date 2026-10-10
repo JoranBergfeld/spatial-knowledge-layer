@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import importlib
 import json
 import logging
 import os
@@ -112,6 +113,12 @@ def _parser() -> argparse.ArgumentParser:
             default=os.environ.get(DATABASE_URL_ENV),
             help=f"the layer's database, with write credentials (default: ${DATABASE_URL_ENV})",
         )
+        if name == "load":
+            command.add_argument(
+                "--gold",
+                type=Path,
+                help="a question set to ask of the loaded snapshot. Reported, never blocking",
+            )
     return parser
 
 
@@ -267,7 +274,28 @@ def _load(args: argparse.Namespace) -> int:
     print(json.dumps(result.rows, indent=2))
     if result.dropped:
         print(f"dropped {', '.join(result.dropped)}")
+    if args.gold:
+        _question_set(args.gold, args.database_url, result.snapshot)
     return 0
+
+
+def _question_set(gold: Path, database_url: str, snapshot: str) -> None:
+    """Ask the question set of the snapshot just loaded, with the bench's scripted model.
+
+    It is a report. Whatever it finds, and even if it cannot run at all, load has
+    already succeeded and the snapshot can be promoted. The bench is looked up by
+    name because it depends on ingestion, not the other way round. The ingest
+    image does not carry it. There, run `bench fresh` from a checkout.
+    """
+    try:
+        fresh = importlib.import_module("spatial_bench.fresh")
+    except ImportError:
+        print("question set not run: the bench is not installed here. Use `bench fresh`.")
+        return
+    try:
+        fresh.report(gold, database_url, snapshot)
+    except Exception as error:  # noqa: BLE001
+        print(f"question set not run: {error}")
 
 
 def _promote(args: argparse.Namespace) -> int:

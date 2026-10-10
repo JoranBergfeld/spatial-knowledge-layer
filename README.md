@@ -22,8 +22,10 @@ Terms here are used as written there.
 packages/core     record models, the stores' DDL and the clearance rules, shared with the service
 packages/ingest   the ingestion CLI, its own package and its own image
 packages/service  the turn service: FastAPI on Microsoft Agent Framework, reading the stores
-packages/bench    the evaluation harness: question sets, a scripted model, the leak checks
+packages/bench    the evaluation harness: question sets, a scripted model, the leak checks,
+                  evaluation runs
 gold/             gold answers from a handover, by scripts that import none of the above
+questions/        the hand-written questions. None yet
 ```
 
 The service holds no pipeline code and imports nothing from `packages/ingest`.
@@ -254,6 +256,9 @@ field for the embedding, and the anchor ids by kind, the flattened ancestor ids,
 clearance class and the role (passage or summary) all filterable. Load makes no model
 call. The summaries and the vectors are the bundle's.
 
+`ingest load --gold gold.json` also asks a question set of the new snapshot and prints
+how it went. That never fails a load. See "On a freshly loaded snapshot".
+
 Load writes a snapshot as three schemas (ADR 0001 in the site's repository):
 
 ```
@@ -388,7 +393,8 @@ Things that are rough or just not done yet:
 
 ## The service
 
-One operation, `POST /turn`. It takes a persona, a snapshot (none means the current
+One operation, `POST /turn`, plus `GET /eval` for the last evaluation run's figures
+(see "Evaluation runs and the eval snapshot"). `POST /turn` It takes a persona, a snapshot (none means the current
 one), the conversation's prior state and a question, and returns a turn:
 
 ```
@@ -414,6 +420,7 @@ OTEL_EXPORTER_OTLP_ENDPOINT      optional; where metrics are pushed. Unset, none
 AZURE_SEARCH_ENDPOINT            optional: the Azure AI Search service, with AZURE_SEARCH_API_KEY
 SPATIAL_SEARCH_DIR               optional, instead of those two: the stand-in index directory
 SPATIAL_SEMANTIC_RANKER          optional: "on" reranks passages with the semantic ranker. Off by default
+SPATIAL_EVAL_SNAPSHOT            optional: the file an evaluation run wrote its eval snapshot to
 ```
 
 With no search index named, the service still runs and no document is ever retrieved.
@@ -1054,8 +1061,230 @@ Rough here:
 - An attribute whose name is not plain words (`fire_extinguisher:type`, straight from an
   OSM tag) is in the catalogue and shown to the planner, but no plan can name it: the
   filter's pattern refuses the colon. Gold skips those. Found by the regression, not fixed.
-- `within` (a place's enclosing spaces) is in gold and not compared yet.
+- `within` (a place's enclosing spaces) is in gold and not compared. The trace does not
+  carry a place's ancestors, only the composer's facts do, so there is nothing to compare
+  with short of adding them to the trace.
 - Timing leaks are not looked at.
+
+### Evaluation runs and the eval snapshot
+
+An evaluation run puts the question set to real models and writes down what came back.
+It is the only thing in this repository that spends money on purpose, and it is started
+by hand:
+
+```
+uv run bench run --gold gold.json --checks checks.json --rates rates.json \
+    --ceiling 20 --out runs/
+```
+
+It reads the service's own environment (the database, both deployments, the index), so
+point `SPATIAL_SERVICE_DATABASE_URL` at the test bench's database. It measures that
+database's current snapshot. It also wants `SPATIAL_NLI_MODEL_DIR`, see below.
+
+Before it calls anything it prints the run id, the snapshot, the deployments, the number
+of questions, a cost estimate and the ceiling, and waits for you to type `yes`. There is
+no flag to skip that. It refuses to start when:
+
+- the estimate is over the ceiling
+- a deployment it will call has no rate in the rates file
+- the gold is not the test bench's (the demo venue's regression is never published)
+- the checks report is for another snapshot, or skipped a leak check
+- the baseline run asked another question set or another snapshot
+
+`rates.json` is yours to keep current. This repository does not know what a deployment
+costs. The numbers below are made up:
+
+```
+{"currency": "USD", "as_of": "2026-10-01",
+ "per_million_tokens": {"gpt-5.4": {"input": 1.0, "output": 8.0},
+                        "gpt-5.4-mini": {"input": 0.2, "output": 1.6},
+                        "text-embedding-3-large": {"input": 0.1}}}
+```
+
+The estimate is a worst case: every turn plans twice and composes once, at assumed call
+sizes (8000 in and 600 out for planning, 3000 and 400 for composition). Those sizes are
+guesses, nothing has measured them. `--planning-tokens IN:OUT` and `--composition-tokens`
+change them, and the run prints what it really used so the next estimate can be better.
+
+The ceiling is what actually holds. Before every turn the run checks that what it has
+spent, plus the dearest turn so far (or the estimate's turn, if that is more), still fits.
+If not it stops, exits 3, writes its report and writes no eval snapshot: figures over the
+questions it happened to reach are not figures over the question set. It also gives up
+after five turns in a row with no model or no index behind them. One turn much dearer
+than every turn before it could still overshoot by the difference. Search request units
+(the semantic ranker's) are not costed at all.
+
+#### What is scored
+
+Each turn is scored a stage at a time (`packages/bench/src/spatial_bench/score.py`). No
+model judges anything.
+
+- **Tools.** `bench check`'s comparison: turn kind, id sets, counts, fill rates, by exact
+  match. A clarification's candidates have to equal gold's, and gold's are already cut to
+  what the persona can see. That last one is also reported as a figure of its own.
+- **Retrieval.** Recall@5 and MRR of the documents gold says the question is after, over
+  the documents retrieved, in rank order. Only questions that are after a document count.
+- **Composition.** Every number in the composed text is a count a citation carries, and
+  every segment that cites a passage is entailed by it.
+
+An answer is correct only when all three hold and the turn kind is the expected one.
+Each question is scored against its own persona's gold, and the figures are given per
+persona as well.
+
+Results include a confusion matrix, expected turn kind against the kind produced.
+Answered-when-it-should-have-declined (gold says abstention or coverage gap, the layer
+answered) is counted on its own and should be zero.
+
+Entailment uses the NLI model the site's backend runs,
+`MoritzLaurer/DeBERTa-v3-large-mnli-fever-anli-ling-wanli` as fp32 ONNX, with the same
+rule: under P(entailment) 0.5 the segment fails. `SPATIAL_NLI_MODEL_DIR` is a directory
+with the `model.onnx` and `tokenizer.json` the backend pins. The run records the model
+file's sha256 in its deployments, so you can see it is the same file. It needs
+`uv sync --extra nli` in `packages/bench`, which nothing else installs.
+
+Decided here, since the spec does not say:
+
+- Retrieval holds for a question when every document it is after is in the top five.
+- A segment that cites several passages is scored against each and keeps its best score.
+- The kind produced is what the site would send. The backend drops segments the NLI
+  model does not back and abstains when none is left, so an answer whose document
+  segments all fail is an abstention in the matrix.
+- The run id is the date plus eight random hex digits.
+
+#### Hand-written questions
+
+They live in `questions/hand-written.json` and there are none yet. A person writes them:
+
+```
+{"format": "spatial-hand-written@1", "venue": "test-bench", "questions": [
+  {"id": "boiler-room", "persona": "visitor", "shape": "place-location",
+   "question": "Where would I find the boiler room?",
+   "expected": {"kind": "abstention"}}]}
+```
+
+`expected` is the same as in the gold file (`spatial_bench.questions.Expected`): the kind,
+and for an answer the ids, counts and documents you expect, written out by hand. Give
+two questions the same `pair` when they are one question under two personas.
+
+A run always reports them apart from the template questions, in the output and in the
+eval snapshot. With none, their figures have `n` 0 and null values. That is a normal
+snapshot.
+
+#### What a run writes
+
+Two files in `--out`:
+
+- `run-<id>.json` (`spatial-eval-run@1`): the owner's copy. Every question with its
+  stages, the estimate, the spend, the adoption rules. Gold ids are in the mismatches,
+  so do not publish it.
+- `eval-snapshot.json` (`spatial-eval@1`): what the site reads. Only written when the run
+  got through every question.
+
+Spend is reported under the ledger category `evaluation`, by deployment and purpose, with
+the rates' date. It is never visitor spend and the site's gate never reads it. The ledger
+is the backend's. This is the run's report of what to book there. Nothing books it for
+you. The eval snapshot has no money in it.
+
+The confusion matrix is also pushed as a metric, `spatial.eval.turns`, to
+`OTEL_EXPORTER_OTLP_ENDPOINT` when that is set. Labels: `run_id`, `snapshot`,
+`planning_deployment`, `composition_deployment`, `question_set`, `expected_turn_kind`,
+`turn_kind`. It is a series of its own and never adds to the live `spatial.turns`.
+
+#### The eval snapshot
+
+The service serves it at `GET /eval`, from the file `SPATIAL_EVAL_SNAPSHOT` names. The
+contract is `packages/service/src/spatial_service/evaluation.py`, and
+`packages/service/src/spatial_service/eval_contract/` holds one body of each kind for the
+backend's contract tests to copy: `snapshot.json` (its numbers are made up) and
+`empty.json`.
+
+With no run, meaning no file, the answer is exactly this and nothing else counts as empty:
+
+```
+{"format": "spatial-eval@1", "run": null}
+```
+
+A file that is there and does not fit the contract is a 500 with
+`"code": "eval-snapshot-unreadable"`. It is never turned into the empty answer.
+
+A snapshot:
+
+```
+format        "spatial-eval@1"
+label         "Measured on a test bench: a real building handover, not this campus"
+run           id, date, venue, snapshot, semantic_ranker, gold_sha256,
+              deployments {planning, composition, embedding (or null), nli}
+figures       template and hand_written, each a section
+leak_checks   input and counterfactual, each {passed, date}
+unmeasured    ["routes", "proximity", "timing-leaks", "follow-ups"]
+```
+
+A section:
+
+```
+n                          questions in the set
+correct                    a figure
+stages.tools               a figure
+stages.retrieval           recall_at_5 and mrr, a figure each
+stages.composition         holds, numbers and entailment (over segments), a figure each
+turn_kinds.matrix          {expected kind: {produced kind: count}}, {} when n is 0.
+                           Produced kinds are the four plus "unavailable"
+turn_kinds.answered_when_it_should_have_declined   {count, of}
+clarification_candidates   a figure
+by_persona                 {persona: figure of correct}
+```
+
+A figure is `{"value": 0.7532, "n": 154, "ci95": [0.6795, 0.8146]}`. Over nothing it is
+`{"value": null, "n": 0, "ci95": null}`. Shares get a Wilson interval. Recall@5, MRR and
+the paired differences get a percentile bootstrap with a fixed seed. The run block's
+date, snapshot and deployments go for every figure in the file.
+
+The leak checks' pass or fail and date come from `bench check`'s report (`--checks`).
+The run does not rerun them. A failed leak check does not stop a run. It is published as
+a fail.
+
+Follow-ups are on the unmeasured list because the question set is one turn each. That
+is one more than the spec lists.
+
+#### Adoption rules
+
+Worked out and printed at the end of a run, and written to the run report. Nothing
+applies them.
+
+- **Semantic ranker.** `--compare-ranker` retrieves each question a second time with the
+  ranker on, next to the retrieval the turn uses. The ranker is to be adopted when the
+  95% interval of the paired Recall@5 gain is wholly above zero.
+- **Model pair.** `--baseline runs/run-<id>.json` compares this run with an earlier one
+  on the same snapshot and question set, question by question. If this run was cheaper
+  and the lower bound of its correctness difference is above minus five points, the
+  cheaper pair may replace the baseline. Otherwise the baseline stays.
+
+#### On a freshly loaded snapshot
+
+`ingest load --gold gold.json` asks the question set of the snapshot it just loaded, with
+the scripted model, and prints how many turns match gold. It is a report. Load exits 0
+and the snapshot can be promoted whatever it says, and even when it cannot run at all.
+`bench fresh --gold gold.json --snapshot <date>` does the same on its own, which is what
+to use with the ingest image, since that image does not carry the bench. No figures come
+out of either. Retrieval there is by keyword only.
+
+Rough here:
+
+- No real run has happened. Not one call to a real model, a real index or the real NLI
+  model. Everything above is tested with a scripted model whose token usage the test
+  sets, and an NLI stand-in.
+- `OnnxNli` has never loaded the model. The label order comes from the model's
+  `config.json` when the directory has one, and is assumed to be entailment first when
+  not.
+- The numbers check looks for digits. The composer may not write digits, so every digit
+  in an answer came from a placeholder. A number the model writes out as a word gets
+  past it.
+- Tool correctness leans on the trace. A model that plans differently from the scripted
+  one and still answers right could be marked wrong on a detail of the trace. Not seen,
+  since no real model has been run.
+- NLI precision is to be re-checked by hand on about 50 real composed segments. Nothing
+  here does that. The run report has the segment counts per question, not the segments.
+- Timing leaks are listed as unmeasured and that is all.
 
 ## Develop
 
