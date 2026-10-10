@@ -15,19 +15,19 @@ again after changing the tables below:
 Who sees what, worked out by hand from the two published tables:
 
     space  category                   lowest persona
-    G01    Reception Space            visitor
-    G02    Corridor                   visitor
-    G03    Restroom                   visitor
-    G04    Office                     staff
-    G05    Electrical Room            maintenance
-    G06    Waiting Room               visitor
-    F01    Corridor                   visitor
-    F02    Physical Examination Room  staff
-    F03    Office                     staff
-    F04    Mechanical Room            maintenance
-    F05    Restroom                   visitor
-    F06    (none)                     staff
-    R01    Equipment Room             maintenance
+    1G01    Reception Space            visitor
+    1G02    Corridor                   visitor
+    1G03    Restroom                   visitor
+    1G04    Office                     staff
+    1G05    Electrical Room            maintenance
+    1G06    Waiting Room               visitor
+    2F01    Corridor                   visitor
+    2F02    Physical Examination Room  staff
+    2F03    Office                     staff
+    2F04    Mechanical Room            maintenance
+    2F05    Restroom                   visitor
+    2F06    (none)                     staff
+    3R01    Equipment Room             maintenance
 
     type             Table 23 code       lowest persona
     Light Fixture A  23-80 70 11 14 11   visitor
@@ -82,19 +82,19 @@ FLOORS = [
 
 # (name, category, floor, description)
 _SPACES = [
-    ("G01", "13-11 11 31: Reception Space", "Ground Floor", "RECEPTION"),
-    ("G02", "13-85 11 11: Corridor", "Ground Floor", "CORRIDOR"),
-    ("G03", "13-41 11 14 21: Restroom", "Ground Floor", "RESTROOM"),
-    ("G04", "13-15 11 34 11: Office", "Ground Floor", "OFFICE"),
-    ("G05", "13-81 21 21: Electrical Room", "Ground Floor", "ELEC. ROOM"),
-    ("G06", "13-51 31 11: Waiting Room", "Ground Floor", "WAITING"),
-    ("F01", "13-85 11 11: Corridor", "First Floor", "CORRIDOR"),
-    ("F02", "13-41 41 14: Physical Examination Room", "First Floor", "EXAM"),
-    ("F03", "13-15 11 34 11: Office", "First Floor", "OFFICE"),
-    ("F04", "13-81 21 17: Mechanical Room", "First Floor", "MECH. ROOM"),
-    ("F05", "13-41 11 14 21: Restroom", "First Floor", NA),
-    ("F06", NA, "First Floor", "STORE"),
-    ("R01", "13-81 21 11: Equipment Room", "Roof", "ROOF PLANT"),
+    ("1G01", "13-11 11 31: Reception Space", "Ground Floor", "RECEPTION"),
+    ("1G02", "13-85 11 11: Corridor", "Ground Floor", "CORRIDOR"),
+    ("1G03", "13-41 11 14 21: Restroom", "Ground Floor", "RESTROOM"),
+    ("1G04", "13-15 11 34 11: Office", "Ground Floor", "OFFICE"),
+    ("1G05", "13-81 21 21: Electrical Room", "Ground Floor", "ELEC. ROOM"),
+    ("1G06", "13-51 31 11: Waiting Room", "Ground Floor", "WAITING"),
+    ("2F01", "13-85 11 11: Corridor", "First Floor", "CORRIDOR"),
+    ("2F02", "13-41 41 14: Physical Examination Room", "First Floor", "EXAM"),
+    ("2F03", "13-15 11 34 11: Office", "First Floor", "OFFICE"),
+    ("2F04", "13-81 21 17: Mechanical Room", "First Floor", "MECH. ROOM"),
+    ("2F05", "13-41 11 14 21: Restroom", "First Floor", NA),
+    ("2F06", NA, "First Floor", "STORE"),
+    ("3R01", "13-81 21 11: Equipment Room", "Roof", "ROOF PLANT"),
 ]
 SPACES = [
     {"Name": name, "Category": category, "FloorName": floor, "Description": description}
@@ -135,54 +135,54 @@ _COMPONENTS = [
     (
         "Light A-01",
         "Light Fixture A",
-        "G01",
+        "1G01",
         "LA-0001",
         "2018-03-01T09:00:00",
         "0aLightA01GlobalIdxxx1",
     ),
-    ("Light A-02", "Light Fixture A", "G01", NA, "2018-03-01T09:00:00", NA),
-    ("Light A-03", "Light Fixture A", "G02", "LA-0003", "2018-03-02T09:00:00", NA),
-    ("Light A-04", "Light Fixture A", "G02", NA, "2018-03-02T09:00:00", NA),
-    ("Light A-05", "Light Fixture A", "G03", NA, "2018-03-05T09:00:00", NA),
-    ("Light A-06", "Light Fixture A", "G04", "LA-0006", "2018-03-05T09:00:00", NA),
-    ("Light A-07", "Light Fixture A", "G04", NA, "2018-03-05T09:00:00", NA),
-    ("Light A-08", "Light Fixture A", "G06", NA, "2018-04-10T09:00:00", NA),
-    ("Light A-09", "Light Fixture A", "F01", "LA-0009", "2018-04-10T09:00:00", NA),
-    ("Light A-10", "Light Fixture A", "F01", NA, "2018-04-11T09:00:00", NA),
-    ("Light A-11", "Light Fixture A", "F02", NA, "2018-04-11T09:00:00", NA),
-    ("Light A-12", "Light Fixture A", "F03", NA, "2018-04-11T09:00:00", NA),
-    ("Light A-13", "Light Fixture A", "F05", NA, NA, NA),
-    ("Light A-14", "Light Fixture A", "G05", NA, "2018-04-12T09:00:00", NA),
-    ("Light A-15", "Light Fixture A", "F04", NA, "2018-04-12T09:00:00", NA),
+    ("Light A-02", "Light Fixture A", "1G01", NA, "2018-03-01T09:00:00", NA),
+    ("Light A-03", "Light Fixture A", "1G02", "LA-0003", "2018-03-02T09:00:00", NA),
+    ("Light A-04", "Light Fixture A", "1G02", NA, "2018-03-02T09:00:00", NA),
+    ("Light A-05", "Light Fixture A", "1G03", NA, "2018-03-05T09:00:00", NA),
+    ("Light A-06", "Light Fixture A", "1G04", "LA-0006", "2018-03-05T09:00:00", NA),
+    ("Light A-07", "Light Fixture A", "1G04", NA, "2018-03-05T09:00:00", NA),
+    ("Light A-08", "Light Fixture A", "1G06", NA, "2018-04-10T09:00:00", NA),
+    ("Light A-09", "Light Fixture A", "2F01", "LA-0009", "2018-04-10T09:00:00", NA),
+    ("Light A-10", "Light Fixture A", "2F01", NA, "2018-04-11T09:00:00", NA),
+    ("Light A-11", "Light Fixture A", "2F02", NA, "2018-04-11T09:00:00", NA),
+    ("Light A-12", "Light Fixture A", "2F03", NA, "2018-04-11T09:00:00", NA),
+    ("Light A-13", "Light Fixture A", "2F05", NA, NA, NA),
+    ("Light A-14", "Light Fixture A", "1G05", NA, "2018-04-12T09:00:00", NA),
+    ("Light A-15", "Light Fixture A", "2F04", NA, "2018-04-12T09:00:00", NA),
     # A door is listed in both rooms it joins. It sits in the first.
-    ("Door D-G04", "Door Type A", "G04, G02", NA, "2017-11-20T09:00:00", NA),
-    ("Door D-G03", "Door Type A", "G03, G02", NA, "2017-11-20T09:00:00", NA),
-    ("Door D-F02", "Door Type A", "F02, F01", NA, "2017-11-21T09:00:00", NA),
-    ("Lavatory L1-01", "Lavatory L1", "G03", NA, "2018-01-15T09:00:00", NA),
-    ("Lavatory L1-02", "Lavatory L1", "F05", NA, "2018-01-15T09:00:00", NA),
-    ("Sprinkler S-01", "Sprinkler Head", "G01", NA, "2017-12-01T09:00:00", NA),
-    ("Sprinkler S-02", "Sprinkler Head", "F01", NA, "2017-12-01T09:00:00", NA),
-    ("Exam Table ET-01", "Exam Table", "F02", "ET-77", "2018-05-02T09:00:00", NA),
-    ("Work Station WS-01", "Work Station", "G04", NA, "2018-05-03T09:00:00", NA),
-    ("Work Station WS-02", "Work Station", "F03", NA, "2018-05-03T09:00:00", NA),
+    ("Door D-G04", "Door Type A", "1G04, 1G02", NA, "2017-11-20T09:00:00", NA),
+    ("Door D-G03", "Door Type A", "1G03, 1G02", NA, "2017-11-20T09:00:00", NA),
+    ("Door D-F02", "Door Type A", "2F02, 2F01", NA, "2017-11-21T09:00:00", NA),
+    ("Lavatory L1-01", "Lavatory L1", "1G03", NA, "2018-01-15T09:00:00", NA),
+    ("Lavatory L1-02", "Lavatory L1", "2F05", NA, "2018-01-15T09:00:00", NA),
+    ("Sprinkler S-01", "Sprinkler Head", "1G01", NA, "2017-12-01T09:00:00", NA),
+    ("Sprinkler S-02", "Sprinkler Head", "2F01", NA, "2017-12-01T09:00:00", NA),
+    ("Exam Table ET-01", "Exam Table", "2F02", "ET-77", "2018-05-02T09:00:00", NA),
+    ("Work Station WS-01", "Work Station", "1G04", NA, "2018-05-03T09:00:00", NA),
+    ("Work Station WS-02", "Work Station", "2F03", NA, "2018-05-03T09:00:00", NA),
     (
         "Panel P1-01",
         "Panelboard P1",
-        "G05",
+        "1G05",
         "P1-0001",
         "2017-10-02T09:00:00",
         "0aPanelP101GlobalIdxx2",
     ),
-    ("Panel P1-02", "Panelboard P1", "G05", "P1-0002", "2017-10-02T09:00:00", NA),
+    ("Panel P1-02", "Panelboard P1", "1G05", "P1-0002", "2017-10-02T09:00:00", NA),
     # A maintenance type in a room anyone walks through.
-    ("Panel P1-03", "Panelboard P1", "G02", "P1-0003", "2017-10-03T09:00:00", NA),
-    ("Ball Valve BV-01", "Ball Valve 50", "G03", NA, "2017-09-12T09:00:00", NA),
-    ("Ball Valve BV-02", "Ball Valve 50", "F04", NA, "2017-09-12T09:00:00", NA),
-    ("AHU-1", "AHU", "R01", "AHU-9001", "2017-08-01T09:00:00", NA),
-    ("AHU-2", "AHU", "F04", "AHU-9002", "2017-08-01T09:00:00", NA),
-    ("Smoke Detector SD-01", "Smoke Detector", "G02", NA, "2018-02-01T09:00:00", NA),
-    ("Smoke Detector SD-02", "Smoke Detector", "F01", NA, "2018-02-01T09:00:00", NA),
-    ("Smoke Detector SD-03", "Smoke Detector", "G05", NA, "2018-02-01T09:00:00", NA),
+    ("Panel P1-03", "Panelboard P1", "1G02", "P1-0003", "2017-10-03T09:00:00", NA),
+    ("Ball Valve BV-01", "Ball Valve 50", "1G03", NA, "2017-09-12T09:00:00", NA),
+    ("Ball Valve BV-02", "Ball Valve 50", "2F04", NA, "2017-09-12T09:00:00", NA),
+    ("AHU-1", "AHU", "3R01", "AHU-9001", "2017-08-01T09:00:00", NA),
+    ("AHU-2", "AHU", "2F04", "AHU-9002", "2017-08-01T09:00:00", NA),
+    ("Smoke Detector SD-01", "Smoke Detector", "1G02", NA, "2018-02-01T09:00:00", NA),
+    ("Smoke Detector SD-02", "Smoke Detector", "2F01", NA, "2018-02-01T09:00:00", NA),
+    ("Smoke Detector SD-03", "Smoke Detector", "1G05", NA, "2018-02-01T09:00:00", NA),
 ]
 COMPONENTS = [
     {
@@ -278,8 +278,8 @@ _DOCUMENTS = [
     ),
     ("Building Closeout", "Closeout Submittals", "Facility", "B 12", "Closeout.pdf"),
     ("First Floor Plan Notes", "Design Data", "Floor", "First Floor", "FirstFloor-Notes.pdf"),
-    ("Electrical Room Schedule", "Design Data", "Space", "G05", "ElecRoom-Schedule.pdf"),
-    ("Reception Finish Schedule", "Design Data", "Space", "G01", "Reception-Finishes.pdf"),
+    ("Electrical Room Schedule", "Design Data", "Space", "1G05", "ElecRoom-Schedule.pdf"),
+    ("Reception Finish Schedule", "Design Data", "Space", "1G01", "Reception-Finishes.pdf"),
     ("AHU Startup Report", "Test Reports", "Component", "AHU-1", "AHU-Startup.pdf"),
     (
         "Exam Table Instructions",
@@ -313,7 +313,7 @@ _COORDINATES = [
     ("point", "Component", "AHU-1", 12.5, 3.0, 8.4),
     ("box-lowerleft", "Component", "Door D-G03", 4.0, 6.0, 0),
     ("box-upperright", "Component", "Door D-G03", 5.0, 6.2, 2.1),
-    ("box-lowerleft", "Space", "G01", 0, 0, 0),
+    ("box-lowerleft", "Space", "1G01", 0, 0, 0),
 ]
 COORDINATES = [
     {

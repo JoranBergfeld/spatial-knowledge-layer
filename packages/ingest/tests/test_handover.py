@@ -77,28 +77,28 @@ def test_the_facility_is_the_building_and_floors_and_spaces_hang_from_it(bundle:
     assert building["label"]["value"] == "Harbour Clinic"
     assert building["ref"]["value"] == "B 12"
     assert spaces["floor:first-floor"]["parent_id"] == "building:b-12"
-    assert spaces["space:f02"]["parent_id"] == "floor:first-floor"
-    assert spaces["space:f02"]["ancestor_path"] == [
+    assert spaces["space:2f02"]["parent_id"] == "floor:first-floor"
+    assert spaces["space:2f02"]["ancestor_path"] == [
         {"tier": "building", "id": "building:b-12"},
         {"tier": "floor", "id": "floor:first-floor"},
     ]
-    assert spaces["space:f02"]["source"] == "cobie:Space/F02"
+    assert spaces["space:2f02"]["source"] == "cobie:Space/2F02"
     assert all(space["record_provenance"] == "sourced" for space in spaces.values())
 
 
 def test_a_space_is_labelled_by_its_description_or_else_building_and_number(bundle: Path) -> None:
     spaces = records(bundle, "osm/spaces.jsonl")
 
-    assert spaces["space:g01"]["label"] == {
+    assert spaces["space:1g01"]["label"] == {
         "value": "RECEPTION",
         "provenance": "sourced",
         "rule": None,
         "basis": None,
     }
-    # "n/a" is COBie for nothing there, so F05 has no name and takes the rule's label.
-    assert spaces["space:f05"]["name"] is None
-    assert spaces["space:f05"]["label"]["value"] == "B 12 room F05"
-    assert spaces["space:f05"]["label"]["rule"] == "room-label@1"
+    # "n/a" is COBie for nothing there, so 2F05 has no name and takes the rule's label.
+    assert spaces["space:2f05"]["name"] is None
+    assert spaces["space:2f05"]["label"]["value"] == "B 12 room 2F05"
+    assert spaces["space:2f05"]["label"]["rule"] == "room-label@1"
 
 
 # --- clearance -----------------------------------------------------------------------------
@@ -111,19 +111,19 @@ def test_spaces_take_clearance_from_their_table_13_category_as_an_authored_defau
     rooms = {i: s for i, s in spaces.items() if s["tier"]["value"] == "room"}
 
     assert {i.removeprefix("space:"): s["clearance"]["persona"] for i, s in rooms.items()} == {
-        "g01": "visitor",
-        "g02": "visitor",
-        "g03": "visitor",
-        "g04": "staff",
-        "g05": "maintenance",
-        "g06": "visitor",
-        "f01": "visitor",
-        "f02": "staff",
-        "f03": "staff",
-        "f04": "maintenance",
-        "f05": "visitor",
-        "f06": "staff",
-        "r01": "maintenance",
+        "1g01": "visitor",
+        "1g02": "visitor",
+        "1g03": "visitor",
+        "1g04": "staff",
+        "1g05": "maintenance",
+        "1g06": "visitor",
+        "2f01": "visitor",
+        "2f02": "staff",
+        "2f03": "staff",
+        "2f04": "maintenance",
+        "2f05": "visitor",
+        "2f06": "staff",
+        "3r01": "maintenance",
     }
     for room in rooms.values():
         assert room["clearance"]["rule"] == "clearance-from-space-category@1"
@@ -188,11 +188,11 @@ def test_a_component_is_an_asset_of_its_type_in_its_space(bundle: Path) -> None:
     light = assets["asset:light-a-01"]
 
     assert light["type_id"] == "type:light-fixture-a"
-    assert light["space_id"] == "space:g01"
+    assert light["space_id"] == "space:1g01"
     assert [step["id"] for step in light["ancestor_path"]] == [
         "building:b-12",
         "floor:ground-floor",
-        "space:g01",
+        "space:1g01",
     ]
     assert light["record_provenance"] == "sourced"
     assert light["source"] == "cobie:Component/Light A-01"
@@ -211,7 +211,7 @@ def test_a_component_is_an_asset_of_its_type_in_its_space(bundle: Path) -> None:
 def test_a_component_listed_in_two_spaces_sits_in_the_first(bundle: Path) -> None:
     assets = records(bundle, "osm/assets.jsonl")
 
-    assert assets["asset:door-d-g04"]["space_id"] == "space:g04"
+    assert assets["asset:door-d-g04"]["space_id"] == "space:1g04"
     assert manifest(bundle)["counts"]["assets_listed_in_several_spaces"] == 3
 
 
@@ -317,7 +317,7 @@ def test_a_document_keyed_to_a_row_is_anchored_to_it_as_sourced(bundle: Path) ->
 
     assert anchors("doc:closeout-pdf") == [("space", "building:b-12", "sourced")]
     assert anchors("doc:firstfloor-notes-pdf") == [("space", "floor:first-floor", "sourced")]
-    assert anchors("doc:elecroom-schedule-pdf") == [("space", "space:g05", "sourced")]
+    assert anchors("doc:elecroom-schedule-pdf") == [("space", "space:1g05", "sourced")]
     assert anchors("doc:ahu-startup-pdf") == [("asset", "asset:ahu-1", "sourced")]
     assert anchors("doc:lighta-productdata-pdf") == [
         ("asset_type", "type:light-fixture-a", "sourced")

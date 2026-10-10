@@ -15,28 +15,37 @@ members = ["packages/*"]
 spatial-core = { workspace = true }
 spatial-ingest = { workspace = true }
 spatial-service = { workspace = true }
+spatial-bench = { workspace = true }
 
 [dependency-groups]
 dev = [
     "spatial-core",
     "spatial-ingest",
     "spatial-service",
+    "spatial-bench",
     "pytest",
     "ruff",
     "mypy",
     "types-shapely",
-    "types-openpyxl>=3.1.5.20260827",
+    "types-openpyxl",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["packages"]
 addopts = "--import-mode=importlib"
-pythonpath = ["packages/ingest/tests", "packages/service/tests"]
+pythonpath = ["packages/ingest/tests", "packages/service/tests", "packages/bench/tests"]
 
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-src = ["packages/*/src", "packages/ingest/tests", "packages/service/tests"]
+# gold/ is not a package of the workspace, on purpose. Its modules import each other by bare name.
+src = [
+    "packages/*/src",
+    "packages/ingest/tests",
+    "packages/service/tests",
+    "packages/bench/tests",
+    "gold",
+]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
@@ -45,4 +54,10 @@ select = ["E", "F", "I", "UP", "B"]
 python_version = "3.12"
 strict = true
 plugins = ["pydantic.mypy"]
-files = ["packages/core/src", "packages/ingest/src", "packages/service/src"]
+files = [
+    "packages/core/src",
+    "packages/ingest/src",
+    "packages/service/src",
+    "packages/bench/src",
+    "gold",
+]
