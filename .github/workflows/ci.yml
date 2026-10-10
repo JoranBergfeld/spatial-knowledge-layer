@@ -67,6 +67,8 @@ jobs:
       - name: Invariants, tool correctness and both leak checks
         # Builds and loads the bench and the mini campus, which runs the load
         # invariants, then asks every gold question. A leak fails this step.
+        # Evaluation runs are tested here too, with the same scripted model and a
+        # stand-in for the NLI model. No real run is ever started in CI.
         env:
           SPATIAL_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
         run: uv run pytest packages/bench
