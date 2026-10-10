@@ -106,6 +106,7 @@ from spatial_service.plan import (
     PlanRejected,
     QuestionShape,
     parse_plan,
+    resolves,
 )
 from spatial_service.recovery import PlanChange, RecoveryOutcome, Trigger, TriggerKind, diff
 from spatial_service.retrieval import (
@@ -721,12 +722,6 @@ _NOTHING = {
     "places_matching": AbstentionCause.NO_SUCH_PLACE,
     "route": AbstentionCause.NO_ROUTE,
     "nearest": AbstentionCause.NOTHING_NEAR,
-}
-# What kind of thing each resolving tool resolves.
-_KIND_OF = {
-    "resolve_place": MentionKind.PLACE,
-    "resolve_asset_type": MentionKind.ASSET_TYPE,
-    "resolve_asset": MentionKind.ASSET,
 }
 _DECLINED = {
     QuestionShape.STEP_DEPENDENT: AbstentionCause.STEP_DEPENDENT_QUESTION,
@@ -1404,7 +1399,7 @@ def _references(execution: Execution, venue: Venue) -> list[Reference]:
                 mention=r.mention or "",
                 text=r.text or "",
                 step=r.step,
-                kind=_KIND_OF[r.tool],
+                kind=resolves(r.tool),
                 to=referred.to,
                 ordinal=referred.ordinal,
                 outcome=r.outcome,

@@ -347,6 +347,14 @@ STEPS: dict[str, type[_Step]] = {
     "nearest": Nearest,
 }
 
+
+def resolves(tool: str) -> MentionKind:
+    """The kind of mention a resolving tool resolves, read off its step class."""
+    step = STEPS[tool]
+    assert issubclass(step, Resolving)
+    return step.RESOLVES
+
+
 # What each tool's steps produce. A reference binds only to an earlier step whose
 # output is the kind it reads.
 PRODUCES = {

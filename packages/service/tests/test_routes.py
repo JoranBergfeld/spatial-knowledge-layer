@@ -614,6 +614,30 @@ def test_the_nearest_to_an_asset_from_an_earlier_turn_is_nearest_to_its_space() 
     assert (route["seconds"], route["metres"]) == (19, 25)
 
 
+def test_a_description_that_points_back_is_a_reference_like_any_other() -> None:
+    # "There", read by places_matching and not resolve_place. The planner may do either.
+    state = {
+        "snapshot": rf.SNAPSHOT,
+        "persona": "visitor",
+        "turns": 1,
+        "place": rf.SEMINAR,
+        "since": {"place": 1},
+    }
+    mentions = [{"id": "m1", "text": "there", "kind": "place", "refers": {"to": "earlier-turn"}}]
+    steps = [
+        {"id": "s1", "tool": "places_matching", "mention": "m1"},
+        {"id": "s2", "tool": "route", "destination": {"step": "s1"}},
+    ]
+    plan = json.dumps({"shape": "route", "mentions": mentions, "steps": steps})
+
+    turn = ask("visitor", "How do I get there?", plan, state=state)
+
+    assert turn["kind"] == "answer"
+    assert turn["routes"][0]["destination"]["space_id"] == rf.SEMINAR
+    [reference] = turn["trace"]["references"]
+    assert (reference["kind"], reference["ids"], reference["turn"]) == ("place", [rf.SEMINAR], 1)
+
+
 # --- over Postgres ----------------------------------------------------------------------------
 
 ADMIN_URL_ENV = "SPATIAL_TEST_DATABASE_URL"
