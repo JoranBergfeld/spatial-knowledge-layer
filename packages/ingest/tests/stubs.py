@@ -157,3 +157,69 @@ def serve_openai() -> Iterator[OpenAI]:
     with _serve(Handler) as url:
         state.url = url
         yield state
+
+
+@dataclass
+class AzureSearch:
+    """A stand-in Azure AI Search service: it keeps what it is sent and counts it."""
+
+    url: str = ""
+    # Index name to its definition, and to its documents by key.
+    definitions: dict[str, dict[str, Any]] = field(default_factory=dict)
+    documents: dict[str, dict[str, dict[str, Any]]] = field(default_factory=dict)
+    requests: list[tuple[str, str]] = field(default_factory=list)
+    # Documents the count leaves out for now, as an index still catching up would.
+    lagging: int = 0
+
+
+@contextmanager
+def serve_azure_search() -> Iterator[AzureSearch]:
+    state = AzureSearch()
+    route = re.compile(r"/indexes/([^/?]+)(/docs/index|/docs/search|/docs/\$count)?\?api-version=")
+
+    class Handler(BaseHTTPRequestHandler):
+        def _handle(self) -> None:
+            length = int(self.headers.get("Content-Length") or 0)
+            body = json.loads(self.rfile.read(length)) if length else None
+            found = route.match(self.path)
+            if not found or self.headers.get("api-key") != "search-key":
+                _reply(self, 403, b"{}", "application/json")
+                return
+            name, operation = found.groups()
+            state.requests.append((self.command, self.path.split("?")[0]))
+            if operation is None and self.command == "PUT":
+                state.definitions[name] = body
+                state.documents[name] = {}
+                return _reply(self, 201, b"{}", "application/json")
+            if name not in state.definitions:
+                return _reply(self, 404, b"{}", "application/json")
+            held = state.documents[name]
+            if operation is None and self.command == "DELETE":
+                del state.definitions[name], state.documents[name]
+                return _reply(self, 204, b"", "application/json")
+            if operation is None:
+                return _reply(self, 200, json.dumps(state.definitions[name]).encode(), "text/json")
+            if operation == "/docs/index":
+                for document in body["value"]:
+                    assert document.pop("@search.action") == "mergeOrUpload"
+                    held[document["key"]] = document
+                answer = {"value": [{"key": d["key"], "status": True} for d in body["value"]]}
+                return _reply(self, 200, json.dumps(answer).encode(), "application/json")
+            if operation == "/docs/$count":
+                count = max(0, len(held) - state.lagging)
+                state.lagging = 0
+                return _reply(self, 200, str(count).encode(), "text/plain")
+            fields = body["select"].split(",")
+            ordered = sorted(held.values(), key=lambda document: document["id"])
+            page = ordered[body["skip"] : body["skip"] + body["top"]]
+            answer = {"value": [{f: document.get(f) for f in fields} for document in page]}
+            return _reply(self, 200, json.dumps(answer).encode(), "application/json")
+
+        do_GET = do_PUT = do_POST = do_DELETE = _handle
+
+        def log_message(self, *args: Any) -> None:
+            pass
+
+    with _serve(Handler) as url:
+        state.url = url
+        yield state

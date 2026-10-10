@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Iterator
 from pathlib import Path
+from uuid import uuid4
 
+import psycopg
 import pytest
+from psycopg import sql
+from psycopg.conninfo import make_conninfo
 
 import prose
 from mini_campus import VENUE
@@ -51,9 +56,33 @@ def corpus_file(tmp_path: Path, site: Site, openai: OpenAI) -> Path:
     return path
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def search_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Where the stand-in search index keeps its files for this test."""
+    """The stand-in search index's directory, one to each test here."""
     directory = tmp_path / "search"
     monkeypatch.setenv(SEARCH_DIR_ENV, str(directory))
     return directory
+
+
+ADMIN_URL_ENV = "SPATIAL_TEST_DATABASE_URL"
+
+
+@pytest.fixture(scope="session")
+def admin_url() -> str:
+    url = os.environ.get(ADMIN_URL_ENV)
+    if not url:
+        message = f"set {ADMIN_URL_ENV} to a Postgres superuser URL to run the store tests"
+        if os.environ.get("CI"):
+            pytest.fail(message)
+        pytest.skip(message)
+    return url
+
+
+@pytest.fixture
+def database_url(admin_url: str) -> Iterator[str]:
+    name = f"spatial_test_{uuid4().hex[:12]}"
+    with psycopg.connect(admin_url, autocommit=True) as conn:
+        conn.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
+    yield make_conninfo(admin_url, dbname=name)
+    with psycopg.connect(admin_url, autocommit=True) as conn:
+        conn.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(name)))

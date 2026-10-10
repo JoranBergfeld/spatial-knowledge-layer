@@ -2,7 +2,9 @@
 
 Load and promote write to the layer's database, named by --database-url or the
 SPATIAL_DATABASE_URL environment variable. Ingestion holds those credentials; the
-service never does.
+service never does. Load also writes the search index, which it finds through
+AZURE_SEARCH_ENDPOINT and AZURE_SEARCH_API_KEY. Build translates and embeds, and
+finds its deployments through the AZURE_OPENAI_* variables the service uses.
 """
 
 from __future__ import annotations
@@ -169,7 +171,7 @@ def _load(args: argparse.Namespace) -> int:
         for failure in result.failures:
             print(f"  {failure}")
         return 1
-    print(f"loaded {result.snapshot}. It is not current until promoted.")
+    print(f"loaded {result.snapshot} with index {result.index}. It is not current until promoted.")
     print(json.dumps(result.rows, indent=2))
     if result.dropped:
         print(f"dropped {', '.join(result.dropped)}")
@@ -179,6 +181,7 @@ def _load(args: argparse.Namespace) -> int:
 def _promote(args: argparse.Namespace) -> int:
     pointer = promote(snapshot=args.date, database_url=args.database_url)
     print(f"current snapshot {pointer.current}, previous {pointer.previous}")
+    print(f"current index {pointer.index}, previous {pointer.previous_index}")
     return 0
 
 
