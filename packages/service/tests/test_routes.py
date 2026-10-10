@@ -167,7 +167,7 @@ def test_no_persona_implies_step_free(persona: str) -> None:
     assert (route["seconds"], rf.STAIRS in passed(route)) == (41, True)
 
 
-def test_step_free_with_no_lift_is_the_same_abstention_and_the_trace_says_why() -> None:
+def test_step_free_with_no_lift_is_the_same_abstention_and_the_trace_gives_no_reason() -> None:
     # Take the lift out of the snapshot: the only way up is the stairs.
     store = rf.store()
     store._edges = tuple(e for e in store._edges if rf.LIFT not in (e.from_id, e.to_id))
@@ -181,9 +181,10 @@ def test_step_free_with_no_lift_is_the_same_abstention_and_the_trace_says_why() 
 
     assert (turn["kind"], turn["cause"]) == ("abstention", "no-route")
     assert texts(turn) == [NO_ROUTE]
-    # Not clearance: the same graph has a route with stairs. So the trace may say.
+    # Any cause of no route is the one abstention. The trace says it found none and stops.
     [step] = turn["trace"]["route"]["steps"]
-    assert step["reason"] == "there is a route, but not a step-free one"
+    assert (step["found"], step["step_free"]) == (False, True)
+    assert "reason" not in step
 
 
 # --- what a route may cross -------------------------------------------------------------------
@@ -313,7 +314,7 @@ def test_a_destination_behind_a_restricted_corridor_has_no_route_for_a_visitor()
     # Nothing of the staff corridor comes back or reaches a model, and nothing hints at it.
     assert rf.STAFF_CORRIDOR not in json.dumps(turn)
     assert rf.STAFF_CORRIDOR not in "".join(inputs)
-    assert turn["trace"]["route"]["steps"][0]["reason"] is None
+    assert "reason" not in turn["trace"]["route"]["steps"][0]
 
 
 def test_staff_are_routed_through_the_corridor_a_visitor_cannot_take() -> None:
@@ -339,7 +340,7 @@ def test_every_cause_of_no_route_is_the_same_abstention() -> None:
             "routes": turn["routes"],
             "candidates": turn["candidates"],
             "found": step["found"],
-            "reason": step["reason"],
+            "said": sorted(set(step) - {"targets"}),
             "calls": [call["purpose"] for call in turn["llm_calls"]],
         }
 
@@ -353,7 +354,7 @@ def test_every_cause_of_no_route_is_the_same_abstention() -> None:
     assert restricted == behind_an_office == unmapped
     [segment] = restricted["segments"]
     assert (segment["text"], segment["citations"]) == (NO_ROUTE, [])
-    assert restricted["reason"] is None
+    assert "reason" not in restricted["said"]
 
 
 def test_a_room_with_a_function_is_never_crossed_even_with_three_doors() -> None:
@@ -397,7 +398,10 @@ def test_with_no_default_origin_and_none_stated_there_is_no_route() -> None:
     )
 
     assert (turn["kind"], turn["cause"]) == ("abstention", "no-route")
-    assert turn["trace"]["route"]["steps"][0]["reason"] == "the venue names no default origin"
+    assert texts(turn) == [NO_ROUTE]
+    [step] = turn["trace"]["route"]["steps"]
+    assert (step["found"], step["default_origin"]) == (False, True)
+    assert "reason" not in step
 
 
 # --- the plan ---------------------------------------------------------------------------------

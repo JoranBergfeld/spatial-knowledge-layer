@@ -460,18 +460,12 @@ class Routed:
     default_origin: bool
     step_free: bool
     targets: tuple[Target, ...]
-    # Nearest first. Empty when there is no route.
+    # Nearest first. Empty when there is no route. Why not is kept nowhere: every
+    # cause of no route is the same abstention, and the trace gives no reason either.
     found: tuple[Found, ...] = ()
-    # Why there is none, only where the reason cannot be clearance.
-    reason: str | None = None
 
     def target(self, space_id: str) -> Target:
         return next(t for t in self.targets if t.space_id == space_id)
-
-
-NO_DEFAULT_ORIGIN = "the venue names no default origin"
-NO_DESTINATION = "the destination came to no place"
-ONLY_BY_STAIRS = "there is a route, but not a step-free one"
 
 
 def find(
@@ -490,9 +484,9 @@ def find(
         start = Origin(entrance=venue.default_origin)
     listed = tuple(targets)
     if start is None:
-        return Routed(Origin(), default, step_free, listed, reason=NO_DEFAULT_ORIGIN)
+        return Routed(Origin(), default, step_free, listed)
     if not listed:
-        return Routed(start, default, step_free, listed, reason=NO_DESTINATION)
+        return Routed(start, default, step_free, listed)
 
     ids = {target.space_id for target in listed}
     snapped = [target for target in listed if target.snapped_m is not None]
@@ -505,11 +499,7 @@ def find(
         found = reached[:1]
     else:
         found = graph.routes(start, ids, step_free=step_free, limit=alternatives)
-    reason = None
-    if not found and step_free and graph.routes(start, ids):
-        # Read off the same graph, so it says nothing the persona could not find out.
-        reason = ONLY_BY_STAIRS
-    return Routed(start, default, step_free, listed, tuple(found), reason)
+    return Routed(start, default, step_free, listed, tuple(found))
 
 
 @dataclass(frozen=True)

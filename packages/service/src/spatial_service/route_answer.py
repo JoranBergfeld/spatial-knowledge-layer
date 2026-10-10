@@ -5,9 +5,9 @@ metres, the constants they were modelled with, every space passed through, and
 everything derived that it leaned on. Rounding further and wording are the page's.
 
 The trace says how big the persona's graph was and what each route step did. When
-there is no route it gives a reason only where the reason cannot be clearance. A
-graph that does not connect says nothing, since a restricted corridor and a missing
-door look the same from here, and are meant to.
+there is no route it says so and gives no reason, whatever the cause: a restricted
+corridor, a missing door, no lift and no default origin all look the same from
+here, and are meant to.
 """
 
 from __future__ import annotations
@@ -103,8 +103,6 @@ class RouteStepTrace(_Model):
     # The places it could have ended at.
     targets: list[str]
     found: bool
-    # Why not, only where the reason cannot be clearance.
-    reason: str | None = None
     # What a nearest step measured by.
     basis: str | None = None
 
@@ -229,7 +227,6 @@ def trace(venue: Venue, execution: Execution) -> RouteTrace | None:
                     default_origin=run.default_origin,
                     targets=[target.space_id for target in run.targets],
                     found=bool(run.found),
-                    reason=run.reason,
                 )
             )
         elif result.tool == "nearest":
