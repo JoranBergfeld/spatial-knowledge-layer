@@ -20,7 +20,10 @@ from pathlib import Path
 import psycopg
 
 from spatial_ingest.build import MANIFEST_FILE, BuildError, build
+from spatial_ingest.corpus import CorpusError
+from spatial_ingest.documents import DocumentsError
 from spatial_ingest.load import LoadError, load
+from spatial_ingest.models import ModelError
 from spatial_ingest.promote import PromoteError, promote
 from spatial_ingest.pull import PullError
 from spatial_ingest.seed.generate import InventoryError
@@ -61,6 +64,17 @@ def _parser() -> argparse.ArgumentParser:
         "--inventory",
         type=Path,
         help="the seed inventory's pinned inputs (default: the published inventory.json)",
+    )
+
+    build_cmd.add_argument(
+        "--documents",
+        type=Path,
+        help="the document corpus (default: the venue's published corpus, if it has one)",
+    )
+    build_cmd.add_argument(
+        "--refetch-documents",
+        action="store_true",
+        help="fetch every document source again, which checks its link again too",
     )
 
     for name, help_text in (
@@ -110,9 +124,14 @@ def _build(args: argparse.Namespace) -> int:
             extract=args.extract,
             refetch=args.refetch,
             inventory_file=args.inventory,
+            corpus_file=args.documents,
+            refetch_documents=args.refetch_documents,
         )
     except (
         BuildError,
+        CorpusError,
+        DocumentsError,
+        ModelError,
         InventoryError,
         PullError,
         StructureError,
@@ -130,6 +149,16 @@ def _build(args: argparse.Namespace) -> int:
         f"inventory: {stock['sourced']['assets']} sourced fire assets, "
         f"{stock['generated']['assets']} generated assets (seed {stock['seed']})"
     )
+    prose = manifest["documents"]
+    print(
+        f"documents: {prose['documents']} in {prose['chunks']} chunks, "
+        f"{len(prose['skipped'])} skipped, {prose['offline']} with their source offline, "
+        f"${prose['spend']['total_usd']} spent"
+    )
+    for skipped in prose["skipped"]:
+        print(f"  skipped {skipped['id']}: {skipped['reason']}")
+    if prose["spend"]["unpriced"]:
+        print(f"  no rate for {', '.join(prose['spend']['unpriced'])}, so its cost is not counted")
     return 0
 
 
