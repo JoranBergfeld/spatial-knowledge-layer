@@ -94,9 +94,8 @@ class Corpus:
 
 def default_corpus(venue_id: str) -> Path | None:
     """The published corpus of a built-in venue, if it has one."""
-    builtin = resources.files("spatial_ingest.corpora") / f"{venue_id}.json"
-    with resources.as_file(builtin) as path:
-        return path if path.is_file() else None
+    path = Path(str(resources.files("spatial_ingest.corpora") / f"{venue_id}.json"))
+    return path if path.is_file() else None
 
 
 def read_corpus(path: Path) -> Corpus:

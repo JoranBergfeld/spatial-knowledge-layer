@@ -1,0 +1,441 @@
+{
+  "venue": "kit-campus-sued",
+  "html_content_between": [
+    "<!-- CONTENT-AREA START -->",
+    "<!-- CONTENT-AREA END -->"
+  ],
+  "documents": [
+    {
+      "id": "kit:hoersaal/116",
+      "kind": "accessibility-page",
+      "language": "de",
+      "title": "10.11 Hauptbau Hs",
+      "url": "https://www.studiumundbehinderung.kit.edu/76_116.php",
+      "anchors": [
+        {
+          "building": "10.11"
+        }
+      ]
+    },
+    {
+      "id": "kit:hoersaal/117",
+      "kind": "accessibility-page",
+      "language": "de",
+      "title": "10.11 Heinrich Hertz Hs",
+      "url": "https://www.studiumundbehinderung.kit.edu/76_117.php",
+      "anchors": [
+        {
+          "building": "10.11"
+        }
+      ]
+    },
+    {
+      "id": "kit:hoersaal/118",
+      "kind": "accessibility-page",
+      "language": "de",
+      "title": "10.21 HMU / HMO",
+      "url": "https://www.studiumundbehinderung.kit.edu/76_118.php",
+      "anchors": [
+        {
+          "building": "10.21"
+        }
+      ]
+    },
+    {
+      "id": "kit:hoersaal/119",
+      "kind": "accessibility-page",
+      "language": "de",
+      "title": "10.23 Nußelt Hs",
+      "url": "https://www.studiumundbehinderung.kit.edu/76_119.php",
+      "anchors": [
+        {
+          "building": "10.23"
+        }
+      ]
+    },
+    {
+      "id": "kit:hoersaal/120",
+      "kind": "accessibility-page",
+      "language": "de",
+      "title": "10.50 Großer Hs / Kleiner Hs Bauingenieure",
+      "url": "https://www.studiumundbehinderung.kit.edu/76_120.php",
+      "anchors": [
+        {
+          "building": "10.50"
+        }
+      ]
+    },
+    {
+      "id": "kit:hoersaal/121",
+      "kind": "accessibility-page",
+      "language": "de",
+      "title": "10.81 Engesser Hs",
+      "url": "https://www.studiumundbehinderung.kit.edu/76_121.php",
+      "anchors": [
+        {
+          "building": "10.81"
+        }
+      ]
+    },
+    {
+      "id": "kit:hoersaal/122",
+      "kind": "accessibility-page",
+      "language": "de",
+      "title": "10.81 HS 59, HS 62",
+      "url": "https://www.studiumundbehinderung.kit.edu/76_122.php",
+      "anchors": [
+        {
+          "building": "10.81"
+        }
+      ]
+    },
+    {
+      "id": "kit:hoersaal/124",
+      "kind": "accessibility-page",
+      "language": "de",
+      "title": "10.91 Redtenbacher Hs",
+      "url": "https://www.studiumundbehinderung.kit.edu/76_124.php",
+      "anchors": [
+        {
+          "building": "10.91"
+        }
+      ]
+    },
+    {
+      "id": "kit:hoersaal/125",
+      "kind": "accessibility-page",
+      "language": "de",
+      "title": "10.91 Maschinenbau, Mittlerer Hs",
+      "url": "https://www.studiumundbehinderung.kit.edu/76_125.php",
+      "anchors": [
+        {
+          "building": "10.91"
+        }
+      ]
+    },
+    {
+      "id": "kit:hoersaal/126",
+      "kind": "accessibility-page",
+      "language": "de",
+      "title": "10.91 Grashof Hs, U. Oberer Hs",
+      "url": "https://www.studiumundbehinderung.kit.edu/76_126.php",
+      "anchors": [
+        {
+          "building": "10.91"
+        }
+      ]
+    },
+    {
+      "id": "kit:hoersaal/127",
+      "kind": "accessibility-page",
+      "language": "de",
+      "title": "11.10 Engelbert-Arnold Hs",
+      "url": "https://www.studiumundbehinderung.kit.edu/76_127.php",
+      "anchors": [
+        {
+          "building": "11.10"
+        }
+      ]
+    },
+    {
+      "id": "kit:hoersaal/128",
+      "kind": "accessibility-page",
+      "language": "de",
+      "title": "11.10 Elektrotechnik, Kleiner Hs",
+      "url": "https://www.studiumundbehinderung.kit.edu/76_128.php",
+      "anchors": [
+        {
+          "building": "11.10"
+        }
+      ]
+    },
+    {
+      "id": "kit:hoersaal/129",
+      "kind": "accessibility-page",
+      "language": "de",
+      "title": "11.30 Hans-Bunte Hs",
+      "url": "https://www.studiumundbehinderung.kit.edu/76_129.php",
+      "anchors": [
+        {
+          "building": "11.30"
+        }
+      ]
+    },
+    {
+      "id": "kit:hoersaal/130",
+      "kind": "accessibility-page",
+      "language": "de",
+      "title": "11.40 Johann-Gottfried-Tulla Hs",
+      "url": "https://www.studiumundbehinderung.kit.edu/76_130.php",
+      "anchors": [
+        {
+          "building": "11.40"
+        }
+      ]
+    },
+    {
+      "id": "kit:hoersaal/131",
+      "kind": "accessibility-page",
+      "language": "de",
+      "title": "20.12 Kollegium am Schloss",
+      "url": "https://www.studiumundbehinderung.kit.edu/76_131.php",
+      "anchors": [
+        {
+          "building": "20.12"
+        }
+      ]
+    },
+    {
+      "id": "kit:hoersaal/132",
+      "kind": "accessibility-page",
+      "language": "de",
+      "title": "20.13 Hörsaal 001 Kollegium am Schloss",
+      "url": "https://www.studiumundbehinderung.kit.edu/76_132.php",
+      "anchors": [
+        {
+          "building": "20.13"
+        }
+      ]
+    },
+    {
+      "id": "kit:hoersaal/133",
+      "kind": "accessibility-page",
+      "language": "de",
+      "title": "20.40 Hörsaal 37",
+      "url": "https://www.studiumundbehinderung.kit.edu/76_133.php",
+      "anchors": [
+        {
+          "building": "20.40"
+        }
+      ]
+    },
+    {
+      "id": "kit:hoersaal/134",
+      "kind": "accessibility-page",
+      "language": "de",
+      "title": "20.40 Neuer Hörsaal",
+      "url": "https://www.studiumundbehinderung.kit.edu/76_134.php",
+      "anchors": [
+        {
+          "building": "20.40"
+        }
+      ]
+    },
+    {
+      "id": "kit:hoersaal/135",
+      "kind": "accessibility-page",
+      "language": "de",
+      "title": "20.40 Egon - Eiermann Hs",
+      "url": "https://www.studiumundbehinderung.kit.edu/76_135.php",
+      "anchors": [
+        {
+          "building": "20.40"
+        }
+      ]
+    },
+    {
+      "id": "kit:hoersaal/136",
+      "kind": "accessibility-page",
+      "language": "de",
+      "title": "20.40 Hörsaal 9 Haid HS",
+      "url": "https://www.studiumundbehinderung.kit.edu/76_136.php",
+      "anchors": [
+        {
+          "building": "20.40"
+        }
+      ]
+    },
+    {
+      "id": "kit:hoersaal/137",
+      "kind": "accessibility-page",
+      "language": "de",
+      "title": "20.40 Jordan Hs",
+      "url": "https://www.studiumundbehinderung.kit.edu/76_137.php",
+      "anchors": [
+        {
+          "building": "20.40"
+        }
+      ]
+    },
+    {
+      "id": "kit:hoersaal/138",
+      "kind": "accessibility-page",
+      "language": "de",
+      "title": "30.10 Nachrichtentechnik NTI Hs",
+      "url": "https://www.studiumundbehinderung.kit.edu/76_138.php",
+      "anchors": [
+        {
+          "building": "30.10"
+        }
+      ]
+    },
+    {
+      "id": "kit:hoersaal/139",
+      "kind": "accessibility-page",
+      "language": "de",
+      "title": "30.21 Gerthsen-Hörsaal",
+      "url": "https://www.studiumundbehinderung.kit.edu/76_139.php",
+      "anchors": [
+        {
+          "building": "30.21"
+        }
+      ]
+    },
+    {
+      "id": "kit:hoersaal/140",
+      "kind": "accessibility-page",
+      "language": "de",
+      "title": "30.22 Otto-Lehmann Hs",
+      "url": "https://www.studiumundbehinderung.kit.edu/76_140.php",
+      "anchors": [
+        {
+          "building": "30.22"
+        }
+      ]
+    },
+    {
+      "id": "kit:hoersaal/141",
+      "kind": "accessibility-page",
+      "language": "de",
+      "title": "30.22 Gaede Hs",
+      "url": "https://www.studiumundbehinderung.kit.edu/76_141.php",
+      "anchors": [
+        {
+          "building": "30.22"
+        }
+      ]
+    },
+    {
+      "id": "kit:hoersaal/142",
+      "kind": "accessibility-page",
+      "language": "de",
+      "title": "30.33 Messtechnik MTI Hs",
+      "url": "https://www.studiumundbehinderung.kit.edu/76_142.php",
+      "anchors": [
+        {
+          "building": "30.33"
+        }
+      ]
+    },
+    {
+      "id": "kit:hoersaal/143",
+      "kind": "accessibility-page",
+      "language": "de",
+      "title": "30.34 Lichttechnik Hs",
+      "url": "https://www.studiumundbehinderung.kit.edu/76_143.php",
+      "anchors": [
+        {
+          "building": "30.34"
+        }
+      ]
+    },
+    {
+      "id": "kit:hoersaal/144",
+      "kind": "accessibility-page",
+      "language": "de",
+      "title": "30.35 Hochspannungstechnik Hs",
+      "url": "https://www.studiumundbehinderung.kit.edu/76_144.php",
+      "anchors": [
+        {
+          "building": "30.35"
+        }
+      ]
+    },
+    {
+      "id": "kit:hoersaal/145",
+      "kind": "accessibility-page",
+      "language": "de",
+      "title": "30.41 Chemie Hs I u. II",
+      "url": "https://www.studiumundbehinderung.kit.edu/76_145.php",
+      "anchors": [
+        {
+          "building": "30.41"
+        }
+      ]
+    },
+    {
+      "id": "kit:hoersaal/146",
+      "kind": "accessibility-page",
+      "language": "de",
+      "title": "30.41 Chemie Hs III u. IV bzw. Rudolf Criegee Hs",
+      "url": "https://www.studiumundbehinderung.kit.edu/76_146.php",
+      "anchors": [
+        {
+          "building": "30.41"
+        }
+      ]
+    },
+    {
+      "id": "kit:hoersaal/147",
+      "kind": "accessibility-page",
+      "language": "de",
+      "title": "30.46 Chemie, Neuer Hs",
+      "url": "https://www.studiumundbehinderung.kit.edu/76_147.php",
+      "anchors": [
+        {
+          "building": "30.46"
+        }
+      ]
+    },
+    {
+      "id": "kit:hoersaal/148",
+      "kind": "accessibility-page",
+      "language": "de",
+      "title": "40.32 Rudolf-Plank Hs",
+      "url": "https://www.studiumundbehinderung.kit.edu/76_148.php",
+      "anchors": [
+        {
+          "building": "40.32"
+        }
+      ]
+    },
+    {
+      "id": "kit:hoersaal/149",
+      "kind": "accessibility-page",
+      "language": "de",
+      "title": "40.40 Sportinstitut Hs",
+      "url": "https://www.studiumundbehinderung.kit.edu/76_149.php",
+      "anchors": [
+        {
+          "building": "40.40"
+        }
+      ]
+    },
+    {
+      "id": "kit:hoersaal/150",
+      "kind": "accessibility-page",
+      "language": "de",
+      "title": "50.35 Fasanengarten Hs",
+      "url": "https://www.studiumundbehinderung.kit.edu/76_150.php",
+      "anchors": [
+        {
+          "building": "50.35"
+        }
+      ]
+    },
+    {
+      "id": "kit:hoersaal/406",
+      "kind": "accessibility-page",
+      "language": "de",
+      "title": "30.95 Neuer Hörsaal am Forum, Audimax",
+      "url": "https://www.studiumundbehinderung.kit.edu/76_406.php",
+      "anchors": [
+        {
+          "building": "30.95"
+        }
+      ]
+    },
+    {
+      "id": "kit:hoersaal/407",
+      "kind": "accessibility-page",
+      "language": "de",
+      "title": "50.34 Multimedia Hörsaal",
+      "url": "https://www.studiumundbehinderung.kit.edu/76_407.php",
+      "anchors": [
+        {
+          "building": "50.34"
+        }
+      ]
+    }
+  ]
+}

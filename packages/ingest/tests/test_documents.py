@@ -17,6 +17,7 @@ import pytest
 import prose
 from spatial_ingest import models
 from spatial_ingest.cli import main
+from spatial_ingest.corpus import default_corpus, read_corpus
 from spatial_ingest.rules.passages import CHUNK_LIMIT
 from stubs import OpenAI, Site
 
@@ -509,3 +510,24 @@ def test_a_corpus_that_does_not_parse_stops_the_build(
 
     assert build(venue_file, corpus_file, out) == 1
     assert "exactly one of" in capsys.readouterr().err
+
+
+def test_the_published_kit_corpus_is_its_lecture_hall_pages_keyed_by_building() -> None:
+    path = default_corpus("kit-campus-sued")
+    assert path is not None
+    corpus = read_corpus(path)
+
+    assert corpus.venue == "kit-campus-sued"
+    assert len(corpus.sources) == 36
+    assert all(source.kind == "accessibility-page" for source in corpus.sources)
+    assert all(source.language == "de" for source in corpus.sources)
+    for source in corpus.sources:
+        (anchor,) = source.anchors
+        assert anchor.building is not None and source.title.startswith(anchor.building)
+    audimax = next(s for s in corpus.sources if s.id == "kit:hoersaal/406")
+    assert audimax.url == "https://www.studiumundbehinderung.kit.edu/76_406.php"
+    assert audimax.anchors[0].building == "30.95"
+
+
+def test_a_venue_without_a_published_corpus_has_none() -> None:
+    assert default_corpus("mini-campus") is None
