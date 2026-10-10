@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from functools import cached_property
 
-from spatial_core.records import Asset, AssetType, Persona, Space
+from spatial_core.records import Asset, AssetType, Persona, ServiceEvent, Space
 from spatial_core.search import IndexRef
 
 # How many candidates a clarification names.
@@ -87,6 +87,8 @@ class Venue:
     # The snapshot's search index, where it has one. Which chunks of it the
     # persona may read is the retrieval filter's business, not the venue's.
     index: IndexRef | None = None
+    # The service events of visible assets, by asset. An event is hidden with its asset.
+    service_events: Mapping[str, tuple[ServiceEvent, ...]] = field(default_factory=dict)
 
     def __contains__(self, space_id: object) -> bool:
         return space_id in self.spaces

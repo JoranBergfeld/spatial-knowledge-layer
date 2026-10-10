@@ -24,9 +24,18 @@ is cut to what the persona can see before anything reads it, and the new state g
 back out (conversation.py). The trace shows each follow-up reference, what it
 resolved to and from which turn.
 
-A coverage gap is an abstention with a cause of its own, and says which gap: so
-far only that the scope asked about has no recorded installations, which is a gap
-in the data and not a count of zero.
+A coverage gap is an abstention with a cause of its own, and says which gap. There
+are two, and nothing else gives a reason:
+
+    no recorded installations   nothing is installed in a building, or in something
+                                bigger. Stated only at building level or above. A
+                                room or floor with nothing in it is named as a gap
+                                only through its building, when the whole building
+                                is one. Otherwise the turn abstains without one.
+    attribute not recorded      none of the assets asked about carries the attribute
+                                filtered on: a fill rate of zero. Names the attribute.
+
+Both only ever speak of what the persona can see.
 
 Nothing the persona cannot see reaches a model: the planner gets the question,
 the collapsed tree of visible spaces, the earlier questions and the names of what
@@ -55,8 +64,9 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from spatial_core.records import Asset, AssetType, Persona, Space
-from spatial_service import compose
+from spatial_service import attribute_answers, attributes, compose
 from spatial_service.assets import ScopeResult
+from spatial_service.attributes import FilterTrace
 from spatial_service.compose import (
     POSITION_NOT_RECORDED,
     POSITION_RECORDED,
@@ -78,10 +88,11 @@ from spatial_service.conversation import (
 )
 from spatial_service.executor import Execution, StepResult, execute
 from spatial_service.llm import Llm, LlmCall, LlmUnavailable, Purpose
-from spatial_service.places import Outcome, Venue
+from spatial_service.places import BUILDING, Outcome, Venue, tier
 from spatial_service.plan import (
     DECLINED,
     STEP_CAP,
+    Filter,
     FollowUpTarget,
     MentionKind,
     Plan,
@@ -154,6 +165,9 @@ class AbstentionCause(StrEnum):
     NO_DOCUMENT = "no-document"
     # Passages were retrieved, and no segment written about them passed provenance.
     UNGROUNDED = "ungrounded"
+    # Nothing is recorded in the scope asked about, and it is too small a place to
+    # call a gap in the venue's data. No reason is given.
+    NOTHING_RECORDED = "nothing-recorded"
     # A follow-up reference with nothing to point at: no earlier turn resolved such a
     # thing, or what it resolved is not something this persona can see.
     NOTHING_REFERRED_TO = "nothing-referred-to"
@@ -162,8 +176,10 @@ class AbstentionCause(StrEnum):
 class CoverageGap(StrEnum):
     """Which gap a coverage-gap abstention found."""
 
-    # Nothing the persona can see is installed in the scope asked about.
+    # Nothing the persona can see is installed in a building, or in something bigger.
     NO_RECORDED_INSTALLATIONS = "no-recorded-installations"
+    # None of the assets asked about carries the attribute filtered on.
+    ATTRIBUTE_NOT_RECORDED = "attribute-not-recorded"
 
 
 class Candidate(_Model):
@@ -353,6 +369,8 @@ class AssetsTrace(_Model):
     rows: list[CountRow]
     # Assets in scope under no space of the scale level counted by.
     ungrouped: int = 0
+    # Each attribute filtered on, with its fill rate over the assets asked about.
+    filters: list[FilterTrace] = []
 
 
 class Trace(_Model):
@@ -410,8 +428,9 @@ You plan how to answer one question about a venue: its buildings, floors and roo
 and the assets installed in them. Return only a plan, as JSON matching the schema.
 
 "venue" shows the top of the venue's containment tree, with what lies below the
-shown part as counts per tier, and "tiers", the venue's scale levels, outermost
-first. Use them to read the question. You cannot expand the tree: name a place in
+shown part as counts per tier, "tiers", the venue's scale levels, outermost
+first, and "attributes", every attribute an asset can be filtered on. Use them to
+read the question. You cannot expand the tree: name a place in
 words and a step will find it.
 
 shape:
@@ -425,6 +444,9 @@ shape:
   unit in room 107").
 - "place-document": it asks what a place's own page says about it ("what does the
   accessibility page say about the Audimax").
+- "attribute-filter": it asks for the assets in a place that have, lack, or fall
+  before or after a date on one of "attributes" ("which lights have no serial
+  number", "what falls due for service before June").
 - "asset-location": it asks where one asset from earlier in the conversation is
   ("where is that one").
 - "step-dependent": answering needs the result of one step to decide the next
@@ -449,6 +471,15 @@ steps: ids s1, s2, ..., at most {STEP_CAP}. Every step but the last feeds a late
   step>"}}, left out for the whole venue. "types": {{"step": "<the type step>"}},
   left out for assets of any type. An asset-containment plan ends in it. It covers
   every space under the scope in one step: never plan a step per room.
+  "filters": [] unless the question filters by an attribute. Then each filter is
+  {{"attribute": <one of "attributes", as written>, "test": "recorded",
+  "not-recorded", "before" or "after", "date": "YYYY-MM-DD" for before and after,
+  else null}}. That is every filter there is: a question needing any other
+  comparison, or an attribute not listed, is "unsupported". An attribute-filter
+  plan ends in an assets_in_scope with at least one filter, and an
+  asset-aggregation plan may filter the assets it counts.
+  "service_due" is when an asset next falls due for service, and "service_event"
+  its latest service on record.
 - aggregate: {{"assets": {{"step": "<the assets_in_scope step>"}}, "by": "<tier>"}}
   counts those assets per space of that tier. "by" is one of "tiers". A scale level
   named in the question sets both: the place it names is the scope, the tier it
@@ -468,6 +499,11 @@ still a mention, with "refers": {{"to": "earlier-turn"}} and the kind of thing m
 ("more like it"). Never copy a name out of "conversation" into a mention, and never
 resolve one yourself. An asset is only ever named this way: a question that names
 one asset in words is "unsupported".
+
+"filters" in "conversation", where present, are the filters the last asset question
+used. When the question carries on from that one ("and on level 1?", "which of those
+are lights?"), repeat them in the "filters" of the assets_in_scope step. When it
+asks something new, leave them out.
 
 If "pending" is present, the previous turn asked the user which one they meant and
 listed the candidates, which are of the kind "pending" says. Read the question as
@@ -583,6 +619,10 @@ Name every fact in "required".
     ),
 }
 
+COMPOSITION_INSTRUCTIONS[QuestionShape.ATTRIBUTE_FILTER] = COMPOSITION_INSTRUCTIONS[
+    QuestionShape.ASSET_CONTAINMENT
+]
+
 ANSWER_UNAVAILABLE = "The language model could not be reached, so there is no answer."
 CLARIFY = "More than one place matches. Which one do you mean?"
 CLARIFY_ASSET = "That could be more than one asset. Which one do you mean?"
@@ -600,6 +640,7 @@ ABSTAIN = {
     AbstentionCause.COMPOSITION_REJECTED: "I found the place but couldn't word the answer.",
     AbstentionCause.NO_DOCUMENT: "I don't know of a document about that.",
     AbstentionCause.UNGROUNDED: ("I found documents but couldn't tie an answer to what they say."),
+    AbstentionCause.NOTHING_RECORDED: "I can't answer that from what is recorded.",
     AbstentionCause.NOTHING_REFERRED_TO: "I don't know what that refers to.",
 }
 # What a step that found nothing makes of the turn, by its tool.
@@ -756,9 +797,16 @@ class TurnService:
         """One plan from the model, checked and, when it may, run."""
         payload: dict[str, Any] = {
             "question": question,
-            "venue": {"tiers": list(shown.tiers), "tree": shown.tree},
+            "venue": {
+                "tiers": list(shown.tiers),
+                "tree": shown.tree,
+                "attributes": list(attributes.catalogue(venue).attributes),
+            },
         }
         conversation = told(turn.state, venue)
+        filters = attribute_answers.in_force(turn.state, venue)
+        if filters:
+            conversation["filters"] = filters
         if conversation:
             payload["conversation"] = conversation
         if turn.state.pending is not None:
@@ -873,27 +921,40 @@ class TurnService:
                 answer = compose.aggregation(venue, question, found, last.aggregation)
             else:
                 answer = compose.containment(venue, question, found)
+            answer = attribute_answers.annotate(venue, answer, found)
             types = [venue.asset_types[i] for i in found.types or ()]
             turn.note(
                 asset_types=[_type_trace(kind) for kind in types],
                 assets=_assets_trace(venue, last, answer),
             )
-            state = turn.next(**_carried(venue, last, found))
+            state = turn.next(
+                **_carried(venue, last, found),
+                constraints=attribute_answers.carried(found, turn.number),
+            )
         places = [fact.space for fact in answer.facts if fact.space is not None]
         turn.note(provenance=[_provenance(s) for s in places], authored_defaults=_defaults(places))
 
-        if found is not None and found.installed == 0:
-            return _coverage_gap(turn, venue, found, state)
+        instructions = COMPOSITION_INSTRUCTIONS[shape]
+        if found is not None:
+            if found.installed == 0:
+                return _nothing_installed(turn, venue, found, state)
+            unfilled = attribute_answers.gap(found)
+            if unfilled is not None:
+                return _attribute_gap(turn, venue, found, unfilled, state)
+            if found.filters:
+                instructions += attribute_answers.RULES
 
         text = await turn.call(
             self.llm,
             Purpose.COMPOSITION,
-            instructions=COMPOSITION_INSTRUCTIONS[shape],
+            instructions=instructions,
             payload=answer.payload,
             response_format=compose.Draft,
         )
         try:
-            segments = compose.fill(text, answer.facts, answer.required, answer.together)
+            segments = compose.fill(
+                text, answer.facts, answer.required, answer.together, answer.banned
+            )
         except CompositionRejected as rejected:
             turn.note(composition_rejection=rejected.reasons)
             return turn.abstain(AbstentionCause.COMPOSITION_REJECTED)
@@ -937,7 +998,7 @@ class TurnService:
         )
         try:
             segments, dropped = compose.ground(
-                text, answer.facts, answer.required, answer.together, answer.passages
+                text, answer.facts, answer.required, answer.together, answer.passages, answer.banned
             )
         except CompositionRejected as rejected:
             turn.note(composition_rejection=rejected.reasons)
@@ -1081,13 +1142,27 @@ def _clarify(
     )
 
 
-def _coverage_gap(turn: _Turn, venue: Venue, found: ScopeResult, state: ConversationState) -> Turn:
-    """Nothing visible is installed in scope. Said as that, by the host: no count, no model."""
-    scope = venue.spaces[found.scope] if found.scope is not None else None
-    if scope is not None and scope.label is not None:
+def _nothing_installed(
+    turn: _Turn, venue: Venue, found: ScopeResult, state: ConversationState
+) -> Turn:
+    """Nothing visible is installed in scope. A coverage gap only at building level or above.
+
+    A building or anything bigger with nothing in it is a gap and is named. A floor
+    or room is not named: if its whole building is a gap the building is, and if not
+    the turn abstains and gives no reason. Said by the host: no count, no model.
+    """
+    if found.scope is None:
+        gap = venue.root
+    else:
+        scope = venue.spaces[found.scope]
+        gap = next(
+            (s for s in (scope, *venue.ancestors(scope)) if _building_or_above(venue, s)), None
+        )
+        if gap is None or venue.assets_under.get(gap.id):
+            return turn.abstain(AbstentionCause.NOTHING_RECORDED)
+    if gap is not None and gap.label is not None:
         segment = Segment(
-            text=NO_INSTALLATIONS.format(scope=scope.label.value),
-            citations=[_place_citation(scope)],
+            text=NO_INSTALLATIONS.format(scope=gap.label.value), citations=[_place_citation(gap)]
         )
     else:
         segment = Segment(text=NO_INSTALLATIONS_ANYWHERE, citations=[])
@@ -1096,6 +1171,30 @@ def _coverage_gap(turn: _Turn, venue: Venue, found: ScopeResult, state: Conversa
         [segment],
         cause=AbstentionCause.COVERAGE_GAP,
         gap=CoverageGap.NO_RECORDED_INSTALLATIONS,
+        state=state,
+    )
+
+
+def _building_or_above(venue: Venue, space: Space) -> bool:
+    """Whether a space's tier is the building tier or one outside it."""
+    if BUILDING not in venue.tiers:
+        return space.parent_id is None
+    return tier(space) in venue.tiers[: venue.tiers.index(BUILDING) + 1]
+
+
+def _attribute_gap(
+    turn: _Turn, venue: Venue, found: ScopeResult, unfilled: Filter, state: ConversationState
+) -> Turn:
+    """Assets were asked about and none carries the attribute. Named, by the host."""
+    scope = venue.spaces[found.scope] if found.scope is not None else None
+    labelled = scope is not None and scope.label is not None
+    text = attribute_answers.gap_text(unfilled, _label(scope) if scope and labelled else None)
+    citations = [_place_citation(scope)] if scope and labelled else []
+    return turn.finish(
+        TurnKind.ABSTENTION,
+        [Segment(text=text, citations=citations)],
+        cause=AbstentionCause.COVERAGE_GAP,
+        gap=CoverageGap.ATTRIBUTE_NOT_RECORDED,
         state=state,
     )
 
@@ -1299,4 +1398,5 @@ def _assets_trace(venue: Venue, last: StepResult, answer: Answer) -> AssetsTrace
             for row in answer.rows
         ],
         ungrouped=last.aggregation.ungrouped if last.aggregation else 0,
+        filters=attributes.trace(found.filters),
     )

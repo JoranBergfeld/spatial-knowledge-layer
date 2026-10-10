@@ -25,7 +25,7 @@ from pydantic import BaseModel
 
 import fixture
 import papers
-from fixture import counted, located, most, where
+from fixture import counted, filtered, having, located, most, where
 from spatial_core.records import PERSONAS, Persona, VisibleAsset, VisibleAssetType
 from spatial_core.search import SEARCH_DIR_ENV, IndexRef, LocalIndex
 from spatial_core.stores import READER_ROLE
@@ -114,6 +114,9 @@ def _bundle(root: Path) -> Path:
                 t for t in fixture.asset_types() if t.id.startswith(half)
             ],
             f"{half}/assets.jsonl": [a for a in fixture.assets() if a.id.startswith(half)],
+            f"{half}/service_events.jsonl": [
+                e for e in fixture.service_events() if e.id.startswith(half)
+            ],
             f"{half}/visible_assets.jsonl": [
                 v for v in visible_assets if v.asset_id.startswith(half)
             ],
@@ -259,6 +262,45 @@ def test_a_count_read_from_postgres_differs_by_persona(
 
     assert turn["kind"] == "answer"
     assert [s["text"] for s in turn["segments"]][:2] == expected
+
+
+def test_a_persona_reads_the_service_events_of_its_visible_assets_only(
+    stores: tuple[str, str],
+) -> None:
+    _, reader_url = stores
+    store = PostgresStore(reader_url)
+
+    def events(persona: Persona) -> set[str]:
+        held = store.venue(fixture.SNAPSHOT, persona).service_events
+        return {event.id for found in held.values() for event in found}
+
+    everyone = {e.id for e in fixture.service_events()}
+    serverraum = {e.id for e in fixture.service_events() if e.asset_id == "seed:asset:P2"}
+    assert events(Persona.MAINTENANCE) == everyone
+    assert events(Persona.VISITOR) == everyone - serverraum
+
+
+def test_service_due_is_worked_out_from_what_postgres_holds(stores: tuple[str, str]) -> None:
+    _, reader_url = stores
+    plan = having("service_due", "before", "2026-01-01", place="Audimax", kind="lights")
+    app = create_app(PostgresStore(reader_url), fixture.llm(lambda _p: plan, filtered, []))
+
+    body = {"persona": "visitor", "question": "Which lights in the Audimax fall due before 2026?"}
+    turn = TestClient(app).post("/turn", json=body).json()
+
+    assert turn["kind"] == "answer"
+    assert [s["text"] for s in turn["segments"]] == [
+        "Audimax holds 1 generated.",
+        "Audimax: 1 generated.",
+        "Counted: service due before 2026-01-01.",
+        "1 generated with no service event or installation date recorded.",
+    ]
+    [fill] = turn["trace"]["assets"]["filters"]
+    assert (fill["carried"], fill["of"], fill["default_interval"]) == (2, 3, True)
+    assert {d["asset_id"]: d["counted_from"] for d in fill["due"]} == {
+        "seed:asset:L1": "service-event",
+        "seed:asset:L2": "installation-date",
+    }
 
 
 def test_a_login_that_can_write_is_refused(stores: tuple[str, str]) -> None:
