@@ -52,6 +52,29 @@ DECLINES = (ExpectedKind.ABSTENTION.value, ExpectedKind.COVERAGE_GAP.value)
 
 
 @dataclass(frozen=True)
+class ScoredPassage:
+    chunk_id: str
+    document_id: str
+    # The passage as the NLI model read it: the premise.
+    text: str
+    score: float
+
+
+@dataclass(frozen=True)
+class ScoredSegment:
+    """One composed segment that cites a passage, and what the NLI model made of it."""
+
+    # Its place among the turn's segments, from 1.
+    segment: int
+    # The segment as composed: the hypothesis.
+    text: str
+    passages: tuple[ScoredPassage, ...]
+    # Its best score over the passages it cites, and whether that keeps it.
+    score: float
+    kept: bool
+
+
+@dataclass(frozen=True)
 class Scored:
     question: str
     # "template" or "hand-written".
@@ -78,6 +101,8 @@ class Scored:
     entailed: int
     # None unless gold expects a clarification and one came back.
     candidates: bool | None
+    # Each of those segments, with its passages' text. Private: see evalrun.write_segments.
+    scored_segments: tuple[ScoredSegment, ...] = ()
 
     @property
     def retrieval(self) -> bool | None:
@@ -147,18 +172,24 @@ def numbers_are_facts(turn: dict[str, Any]) -> bool:
     return True
 
 
-def entailed(turn: dict[str, Any], nli: Nli) -> tuple[int, int]:
-    """How many segments cite a passage, and how many of those their passage entails."""
-    scored = kept = 0
-    for segment in turn["segments"]:
+def entailed(turn: dict[str, Any], nli: Nli) -> list[ScoredSegment]:
+    """Every segment that cites a passage, scored against each passage it cites."""
+    scored = []
+    for number, segment in enumerate(turn["segments"], start=1):
         if not segment["passages"]:
             continue
-        scored += 1
-        best = max(
-            nli.entailment(passage["text"], segment["text"]) for passage in segment["passages"]
+        passages = tuple(
+            ScoredPassage(
+                chunk_id=passage["chunk_id"],
+                document_id=passage["document_id"],
+                text=passage["text"],
+                score=nli.entailment(passage["text"], segment["text"]),
+            )
+            for passage in segment["passages"]
         )
-        kept += best >= THRESHOLD
-    return scored, kept
+        best = max(passage.score for passage in passages)
+        scored.append(ScoredSegment(number, segment["text"], passages, best, best >= THRESHOLD))
+    return scored
 
 
 def score(
@@ -171,7 +202,8 @@ def score(
     answered = raw is ExpectedKind.ANSWER
 
     numbers = numbers_are_facts(turn) if answered else None
-    segments, kept = entailed(turn, nli) if answered else (0, 0)
+    read = entailed(turn, nli) if answered else []
+    segments, kept = len(read), sum(one.kept for one in read)
     layer_produced = produced = raw.value if raw else UNAVAILABLE
     if answered and segments and not kept:
         produced = ExpectedKind.ABSTENTION.value
@@ -206,4 +238,5 @@ def score(
         segments=segments,
         entailed=kept,
         candidates=candidates,
+        scored_segments=tuple(read),
     )

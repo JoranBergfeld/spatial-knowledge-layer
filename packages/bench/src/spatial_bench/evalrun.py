@@ -279,6 +279,13 @@ def execute(request: Request, wiring: Wiring, prepared: Prepared) -> Outcome:
             ledger.add_turn(turn, extra)
             asked = Asked(question, response.status_code, turn, (), (), ())
             scored.append(score(asked, wiring.nli, set_name=set_name, reranked=reranked))
+            if ledger.unpriced:
+                # Same as before the run starts: no rate, no run. This turn is already
+                # paid for, so it is counted and scored, and nothing more is asked.
+                stopped = (
+                    f"no rate for {', '.join(sorted(ledger.unpriced))}, so the run cannot be costed"
+                )
+                break
             streak = streak + 1 if scored[-1].produced == UNAVAILABLE else 0
             if streak >= UNREACHABLE_STREAK:
                 stopped = f"{streak} turns in a row came back unavailable"
@@ -370,10 +377,32 @@ def rules(request: Request, outcome: Outcome) -> list[Rule]:
     return [ranker, stats.pair_rule(differences, cheaper)]
 
 
+def segments_file(run: Run) -> str:
+    return f"segments-{run.id}.jsonl"
+
+
+def write_segments(path: Path, outcome: Outcome) -> None:
+    """Every segment the NLI model scored, one a line, with what it was scored against.
+
+    For a person to label, so the NLI model's verdicts can be checked by hand. It
+    holds passage text of every clearance class, so it is the owner's alone: not
+    the eval snapshot, not the metrics, and readable by nobody else on the machine.
+    """
+    path.touch(mode=0o600, exist_ok=True)
+    path.chmod(0o600)
+    with path.open("w", encoding="utf-8") as out:
+        for one in outcome.scored:
+            for segment in one.scored_segments:
+                line = {"question": one.question, "persona": one.persona, **asdict(segment)}
+                out.write(json.dumps(line, ensure_ascii=False) + "\n")
+
+
 def report_of(request: Request, prepared: Prepared, outcome: Outcome) -> dict[str, Any]:
     """The owner's report: everything, every question in it. Not for publishing."""
     return {
         "format": REPORT_FORMAT,
+        # Every scored segment with its passage text and NLI score, beside this file.
+        "segments_file": segments_file(prepared.run),
         "completed": outcome.completed,
         "stopped": outcome.stopped,
         "run": prepared.run.model_dump(mode="json"),

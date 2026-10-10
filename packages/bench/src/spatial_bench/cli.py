@@ -325,7 +325,10 @@ def _run(args: argparse.Namespace, wiring: Wiring | None, confirm: Callable[[str
         report = args.out / f"run-{prepared.run.id}.json"
         said = evalrun.report_of(request, prepared, outcome)
         report.write_text(json.dumps(said, indent=1) + "\n", encoding="utf-8")
+        segments = args.out / evalrun.segments_file(prepared.run)
+        evalrun.write_segments(segments, outcome)
         _say_outcome(request, prepared, outcome)
+        print(f"Scored segments, private, in {segments}")
         if not outcome.completed:
             print(
                 f"Stopped after {len(outcome.scored)} of {len(request.questions)} questions:"

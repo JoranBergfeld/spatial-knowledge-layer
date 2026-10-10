@@ -124,6 +124,7 @@ def start(
         checks: dict[str, Any] | None = None,
         metrics: EvalMetrics | None = None,
         compare_ranker: bool = False,
+        embedder: Any = None,
     ) -> Run:
         asked = bench_gold.model_dump(mode="json")
         if gold is not None:
@@ -153,7 +154,7 @@ def start(
             (tmp_path / name).write_text(json.dumps(body))
         calls: list[str] = []
         prompts: list[str] = []
-        retriever = Retriever(bench_loaded.index, Embedder())
+        retriever = Retriever(bench_loaded.index, embedder or Embedder())
         wiring = Wiring(
             store=PostgresStore(bench_loaded.database_url),
             llm=scripted_llm(bench_gold.questions, calls, usage=usage),
@@ -269,6 +270,32 @@ def test_a_deployment_with_no_rate_stops_the_run_before_it_starts(start: Start) 
     assert run.code == 1
     assert f"no rate for {COMPOSER}" in run.said
     assert run.prompts == []
+
+
+class Renamed(Embedder):
+    """An embedding deployment that answers under a name nobody gave a rate for."""
+
+    def embed(self, deployment: str, text: str) -> Embedded:
+        return Embedded(vector=tuple(prose.embedding(text)), deployment="surprise", input_tokens=1)
+
+
+def test_a_deployment_with_no_rate_met_mid_run_stops_the_run_there(start: Start) -> None:
+    run = start(embedder=Renamed())
+
+    # The estimate priced the embedding deployment the snapshot names. Another one turned up.
+    assert run.code == STOPPED
+    assert len(run.prompts) == 1
+    assert "no rate for surprise" in run.said
+    assert "No eval snapshot was written" in run.said
+    assert not (run.out / "eval-snapshot.json").exists()
+    report = run.report
+    assert report["completed"] is False
+    assert "no rate for surprise" in report["stopped"]
+    assert report["spend"]["unpriced"] == ["surprise"]
+    # It stopped on the first turn that embedded anything, not at the end.
+    assert 0 < report["asked"] < report["of"]
+    embedded = [e for e in report["spend"]["entries"] if e["purpose"] == "embedding"]
+    assert [e["calls"] for e in embedded] == [1]
 
 
 def test_a_run_needs_leak_checks_that_ran_on_the_snapshot_it_measures(start: Start) -> None:
@@ -567,6 +594,45 @@ def test_hand_written_questions_are_reported_apart_from_template_questions(
     ]
 
 
+# The segments, kept for a person to label
+
+
+def test_each_scored_segment_is_written_beside_the_report_with_its_passage_and_score(
+    finished: Run,
+) -> None:
+    (path,) = finished.out.glob("segments-*.jsonl")
+    lines = [json.loads(line) for line in path.read_text().splitlines()]
+    report = finished.report
+
+    assert path.name == f"segments-{report['run']['id']}.jsonl"
+    assert report["segments_file"] == path.name
+    # One line per segment that cites a passage: the ones the NLI model scored.
+    assert len(lines) == sum(q["segments"] for q in report["questions"])
+    # From the thirteen document answers, and no other turn.
+    assert len({line["question"] for line in lines}) == 13
+    first = lines[0]
+    assert set(first) == {"question", "persona", "segment", "text", "passages", "score", "kept"}
+    assert first["text"] == "The cited passage covers this."
+    [passage] = first["passages"]
+    assert set(passage) == {"chunk_id", "document_id", "text", "score"}
+    assert len(passage["text"]) > 40
+    assert (passage["score"], first["score"], first["kept"]) == (0.9, 0.9, True)
+    assert {line["question"] for line in lines} <= {q["id"] for q in report["questions"]}
+    # The owner's to read. Passage text of every clearance class is in it.
+    assert path.stat().st_mode & 0o077 == 0
+    assert f"Scored segments, private, in {path}" in finished.said
+
+
+def test_no_segment_or_passage_text_reaches_the_eval_snapshot(finished: Run) -> None:
+    (path,) = finished.out.glob("segments-*.jsonl")
+    published = json.dumps(finished.snapshot)
+
+    for line in map(json.loads, path.read_text().splitlines()):
+        assert line["text"] not in published
+        assert all(passage["text"] not in published for passage in line["passages"])
+    assert "segments_file" not in published
+
+
 # Spend
 
 
@@ -617,6 +683,8 @@ def test_the_confusion_matrix_is_pushed_labelled_with_run_snapshot_and_deploymen
         "snapshot": "2026-09-15",
         "planning_deployment": PLANNER,
         "composition_deployment": COMPOSER,
+        "embedding_deployment": prose.EMBEDDING_DEPLOYMENT,
+        "nli_deployment": "stand-in-nli",
         "question_set": "template",
     }
     cells = {(p["expected_turn_kind"], p["turn_kind"]): count for p, count in points}
