@@ -5,6 +5,12 @@ costs nothing and gives the same result every time. It is what CI runs on the
 hand-made handover and on the mini campus, and what an operator runs on a real
 bundle before an evaluation run spends anything.
 
+Routes have no gold, so tool correctness says nothing of them. The counterfactual
+check does not need gold though: it only needs a turn to stay the same. So on a
+venue with edges it also asks the visitor the way to rooms they can see, on the
+bundle and on each copy. Those are the route probes, and they are held to the same
+two leak checks as any other turn.
+
 It needs a Postgres it may create databases on. It makes three: the bundle as it
 is, a copy with the restricted things removed and a copy with more of them
 added. All three are dropped when it is done.
@@ -21,7 +27,7 @@ from typing import Any
 from spatial_bench.bundle import Bundle
 from spatial_bench.check import Verdict, compare_all
 from spatial_bench.leaks import Difference, Hidden, Leak, LeakReport, input_leaks, turn_differences
-from spatial_bench.questions import QuestionSet
+from spatial_bench.questions import Expected, ExpectedKind, Question, QuestionSet, Slots
 from spatial_bench.run import loaded
 from spatial_bench.variants import with_restricted_added, without_restricted
 from spatial_core.records import Persona
@@ -33,6 +39,43 @@ VARIANTS: dict[str, Callable[[Bundle, Persona], Bundle]] = {
     "removed": without_restricted,
     "added": with_restricted_added,
 }
+
+
+# How many rooms the counterfactual check asks the way to.
+PROBE_CAP = 25
+PROBE_TEMPLATE = "counterfactual-route-probe"
+
+
+def route_probes(bundle: Bundle, persona: Persona = LOWEST) -> list[Question]:
+    """The way to rooms ``persona`` can see, as questions. None on a venue with no edges.
+
+    Not gold: what comes back is only ever compared with itself across the copies.
+    """
+    if not bundle.edges:
+        return []
+    seen = bundle.visible(persona).spaces
+    labels = sorted(
+        {
+            space.label.value
+            for space in bundle.spaces
+            if space.id in seen and space.label is not None and space.clearance is not None
+        }
+    )
+    step = max(1, -(-len(labels) // PROBE_CAP))
+    return [
+        Question(
+            id=f"probe/route/{label}/{persona.value}",
+            pair=f"probe/route/{label}",
+            shape="route",
+            template=PROBE_TEMPLATE,
+            persona=persona,
+            question=f"How do I get to {label}?",
+            slots=Slots(place=label),
+            # Never scored. A question has to carry one.
+            expected=Expected(kind=ExpectedKind.ANSWER, reason="a probe, not gold"),
+        )
+        for label in labels[::step][:PROBE_CAP]
+    ]
 
 
 @dataclass(frozen=True)
@@ -92,6 +135,8 @@ class Report:
                 "counterfactual": {
                     "passed": not self.leaks.counterfactual,
                     "turns": self.leaks.turns.get("counterfactual", 0),
+                    # Routes asked of each copy on top of those. No gold behind them.
+                    "route_probes": self.leaks.turns.get("route_probes", 0),
                     "differences": [
                         {"question": d.question, "variant": d.variant, "paths": list(d.paths)}
                         for d in self.leaks.counterfactual
@@ -119,23 +164,29 @@ def run(
     records = Bundle.read(bundle)
     leaks: list[Leak] = []
     differences: list[Difference] = []
-    turns = {"input": 0, "counterfactual": 0}
+    turns = {"input": 0, "counterfactual": 0, "route_probes": 0}
+    probes = route_probes(records) if counterfactual else []
     with loaded(bundle, admin_url, work / "index") as base:
         asked = base.bench(embedder).ask_all(gold.questions)
         verdicts = compare_all(asked)
         for persona in gold.personas:
             leaks += input_leaks(asked, Hidden.of(records, persona))
-        turns["input"] += len(asked)
+        probed = base.bench(embedder).ask_all(probes)
+        leaks += input_leaks(probed, Hidden.of(records, LOWEST))
+        turns["input"] += len(asked) + len(probed)
         lowest = [one for one in asked if one.question.persona is LOWEST]
         for name, change in VARIANTS.items() if counterfactual else ():
             copy = change(records, LOWEST).write(work / name)
             with loaded(copy, admin_url, work / f"index-{name}") as other:
                 again = other.bench(embedder).ask_all(gold.asked_as(LOWEST))
+                routed = other.bench(embedder).ask_all(probes)
             differences += turn_differences(lowest, again, name)
+            differences += turn_differences(probed, routed, name)
             # The copy has hidden things the bundle never had. They may not show up either.
-            leaks += input_leaks(again, Hidden.of(Bundle.read(copy), LOWEST))
-            turns["input"] += len(again)
+            leaks += input_leaks([*again, *routed], Hidden.of(Bundle.read(copy), LOWEST))
+            turns["input"] += len(again) + len(routed)
             turns["counterfactual"] += len(again)
+            turns["route_probes"] += len(routed)
     return Report(
         venue=str(records.manifest["venue"]),
         snapshot=str(records.manifest["snapshot"]),

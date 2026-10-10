@@ -165,9 +165,11 @@ def _check(args: argparse.Namespace) -> int:
         print(f"    {wrong['question']}: {'; '.join(wrong['mismatches'])}")
     for name in ("input", "counterfactual"):
         found = leaks[name].get("leaks", leaks[name].get("differences"))
+        probes = leaks[name].get("route_probes")
         print(
             f"  {name} leak check: {'pass' if leaks[name]['passed'] else 'FAIL'}"
             f" over {leaks[name]['turns']} turns"
+            + (f" and {probes} route probes" if probes else "")
         )
         for one in found[:10]:
             print(f"    {json.dumps(one)}")

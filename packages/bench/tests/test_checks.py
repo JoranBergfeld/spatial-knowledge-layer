@@ -13,10 +13,12 @@ import dataclasses
 import json
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 import prose
+import route_fixture as rf
 from spatial_bench import suite
 from spatial_bench.bundle import Bundle
 from spatial_bench.check import compare_all
@@ -29,7 +31,7 @@ from spatial_bench.leaks import (
     input_leaks,
     turn_differences,
 )
-from spatial_bench.questions import QuestionSet
+from spatial_bench.questions import FORMAT, QuestionSet
 from spatial_bench.run import Asked, Bench, Loaded, loaded
 from spatial_bench.suite import Report
 from spatial_bench.variants import (
@@ -38,11 +40,14 @@ from spatial_bench.variants import (
     with_restricted_added,
     without_restricted,
 )
-from spatial_core.records import Persona
+from spatial_core.circulation import CROSSABLE_DOORS
+from spatial_core.records import Edge, Persona
 from spatial_core.search import Filter, Query
+from spatial_service import store
 from spatial_service.places import Venue
 from spatial_service.retrieval import Embedded
-from spatial_service.store import PostgresStore
+from spatial_service.routes import door_counts
+from spatial_service.store import PostgresStore, circulation
 
 
 class Embedder:
@@ -260,6 +265,82 @@ def test_what_the_asker_typed_themselves_is_not_a_leak(
     assert "ELEC. ROOM" in hidden.names
     assert any("ELEC. ROOM" in sent for sent in asked.inputs)
     assert input_leaks([asked], hidden) == []
+
+
+# --- restricted spaces and doors -----------------------------------------------------------
+#
+# The routes building, with room 203 private. Room 201 then has two doors a visitor may
+# take and a third into a room that does not exist for them.
+
+NO_QUESTIONS = QuestionSet(
+    format=FORMAT,
+    source={},
+    per_template=0,
+    personas=[Persona.VISITOR],
+    unmeasured=[],
+    world={},
+    questions=[],
+)
+
+
+@pytest.fixture(scope="module")
+def routes_bundle(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    return rf.bundle(tmp_path_factory.mktemp("routes"), private=(rf.ROOM_203,))
+
+
+def test_the_copies_vary_the_restricted_spaces_and_the_doors_into_them(
+    routes_bundle: Path,
+) -> None:
+    base = Bundle.read(routes_bundle)
+    removed, added = without_restricted(base), with_restricted_added(base)
+    seen = base.visible(Persona.VISITOR).spaces
+
+    assert rf.ROOM_203 not in seen and rf.STAFF_CORRIDOR not in seen
+    # Gone: every space a visitor cannot see, and every edge they may not take.
+    assert {space.id for space in removed.spaces} == set(seen)
+    assert removed.edges
+    for edge in removed.edges:
+        assert edge.to_id in seen and (edge.from_id is None or edge.from_id in seen)
+        assert Persona.VISITOR.clears(edge.clearance)
+    # Added: a hidden room behind three more doors on rooms a visitor walks through.
+    extra = [space for space in added.spaces if space.id not in {s.id for s in base.spaces}]
+    assert extra and not any(Persona.VISITOR.clears(s.clearance) for s in extra if s.clearance)
+    doors = {edge.door for edge in added.edges if edge.from_id == rf.ROOM_201}
+    assert len(doors) == 3 + CROSSABLE_DOORS
+    for copy in (removed, added):
+        assert copy.visible(Persona.VISITOR).spaces == seen
+
+
+def test_on_a_venue_with_doors_the_counterfactual_check_routes_to_what_a_visitor_sees(
+    routes_bundle: Path, admin_url: str, tmp_path: Path
+) -> None:
+    report = suite.run(routes_bundle, NO_QUESTIONS, admin_url, tmp_path)
+
+    assert list(report.leaks.counterfactual) == []
+    assert list(report.leaks.inputs) == []
+    # Every labelled room a visitor sees, once on the bundle and once on each copy.
+    assert report.leaks.turns["route_probes"] == 2 * 12
+    assert report.as_json()["leak_checks"]["counterfactual"]["route_probes"] == 24
+
+
+def test_a_door_count_that_reads_hidden_doors_fails_the_counterfactual_check(
+    routes_bundle: Path, admin_url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The defect this check once missed: a door into a hidden room counted towards
+    making a visible room a way through."""
+
+    def every_door(edges: list[Edge], visible: set[str], persona: Persona, origin: Any) -> Any:
+        held = circulation(edges, visible, persona, origin)
+        return {**held, "doors": door_counts(e for e in edges if e.door is not None)}
+
+    monkeypatch.setattr(store, "circulation", every_door)
+
+    report = suite.run(routes_bundle, NO_QUESTIONS, admin_url, tmp_path)
+
+    changed = {(d.question, d.variant) for d in report.leaks.counterfactual}
+    # With 203 there a visitor is walked through 201 to 202. With it gone they are not.
+    assert ("probe/route/20.20 room 202/visitor", "removed") in changed
+    assert not report.passed
 
 
 # --- the command -----------------------------------------------------------------------------
