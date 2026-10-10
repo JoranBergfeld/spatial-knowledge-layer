@@ -374,6 +374,105 @@ def test_a_document_plan_anchored_by_the_wrong_thing_is_invalid(
     assert turn["trace"]["plans"][0]["rejection"] == [reason]
 
 
+# --- the manual of the one asset an earlier turn found --------------------------------------
+
+ROOM_108 = "osm:way/1004"
+LIGHT_NORD = "seed:asset:L9"
+NOTE = "note:l8#0"
+
+
+def held(persona: str, asset: str) -> dict[str, Any]:
+    """The state an earlier turn about one asset leaves behind."""
+    return {
+        "snapshot": fixture.SNAPSHOT,
+        "persona": persona,
+        "turns": 1,
+        "assets": [asset],
+        "since": {"assets": 1},
+    }
+
+
+def test_its_manual_is_retrieved_by_the_one_asset_an_earlier_turn_found() -> None:
+    # Staff asked about the light in room 108. A note hangs on that very asset.
+    index = papers.Recording(papers.index())
+    turn = ask(
+        "staff",
+        "What does its manual say?",
+        papers.its_manual("ballast"),
+        retriever=Retriever(index, papers.Embedder()),
+        state=held("staff", papers.LIGHT_IN_108),
+    )
+
+    assert turn["kind"] == "answer"
+    assert turn["trace"]["shape"] == "asset-document"
+    # The asset itself, and its type. Nothing else in the room, nothing else of the type.
+    [query] = index.queries
+    assert query.filter.asset_ids == {papers.LIGHT_IN_108}
+    assert query.filter.asset_type_ids == {fixture.LIGHT_B1}
+    assert query.filter.space_ids == frozenset()
+    assert sorted(retrieved(turn)) == [B1, NOTE]
+    assert texts(turn)[0] == "50.34 room 108 holds 1 generated."
+    assert 'It says "Service note."' in texts(turn)
+    documents = turn["trace"]["documents"]
+    assert (documents["anchored_by"], documents["scope"], documents["assets"]) == (
+        "assets",
+        ROOM_108,
+        1,
+    )
+    [reference] = turn["trace"]["references"]
+    assert (reference["kind"], reference["ids"]) == ("asset", [papers.LIGHT_IN_108])
+    # It is still the asset the conversation is about.
+    assert turn["state"]["assets"] == [papers.LIGHT_IN_108]
+    assert turn["state"]["place"] == ROOM_108
+
+
+def test_a_visitor_gets_the_manual_of_their_own_asset_and_never_the_note_on_another() -> None:
+    # The light in Seminarraum Nord is of the same type as the one in room 108.
+    inputs: list[str] = []
+    turn = ask(
+        "visitor",
+        "What does its manual say?",
+        papers.its_manual("ballast"),
+        inputs=inputs,
+        state=held("visitor", LIGHT_NORD),
+    )
+
+    assert turn["kind"] == "answer"
+    assert retrieved(turn) == [B1]
+    assert texts(turn)[0] == "Seminarraum Nord holds 1 generated."
+    for told in (json.dumps(turn), "".join(inputs)):
+        assert "Service note" not in told
+        assert papers.LIGHT_IN_108 not in told
+
+
+def test_its_manual_for_an_asset_the_persona_cannot_see_refers_to_nothing() -> None:
+    # A state a visitor could not have been handed: the light in the staff room.
+    index = papers.Recording(papers.index())
+    turn = ask(
+        "visitor",
+        "What does its manual say?",
+        papers.its_manual("ballast"),
+        None,
+        retriever=Retriever(index, papers.Embedder()),
+        state=held("visitor", papers.LIGHT_IN_108),
+    )
+
+    assert (turn["kind"], turn["cause"]) == ("abstention", "nothing-referred-to")
+    assert index.queries == []
+    assert papers.LIGHT_IN_108 not in json.dumps(turn)
+
+
+def test_a_place_document_plan_cannot_be_anchored_by_an_asset() -> None:
+    plan = json.loads(papers.its_manual("access")) | {"shape": "place-document"}
+
+    turn = ask("visitor", "?", json.dumps(plan), None, state=held("visitor", LIGHT_NORD))
+
+    assert turn["cause"] == "plan-rejected"
+    assert turn["trace"]["plans"][0]["rejection"] == [
+        "a place-document plan retrieves by places, but step s2 reads asset"
+    ]
+
+
 # --- the search ---------------------------------------------------------------------------
 
 

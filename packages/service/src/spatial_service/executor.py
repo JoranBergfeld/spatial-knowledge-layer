@@ -35,6 +35,7 @@ from spatial_service.assets import (
     check_tier,
     check_type_arguments,
     resolve_asset_type,
+    the_asset,
 )
 from spatial_service.attributes import check_filters
 from spatial_service.conversation import HOW, ConversationState, Referred, resolve
@@ -291,8 +292,12 @@ def _retrieve(
 ) -> StepResult:
     """The passages anchored to what an earlier step found. None at all is a trigger."""
     source = done[step.anchors.step]
-    if source.found is not None:
-        anchors = anchors_of_assets(venue, source.found)
+    found_assets = source.found
+    if source.tool == "resolve_asset":
+        # The one asset a follow-up points at, read as the assets step it stands in for.
+        found_assets = the_asset(venue, venue.assets[source.ids[0]])
+    if found_assets is not None:
+        anchors = anchors_of_assets(venue, found_assets)
     else:
         # A place step that got this far resolved exactly one place.
         anchors = anchors_of_place(venue, source.ids[0])
@@ -307,7 +312,7 @@ def _retrieve(
         Outcome.RESOLVED if ids else Outcome.NONE,
         ids,
         matched=len(ids),
-        found=source.found,
+        found=found_assets,
         retrieval=found,
     )
 

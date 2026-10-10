@@ -253,6 +253,16 @@ def manual(query: str, place: str | None = None, kind: str | None = None) -> str
     return json.dumps(plan)
 
 
+def its_manual(query: str) -> str:
+    """An asset-document plan over a follow-up reference: the one asset an earlier turn found."""
+    mentions = [{"id": "m1", "text": "its", "kind": "asset", "refers": {"to": "earlier-turn"}}]
+    steps = [
+        {"id": "s1", "tool": "resolve_asset", "mention": "m1"},
+        {"id": "s2", "tool": "retrieve_documents", "anchors": {"step": "s1"}, "query": query},
+    ]
+    return json.dumps({"shape": "asset-document", "mentions": mentions, "steps": steps})
+
+
 def page(query: str, place: str) -> str:
     """A place-document plan: the place, then the documents anchored there."""
     plan = json.loads(fixture.where(place))
@@ -309,6 +319,7 @@ def ask(
     retriever: Documents | None = None,
     inputs: list[str] | None = None,
     status: int = 200,
+    state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     llm = fixture.llm(
         planner if callable(planner) or planner is None else (lambda _p: planner),
@@ -316,7 +327,8 @@ def ask(
         inputs if inputs is not None else [],
     )
     app = create_app(store(), llm, documents=retriever or documents())
-    response = TestClient(app).post("/turn", json={"persona": persona, "question": question})
+    body = {"persona": persona, "question": question, "state": state}
+    response = TestClient(app).post("/turn", json=body)
     assert response.status_code == status, response.text
     result: dict[str, Any] = response.json()
     return result

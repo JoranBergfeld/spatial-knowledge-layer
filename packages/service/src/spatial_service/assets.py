@@ -136,6 +136,19 @@ def assets_in_scope(
     )
 
 
+def the_asset(venue: Venue, asset: Asset) -> ScopeResult:
+    """One asset as an assets step would have found it: by its space and its type.
+
+    For a step that reads a follow-up's single asset where it would read assets.
+    """
+    return ScopeResult(
+        scope=asset.space_id,
+        types=(asset.type_id,),
+        ids=(asset.id,),
+        installed=len(venue.assets_under.get(asset.space_id, [])),
+    )
+
+
 @dataclass(frozen=True)
 class Group:
     space_id: str

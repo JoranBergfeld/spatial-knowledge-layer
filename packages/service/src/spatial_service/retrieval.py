@@ -7,6 +7,7 @@ down to one persona, and the anchors are built from that venue alone:
     from a place      the place and every visible space under it, the visible
                       assets under it, and the types of those assets
     from assets       those assets and their types
+    from one asset    the same, for the one a follow-up points at: it and its type
 
 The filter the index gets is then: clearance class within the persona's, and at
 least one of the chunk's anchors among those ids. That is

@@ -509,8 +509,10 @@ steps: ids s1, s2, ..., at most {STEP_CAP}. Every step but the last feeds a late
   searches the documents tied to what that step found. "query" is what to look
   for in them, in English, from the question ("servicing", "step-free access").
   An asset-document plan ends in it reading the assets_in_scope step: it searches
-  what is anchored to those assets and their types. A place-document plan ends in
-  it reading the resolve_place step for the place asked about.
+  what is anchored to those assets and their types. Or reading a resolve_asset
+  step, for the documents of the one asset a follow-up points at ("what does its
+  manual say"). A place-document plan ends in it reading the resolve_place step
+  for the place asked about.
 - places_matching, for a place mention that describes rather than names ("the
   nearest toilet", "a lift"): every place that fits, as a set. Only a route reads it.
 - route: {{"destination": {{"step": "<id>"}}}}, the step for the place asked for: a
