@@ -112,7 +112,8 @@ class Filter:
 
 @dataclass(frozen=True)
 class Query:
-    text: str
+    # The words to rank by. None ranks by nothing: whatever passes the filter, in id order.
+    text: str | None
     filter: Filter
     # The embedding of the text. None searches by keyword alone.
     vector: tuple[float, ...] | None = None
@@ -134,8 +135,12 @@ class SearchQueries(Protocol):
         """The chunks of index ``name`` that pass the filter, best first, at most ``top``."""
 
 
+# Words the stand-in's keyword half skips, as an English analyzer would.
+_STOPWORDS = frozenset("a an and are as at be by for from in is it of on or the to with".split())
+
+
 def _terms(text: str) -> list[str]:
-    return re.findall(r"\w+", text.casefold())
+    return [word for word in re.findall(r"\w+", text.casefold()) if word not in _STOPWORDS]
 
 
 def _cosine(a: Sequence[float], b: Sequence[float]) -> float:
@@ -206,7 +211,12 @@ class LocalIndex:
         pool = [entry for entry in self.entries(name) if query.filter.matches(entry.chunk)]
         if not pool:
             return []
-        words = set(_terms(query.text))
+        if query.text is None and query.vector is None:
+            return [
+                Hit(chunk=entry.chunk, rank=rank, score=1.0)
+                for rank, entry in enumerate(pool[: query.top], start=1)
+            ]
+        words = set(_terms(query.text or ""))
         counts = {e.chunk.id: Counter(_terms(f"{e.chunk.title} {e.chunk.text}")) for e in pool}
         spread = {word: sum(1 for c in counts.values() if c[word]) for word in words}
 

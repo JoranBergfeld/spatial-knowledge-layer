@@ -93,7 +93,8 @@ class AzureSearch:
         if not query.filter.anchored:
             return []
         body: dict[str, Any] = {
-            "search": query.text,
+            # "*" matches everything: a fetch by filter, with nothing to rank by.
+            "search": query.text if query.text is not None else "*",
             "searchFields": "title,text",
             "filter": odata(query.filter),
             "select": ",".join(Chunk.model_fields),
@@ -108,7 +109,9 @@ class AzureSearch:
                     "k": _NEIGHBOURS,
                 }
             ]
-        if query.semantic_ranker:
+        elif query.text is None:
+            body["orderby"] = "id asc"
+        if query.semantic_ranker and query.text is not None:
             body["queryType"] = "semantic"
             body["semanticConfiguration"] = SEMANTIC_CONFIGURATION
         try:

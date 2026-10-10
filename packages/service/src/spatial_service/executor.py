@@ -8,6 +8,10 @@ with nothing under it, or a tool that rejected its arguments, which is a trigger
 
 An asset step that finds no assets has not come up short. An empty set is a result.
 
+A retrieval step that gets no passage has, and it is a trigger too: empty-retrieval.
+It is the one step that leaves the process (the index, the embedding deployment),
+so the host runs the executor off the event loop.
+
 A step whose mention is a follow-up reference looks nothing up. It reads the
 conversation state the host handed in, already cut to what the persona can see
 (conversation.py), and comes up short the same ways: nothing, or more than one.

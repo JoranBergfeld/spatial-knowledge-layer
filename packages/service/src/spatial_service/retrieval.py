@@ -146,7 +146,7 @@ class Passage:
     ref: str
     rank: int
     chunk: Chunk
-    # Whether its document's summary matched the query too.
+    # Whether its document's summary matched the query better than the passage did.
     via_summary: bool = False
 
 
@@ -222,7 +222,8 @@ class Retriever:
         fetched: dict[str, Hit] = {}
         if missing:
             only = replace(chosen, roles=(ChunkRole.PASSAGE,), document_ids=frozenset(missing))
-            more = self.index.search(ref.name, replace(asked, filter=only))
+            # A plain fetch, not a search: these passages did not match the query themselves.
+            more = self.index.search(ref.name, Query(text=None, filter=only, top=asked.top))
             fetched = {hit.chunk.id: hit for hit in more if only.matches(hit.chunk)}
             refused += len(more) - len(fetched)
 
@@ -239,8 +240,14 @@ class Retriever:
             rank = own[chunk.id].rank if chunk.id in own else len(passed) + fetched[chunk.id].rank
             return (-fused(chunk), rank, chunk.id)
 
-        evidence = [hit.chunk for hit in (*own.values(), *fetched.values())]
-        assert all(chunk.is_evidence for chunk in evidence)
+        def lifted(chunk: Chunk) -> bool:
+            # Its summary matched better than it did itself, or it did not match at all.
+            summary = by_summary.get(chunk.document_id)
+            return summary is not None and (chunk.id not in own or summary < own[chunk.id].rank)
+
+        # Evidence only, whatever came back. A summary never gets past this line.
+        found = (*own.values(), *fetched.values())
+        evidence = [hit.chunk for hit in found if hit.chunk.is_evidence]
         best = sorted(evidence, key=order)[: self.top]
         return replace(
             result,
@@ -249,7 +256,7 @@ class Retriever:
                     ref=f"p{number}",
                     rank=number,
                     chunk=chunk,
-                    via_summary=chunk.document_id in by_summary,
+                    via_summary=lifted(chunk),
                 )
                 for number, chunk in enumerate(best, start=1)
             ),
@@ -288,7 +295,7 @@ class RetrievedDocument(_Model):
     space_ids: list[str]
     asset_type_ids: list[str]
     asset_ids: list[str]
-    # Its document's summary matched the query and lifted it. The summary is not shown.
+    # Its document's summary ranked above the passage itself. The summary is not shown.
     via_summary: bool = False
 
 

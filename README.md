@@ -7,9 +7,10 @@ Campus Süd, from OpenStreetMap.
 Ingestion runs here: `ingest build` turns a pinned OpenStreetMap pull and a document
 corpus into a snapshot bundle holding the venue's structure, its equipment and its
 prose, `ingest load` writes a bundle into Postgres and a search index and checks both,
-and `ingest promote` makes a loaded snapshot current. The service answers three kinds
-of question so far: where a place is, what is installed in one, and which floor or
-building has the most of something. Nothing retrieves the documents yet.
+and `ingest promote` makes a loaded snapshot current. The service answers where a
+place is, what is installed in one, which floor or building has the most of something,
+and what a manual or a place's page says, with the passage cited. It also takes
+follow-ups.
 
 The spec and the glossary live in the site's repository
 ([spec](https://github.com/JoranBergfeld/personal-website/issues/73), `CONTEXT.md`).
@@ -392,7 +393,12 @@ SPATIAL_COMPOSITION_DEPLOYMENT   the deployment that composes, which must be a d
 SPATIAL_LLM_TIMEOUT_SECONDS      optional, 30 by default
 SPATIAL_TREE_NODE_CAP            optional, 200 by default: how much of the tree the planner sees
 OTEL_EXPORTER_OTLP_ENDPOINT      optional; where metrics are pushed. Unset, none are
+AZURE_SEARCH_ENDPOINT            optional: the Azure AI Search service, with AZURE_SEARCH_API_KEY
+SPATIAL_SEARCH_DIR               optional, instead of those two: the stand-in index directory
+SPATIAL_SEMANTIC_RANKER          optional: "on" reranks passages with the semantic ranker. Off by default
 ```
+
+With no search index named, the service still runs and no document is ever retrieved.
 
 ### Metrics
 
@@ -454,7 +460,7 @@ The triggers, and nothing else, buy a recovery call:
 | --- | --- |
 | `plan-invalid` | The plan does not parse, or breaks a rule: the step cap, a repeated id, a step feeding nothing. |
 | `unbound-reference` | A reference binds to nothing: a step resolving a mention the plan lacks, or reading a step that is not earlier or whose output it cannot take. It wins over `plan-invalid`, since a dangling reference breaks other rules in its wake. |
-| `empty-retrieval` | Document retrieval returned nothing. Nothing retrieves documents yet, so nothing raises it so far. |
+| `empty-retrieval` | Document retrieval returned nothing. It never says why: no document there, none within clearance, or nothing to anchor to. |
 | `malformed-arguments` | A tool rejected its arguments, such as a mention with nothing to look up once normalised, or a scale level the snapshot has no tier for. |
 
 Outcomes that are answers never buy a call: no visible place or asset type matching
@@ -539,7 +545,7 @@ A turn is one of four kinds:
 | --- | --- |
 | `answer` | Every step found what it needed and the composition passed its checks. |
 | `clarification` | A step matched several places, or the mention was a bare room number, which is never a label. Or a follow-up reference pointed at more than one asset. The candidates are all visible to the persona, at most six. The state carries them, and the next turn's planner sees their labels. |
-| `abstention` | `no-such-place` when nothing the persona can see matches. A place beyond clearance and a place that does not exist give the same abstention, and the same trace but for the words asked. `no-such-asset-type` is the same for a type. Also `nothing-at-scale-level`, `step-dependent-question`, `unsupported-question`, `plan-rejected` and `composition-rejected`. `nothing-referred-to` when a follow-up reference has nothing to point at. And `coverage-gap`, with the turn's `gap` saying which: so far only `no-recorded-installations`, when nothing the persona can see is installed in the scope asked about. A gap in the data, not a count of zero. |
+| `abstention` | `no-such-place` when nothing the persona can see matches. A place beyond clearance and a place that does not exist give the same abstention, and the same trace but for the words asked. `no-such-asset-type` is the same for a type. Also `nothing-at-scale-level`, `step-dependent-question`, `unsupported-question`, `plan-rejected` and `composition-rejected`. `nothing-referred-to` when a follow-up reference has nothing to point at. `no-document` and `ungrounded` for document questions (see Documents in an answer). And `coverage-gap`, with the turn's `gap` saying which: so far only `no-recorded-installations`, when nothing the persona can see is installed in the scope asked about. A gap in the data, not a count of zero. |
 | `unavailable` | A model could not be reached. HTTP 503, no answer, and the prior state back unchanged. |
 
 Every turn carries its trace, the new conversation state, each model call's token usage
@@ -577,6 +583,104 @@ Rough or not done yet on the asset side:
 - Clarifications, abstentions and coverage gaps are worded by the host, not composed.
 - The plan schema is a plain union of step types, because strict structured output
   refuses `oneOf`. Whether the real deployment takes it has not been tried.
+
+### Documents in an answer
+
+Two more shapes, one more tool. `asset-document` is "what does the manual say about
+servicing the unit in this room". `place-document` is "what does the Audimax's page say
+about access". Both end in `retrieve_documents`, which takes anchors from an earlier
+step and a query the planner wrote:
+
+```
+resolve_place -> resolve_asset_type -> assets_in_scope -> retrieve_documents   asset-document
+resolve_place -> retrieve_documents                                            place-document
+```
+
+The anchors are ids the persona can see, and nothing else:
+
+| Anchored by | The ids the filter names |
+| --- | --- |
+| assets | the assets the step found, and the types of those assets |
+| a place | the place and every visible space under it, the visible assets under it, and their types |
+
+The filter the index gets is: clearance class within the persona's, and at least one of
+the chunk's anchors among those ids. The spec words it as three clauses (clearance, scope
+matches or a type is visible in scope, an anchor in the visible set). Spelling the scope
+out as the visible ids in it folds the last two into one. It is a bit stricter in one
+corner, on purpose: a document tied to the scope only through something the persona
+cannot see does not come back, even if another of its anchors is visible elsewhere.
+
+A type only gets into those ids through a visible asset of it. So a manual anchored to
+a type is retrievable through such an asset and no other way, and a manual for
+panelboards does not exist for a visitor.
+
+The search is hybrid: keywords and the query's embedding, fused with RRF by the index.
+The query is embedded by the deployment the snapshot's manifest names, the one that
+embedded the chunks. The filter runs in the index before anything is ranked, so a
+document the persona may not read cannot take a slot and shorten the answer. The host
+checks every hit against the same filter anyway. The semantic ranker is a switch
+(`SPATIAL_SEMANTIC_RANKER`), off by default. The stand-in index has no ranker, so there
+the switch changes nothing but the trace.
+
+Summaries are searched too and never returned. A summary that matches counts for its
+document: each of that document's passages gets the summary's rank added to its own.
+If none of them was among the candidates, they are fetched. Then every summary is
+dropped, before anything leaves the tool. No summary text reaches a model, an answer,
+a citation or the trace. The trace says `via_summary` on a passage whose summary
+outranked it, and that is all.
+
+Facts and passages go to composition as two lists and are never scored against each
+other. The composer gets a passage's kind, title and text under a ref (`p1`, `p2`). It
+does not get its id, link or date. A passage ref goes in a segment's `cites`, never in
+braces, so nothing of a passage is filled in and a number still only comes from a fact.
+The digit rule holds for document segments as well, quoted or not.
+
+What the host checks of a document segment, and drops the segment for, alone, with a
+note in the trace's `dropped_segments`:
+
+- it cites a passage that was not retrieved this turn
+- it quotes a span (in double quotes) that is not in a passage it cites, word for word.
+  Whitespace is the only thing folded.
+
+If no segment citing a passage is left, the turn is an abstention, `ungrounded`.
+Whether the passage backs what a segment says is not checked here. That is entailment,
+the backend's half. Each segment therefore carries `passages`: every passage it cites
+with its full ingested English text, the spans it quoted, and how to cite it.
+
+- A translated passage is quoted in translation. `translated` and `language` say so and
+  `url` is the original's.
+- A source that was offline at build has `url: null`, with `link_status` and
+  `link_checked_on` giving the day build looked.
+- The document's date is in the trace (`trace.documents.retrieved`), next to what was
+  searched: the query, the index, how many ids the filter named, whether the semantic
+  ranker was on.
+
+Retrieval that returns nothing is a trigger, `empty-retrieval`, and buys the one
+recovery call. A second time, the turn abstains with `no-document`. A document beyond
+clearance and a document that does not exist end the same way.
+
+A turn also reports `embedding_calls`: the deployment and tokens of each query
+embedding, apart from `llm_calls`. It is paid for, but it is not one of the three model
+calls.
+
+Rough edges:
+
+- The Azure query client has never met Azure. Its request is from the REST reference
+  and the tests only pin what it sends. The semantic configuration is new on the index,
+  so an index created before this needs a reload before the ranker can be switched on.
+- For a place high in the tree the filter names every visible space and asset under
+  it. That is a long request for a whole campus. Not measured.
+- A quote cannot hold a digit, because nothing a model writes can. "Ramp 90 cm wide"
+  can be paraphrased around and not quoted.
+- The quote check is exact. A model that tidies a comma loses the segment.
+- Only double quotes count as quoting. Single quotes are not checked.
+- An empty retrieval says nothing of why, so a second plan can only guess. It mostly
+  costs a planning call and ends in `no-document`.
+- How a summary's rank is folded in is my own guess at RRF over two rankings. Not measured.
+- The real corpus has no manuals yet, so `asset-document` only finds anything on the
+  mini campus fixture.
+- Whether the composing model quotes cleanly, or the planner writes a useful query, is
+  untested. Every test stubs both.
 
 ### Follow-ups
 

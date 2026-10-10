@@ -33,6 +33,14 @@ the collapsed tree of visible spaces, the earlier questions and the names of wha
 the state still holds once it is cut down, and the composer gets references and
 kinds only. Nothing counts what was left out, so
 nothing can say so.
+
+A document answer adds a second list to composition, the passages retrieved this
+turn (retrieval.py), which the composer does get the text of: they passed the
+clearance filter. It is settled apart (_settle_documents), since a segment about a
+passage can be dropped on its own where a wrong fact rejects the whole answer.
+Each segment goes out with the full text of the passages it cites, for the
+entailment check, which is not done here. A query embedding is a paid call but
+not a model call of the turn, so it is reported in a list of its own.
 """
 
 from __future__ import annotations
