@@ -8,6 +8,10 @@ with nothing under it, or a tool that rejected its arguments, which is a trigger
 
 An asset step that finds no assets has not come up short. An empty set is a result.
 
+A step whose mention is a follow-up reference looks nothing up. It reads the
+conversation state the host handed in, already cut to what the persona can see
+(conversation.py), and comes up short the same ways: nothing, or more than one.
+
 Every step's arguments are checked before the first step runs. Checked as each
 step came up, a malformed argument in a later step would be reached only when the
 earlier ones resolved, and whether a turn buys a recovery call would then tell
@@ -29,14 +33,17 @@ from spatial_service.assets import (
     resolve_asset_type,
 )
 from spatial_service.attributes import check_filters
+from spatial_service.conversation import HOW, ConversationState, Referred, resolve
 from spatial_service.places import Outcome, Venue, check_arguments, resolve_place
 from spatial_service.plan import (
     Aggregate,
     AssetsInScope,
     Mention,
     Plan,
+    ResolveAsset,
     ResolveAssetType,
     ResolvePlace,
+    Resolving,
     Step,
 )
 from spatial_service.recovery import Trigger, TriggerKind
@@ -59,6 +66,8 @@ class StepResult:
     # What assets_in_scope found, and what aggregate made of it.
     found: ScopeResult | None = None
     aggregation: Aggregation | None = None
+    # What a follow-up reference came to, when the step's mention was one.
+    referred: Referred | None = None
 
 
 @dataclass(frozen=True)
@@ -89,7 +98,7 @@ class Execution:
         return [r for r in self.results if r.tool == tool]
 
 
-def execute(plan: Plan, venue: Venue) -> Execution:
+def execute(plan: Plan, venue: Venue, state: ConversationState | None = None) -> Execution:
     mentions = {mention.id: mention for mention in plan.mentions}
     for step in plan.steps:
         problems = _problems(step, mentions, venue)
@@ -100,7 +109,10 @@ def execute(plan: Plan, venue: Venue) -> Execution:
     done: dict[str, StepResult] = {}
     results: list[StepResult] = []
     for step in plan.steps:
-        result = _run(step, mentions, venue, done)
+        if isinstance(step, Resolving) and mentions[step.mention].refers is not None:
+            result = _refer(step, mentions, venue, state, done)
+        else:
+            result = _run(step, mentions, venue, done)
         results.append(result)
         if result.outcome is not Outcome.RESOLVED:
             break
@@ -115,6 +127,14 @@ def _problems(step: Step, mentions: dict[str, Mention], venue: Venue) -> list[st
     own attribute catalogue: an attribute only hidden assets carry is rejected the
     same as one nothing carries.
     """
+    if isinstance(step, Resolving) and mentions[step.mention].refers is not None:
+        # Its words are not looked up, so there is nothing about them to reject.
+        return []
+    if isinstance(step, ResolveAsset):
+        return [
+            f"{mentions[step.mention].text!r} is not a follow-up reference, "
+            "and an asset is found by one or not at all"
+        ]
     if isinstance(step, ResolvePlace):
         return check_arguments(mentions[step.mention].text)
     if isinstance(step, ResolveAssetType):
@@ -124,6 +144,28 @@ def _problems(step: Step, mentions: dict[str, Mention], venue: Venue) -> list[st
     if isinstance(step, AssetsInScope):
         return check_filters(venue, step.filters)
     return []
+
+
+def _refer(
+    step: ResolvePlace | ResolveAssetType | ResolveAsset,
+    mentions: dict[str, Mention],
+    venue: Venue,
+    state: ConversationState | None,
+    done: dict[str, StepResult],
+) -> StepResult:
+    """A step over a follow-up reference: what the state holds, and no lookup."""
+    # No state is a first turn, where there is nothing to point back at.
+    held = state or ConversationState(snapshot=venue.snapshot, persona=venue.persona)
+    referred = resolve(venue, held, mentions[step.mention], step.RESOLVES)
+    outcome = referred.outcome
+    if isinstance(step, ResolvePlace) and step.within is not None and referred.ids:
+        # "The second one" still has to lie where the plan said to look.
+        inside = done[step.within.step].ids
+        path = venue.spaces[referred.ids[0]].ancestor_path
+        if outcome is Outcome.RESOLVED and not any(a.id in inside for a in path):
+            outcome = Outcome.NONE
+    ids = referred.ids if outcome is referred.outcome else ()
+    return _result(step, mentions, outcome, ids, how=HOW, matched=len(ids), referred=referred)
 
 
 def _run(
@@ -146,6 +188,8 @@ def _run(
         return _result(
             step, mentions, Outcome.RESOLVED, found.ids, matched=len(found.ids), found=found
         )
+    # A step over an asset mention is a follow-up reference or is rejected, so it never gets here.
+    assert isinstance(step, Aggregate)
     source = done[step.assets.step].found
     assert source is not None
     counted = aggregate(venue, source, step.by)
@@ -162,7 +206,7 @@ def _result(
     ids: tuple[str, ...] = (),
     **rest: Any,
 ) -> StepResult:
-    mention = step.mention if isinstance(step, (ResolvePlace, ResolveAssetType)) else None
+    mention = step.mention if isinstance(step, Resolving) else None
     return StepResult(
         step=step.id,
         tool=step.tool,

@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 import fixture
-from fixture import counted, filtered, having, installed
+from fixture import counted, filtered, having, installed, where
 from spatial_core.records import PERSONAS, Persona
 from spatial_service.plan import Plan
 from test_turn import ask, repaired_by
@@ -466,3 +466,93 @@ def test_a_filtered_turn_shows_a_model_nothing_the_persona_cannot_see(persona: P
         assert fixture.BREAKER not in text
         for secret in hidden:
             assert secret not in text
+
+
+# --- filters in the conversation state ----------------------------------------------------
+
+DUE = {"attribute": "service_due", "test": "before", "date": "2026-01-01"}
+
+
+def heard(persona: str, state: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """What the planner hears of the conversation on the next turn, and that turn."""
+    seen: list[dict[str, Any]] = []
+
+    def planner(payload: dict[str, Any]) -> str:
+        seen.append(payload)
+        return where("Audimax")
+
+    turn = ask(persona, "And where is that?", planner, state=state)
+    conversation: dict[str, Any] = seen[0].get("conversation", {})
+    return conversation, turn
+
+
+def test_a_follow_up_turn_sees_the_filter_in_force() -> None:
+    first = ask(
+        "visitor",
+        "Which lights in the Audimax fall due for service before 2026?",
+        having("service_due", "before", "2026-01-01", place="Audimax", kind="lights"),
+        filtered,
+    )
+
+    # Ids in the id lists, and only there. The rest is words and a date.
+    assert first["state"]["constraints"] == [
+        {
+            "kind": "attribute-filter",
+            "turn": 1,
+            "space_ids": ["osm:way/1002"],
+            "asset_ids": [],
+            "asset_type_ids": [fixture.LIGHT_B1, fixture.LIGHT_Q4],
+            "args": DUE,
+        }
+    ]
+    conversation, second = heard("visitor", first["state"])
+    assert conversation["filters"] == [DUE]
+    # A turn that is not about assets leaves it in force.
+    assert second["kind"] == "answer"
+    assert second["state"]["constraints"] == first["state"]["constraints"]
+
+    # The next asset question sets its own, and one with no filter has none.
+    third = ask(
+        "visitor", "What is in the Audimax?", installed("Audimax"), counted, state=second["state"]
+    )
+    assert third["state"]["constraints"] == []
+    assert "filters" not in heard("visitor", third["state"])[0]
+
+
+def test_a_coverage_gap_on_an_attribute_still_leaves_the_filter_in_force() -> None:
+    turn = ask(
+        "visitor",
+        "Which lights in 50.34 room 107 have a serial number?",
+        having("serial_number", "recorded", place="50.34 room 107", kind="lights"),
+        None,
+    )
+
+    assert turn["cause"] == "coverage-gap"
+    [carried] = turn["state"]["constraints"]
+    assert carried["args"] == {"attribute": "serial_number", "test": "recorded", "date": None}
+
+
+@pytest.mark.parametrize(
+    "tampered",
+    [
+        # A type a visitor cannot see, in the id list.
+        {"asset_type_ids": [fixture.PANEL], "args": DUE},
+        # An attribute only something hidden carries, and one nothing does.
+        {"args": {"attribute": fixture.BREAKER, "test": "recorded", "date": None}},
+        {"args": {"attribute": "flux_level", "test": "recorded", "date": None}},
+        # Not a filter at all.
+        {"args": {"attribute": "serial_number", "test": "matches", "date": None}},
+    ],
+)
+def test_a_tampered_filter_in_state_never_reaches_the_planner(tampered: dict[str, Any]) -> None:
+    state = {
+        "snapshot": fixture.SNAPSHOT,
+        "persona": "visitor",
+        "turns": 1,
+        "constraints": [{"kind": "attribute-filter", "turn": 1, **tampered}],
+    }
+
+    conversation, turn = heard("visitor", state)
+
+    assert "filters" not in conversation
+    assert turn["kind"] == "answer"

@@ -9,6 +9,11 @@ Where a filter tests a value, the assets that carry no value did not fail it. Th
 are not recorded, so they get a count of their own that the answer has to name too.
 Leaving them out would let "two are due" pass for "the rest are not".
 
+The filters of the last asset question stay in the conversation state, one
+constraint each: the scope and types as ids, the filter itself as words. The next
+turn's planner hears the filters, and only those the persona's catalogue still
+vouches for.
+
 The model still writes the words around the placeholders, so the instructions tell
 it what a gap is, and an answer saying "never" is thrown out. That one word is all
 that is checked. Mostly works.
@@ -22,8 +27,12 @@ from typing import Any
 from spatial_service import attributes
 from spatial_service.assets import ScopeResult, Tally
 from spatial_service.compose import Answer, Citation, FactKind, Facts
+from spatial_service.conversation import Carried, ConversationState
 from spatial_service.places import Venue
 from spatial_service.plan import Filter, FilterTest
+
+# What a filter is called once it is in the conversation state.
+CARRIED = "attribute-filter"
 
 SERVICE_DUE_BASIS = (
     "the latest service event, or the installation date where there is none, plus a default "
@@ -106,3 +115,37 @@ def gap_text(one: Filter, scope: str | None) -> str:
     what = attributes.not_recorded(one.attribute).removeprefix("no ").removesuffix(" recorded")
     text = GAP.format(what=what, scope=scope) if scope else GAP_ANYWHERE.format(what=what)
     return text + (GAP_SERVICE_DUE if one.attribute == attributes.SERVICE_DUE else "")
+
+
+def carried(found: ScopeResult, turn: int) -> list[Carried]:
+    """``found``'s filters as constraints in force. Empty when it had none, which clears them."""
+    return [
+        Carried(
+            kind=CARRIED,
+            turn=turn,
+            space_ids=[found.scope] if found.scope is not None else [],
+            asset_type_ids=list(found.types or ()),
+            args=rate.filter.model_dump(mode="json"),
+        )
+        for rate in found.filters
+    ]
+
+
+def in_force(state: ConversationState, venue: Venue) -> list[dict[str, Any]]:
+    """The filters in force, as the planner hears them. Words and a date, never an id.
+
+    The state came back from a client. Its ids were already re-filtered, but the
+    words were not, so a filter is only passed on if it parses and its attribute is
+    in this persona's catalogue.
+    """
+    heard = []
+    for constraint in state.constraints:
+        if constraint.kind != CARRIED:
+            continue
+        try:
+            one = Filter.model_validate(constraint.args)
+        except ValueError:
+            continue
+        if not attributes.check_filters(venue, [one]):
+            heard.append(one.model_dump(mode="json"))
+    return heard

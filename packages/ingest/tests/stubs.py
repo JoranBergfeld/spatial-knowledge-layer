@@ -113,6 +113,18 @@ class OpenAI:
     def made(self, operation: str) -> list[dict[str, Any]]:
         return [body for _, called, body in self.calls if called == operation]
 
+    def chats(self, summaries: bool) -> list[dict[str, Any]]:
+        """The chat calls that asked for a summary, or the ones that asked for a translation."""
+        return [
+            body
+            for body in self.made("chat/completions")
+            if prose.asks_for_summary(body["messages"][0]["content"]) is summaries
+        ]
+
+    def summarised(self) -> list[str]:
+        """What the summariser was shown, call by call."""
+        return [body["messages"][1]["content"] for body in self.chats(summaries=True)]
+
 
 @contextmanager
 def serve_openai() -> Iterator[OpenAI]:
@@ -140,7 +152,10 @@ def serve_openai() -> Iterator[OpenAI]:
                 }
             else:
                 system, user = body["messages"]
-                english = prose.translation(user["content"])
+                if prose.asks_for_summary(system["content"]):
+                    english = prose.summary(user["content"])
+                else:
+                    english = prose.translation(user["content"])
                 answer = {
                     "model": prose.TRANSLATION_MODEL,
                     "choices": [{"message": {"role": "assistant", "content": english}}],
