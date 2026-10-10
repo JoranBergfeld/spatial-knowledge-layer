@@ -12,6 +12,10 @@ Configuration is from the environment:
     SPATIAL_PLANNING_DEPLOYMENT      the deployment that plans
     SPATIAL_COMPOSITION_DEPLOYMENT   the deployment that composes; a different one
     SPATIAL_LLM_TIMEOUT_SECONDS      optional, 30 by default
+    SPATIAL_TREE_NODE_CAP            optional: how many spaces of the collapsed tree the
+                                     planner is shown, 200 by default
+    OTEL_EXPORTER_OTLP_ENDPOINT      optional; where metrics are pushed (metrics.py).
+                                     Unset, none are.
 """
 
 from __future__ import annotations
@@ -23,8 +27,11 @@ from dataclasses import dataclass
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
+from spatial_service import metrics
 from spatial_service.llm import Deployment, Llm
+from spatial_service.metrics import Metrics
 from spatial_service.store import PostgresStore, Store
+from spatial_service.tree import NODE_CAP
 from spatial_service.turn import Turn, TurnKind, TurnRefused, TurnRequest, TurnService
 
 
@@ -41,6 +48,7 @@ class Settings:
     planning_deployment: str
     composition_deployment: str
     timeout_seconds: float
+    tree_node_cap: int = NODE_CAP
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] = os.environ) -> Settings:
@@ -65,6 +73,7 @@ class Settings:
             planning_deployment=env["SPATIAL_PLANNING_DEPLOYMENT"],
             composition_deployment=env["SPATIAL_COMPOSITION_DEPLOYMENT"],
             timeout_seconds=float(env.get("SPATIAL_LLM_TIMEOUT_SECONDS", "30")),
+            tree_node_cap=int(env.get("SPATIAL_TREE_NODE_CAP", str(NODE_CAP))),
         )
         if settings.planning_deployment == settings.composition_deployment:
             raise ConfigError("planning and composition need separate deployments")
@@ -92,8 +101,11 @@ def azure_llm(settings: Settings) -> Llm:
     )
 
 
-def create_app(store: Store, llm: Llm) -> FastAPI:
-    service = TurnService(store, llm)
+def create_app(
+    store: Store, llm: Llm, recorder: Metrics | None = None, *, tree_node_cap: int = NODE_CAP
+) -> FastAPI:
+    service = TurnService(store, llm, tree_node_cap)
+    recorder = recorder or Metrics()
     app = FastAPI(title="spatial-knowledge-layer")
 
     @app.post("/turn", response_model=Turn)
@@ -102,6 +114,8 @@ def create_app(store: Store, llm: Llm) -> FastAPI:
             taken = await service.take(request)
         except TurnRefused as refused:
             return JSONResponse(status_code=refused.status, content={"detail": str(refused)})
+        # Every turn that comes out, of any kind, is recorded here and nowhere else.
+        recorder.record(taken)
         if taken.kind is TurnKind.UNAVAILABLE:
             return JSONResponse(status_code=503, content=taken.model_dump(mode="json"))
         return taken
@@ -115,8 +129,12 @@ def main() -> None:
     settings = Settings.from_env()
     store = PostgresStore(settings.database_url)
     store.check_role()
-    uvicorn.run(
-        create_app(store, azure_llm(settings)),
-        host=os.environ.get("SPATIAL_SERVICE_HOST", "127.0.0.1"),
-        port=int(os.environ.get("SPATIAL_SERVICE_PORT", "8000")),
-    )
+    recorder = metrics.from_env()
+    try:
+        uvicorn.run(
+            create_app(store, azure_llm(settings), recorder, tree_node_cap=settings.tree_node_cap),
+            host=os.environ.get("SPATIAL_SERVICE_HOST", "127.0.0.1"),
+            port=int(os.environ.get("SPATIAL_SERVICE_PORT", "8000")),
+        )
+    finally:
+        recorder.close()

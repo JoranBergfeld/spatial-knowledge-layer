@@ -12,14 +12,14 @@ only two the service serves.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Collection, Iterable, Mapping
 from typing import Any, Protocol
 
 import psycopg
 from psycopg import sql
 from psycopg.rows import dict_row
 
-from spatial_core.records import Persona, Space, VisibleSpace
+from spatial_core.records import Asset, AssetType, Persona, Space, VisibleSpace
 from spatial_core.stores import CONTROL_SCHEMA, READER_ROLE, snapshot_schemas
 from spatial_service.places import Venue
 
@@ -47,6 +47,11 @@ class MemoryStore:
         spaces: Iterable[Space],
         visible: Iterable[VisibleSpace],
         previous: str | None = None,
+        *,
+        assets: Iterable[Asset] = (),
+        asset_types: Iterable[AssetType] = (),
+        visible_assets: Mapping[Persona, Collection[str]] | None = None,
+        visible_asset_types: Mapping[Persona, Collection[str]] | None = None,
     ) -> None:
         self.snapshot = snapshot
         self.previous = previous
@@ -54,13 +59,35 @@ class MemoryStore:
         self._visible: dict[Persona, set[str]] = {}
         for row in visible:
             self._visible.setdefault(row.persona, set()).add(row.space_id)
+        self._assets = {asset.id: asset for asset in assets}
+        self._types = {kind.id: kind for kind in asset_types}
+        self._visible_assets = visible_assets or {}
+        self._visible_types = visible_asset_types or {}
 
     def served(self) -> tuple[str | None, str | None]:
         return self.snapshot, self.previous
 
     def venue(self, snapshot: str, persona: Persona) -> Venue:
         ids = self._visible.get(persona, set())
-        return Venue(snapshot, persona, {i: s for i, s in self._spaces.items() if i in ids})
+        assets = self._visible_assets.get(persona, ())
+        types = self._visible_types.get(persona, ())
+        return Venue(
+            snapshot,
+            persona,
+            {i: s for i, s in self._spaces.items() if i in ids},
+            assets={i: a for i, a in self._assets.items() if i in assets},
+            asset_types={i: t for i, t in self._types.items() if i in types},
+            tiers=tiers_of(self._spaces.values()),
+        )
+
+
+def tiers_of(spaces: Iterable[Space]) -> tuple[str, ...]:
+    """The tiers a set of spaces carries, outermost first: by how deep each first shows up."""
+    depth: dict[str, int] = {}
+    for space in spaces:
+        tier = space.tier.value
+        depth[tier] = min(depth.get(tier, len(space.ancestor_path)), len(space.ancestor_path))
+    return tuple(sorted(depth, key=lambda tier: (depth[tier], tier)))
 
 
 class PostgresStore:
@@ -108,11 +135,27 @@ class PostgresStore:
 
     def _read_venue(self, snapshot: str, persona: Persona) -> Venue:
         views = snapshot_schemas(snapshot).views
+        names = {"views": sql.Identifier(views)}
         query = sql.SQL(
             "SELECT space.* FROM {views}.spaces space"
             " JOIN {views}.visible_spaces visible ON visible.space_id = space.id"
             " WHERE visible.persona = %s"
-        ).format(views=sql.Identifier(views))
+        ).format(**names)
+        assets_query = sql.SQL(
+            "SELECT asset.* FROM {views}.assets asset"
+            " JOIN {views}.visible_assets visible ON visible.asset_id = asset.id"
+            " WHERE visible.persona = %s"
+        ).format(**names)
+        types_query = sql.SQL(
+            "SELECT kind.* FROM {views}.asset_types kind"
+            " JOIN {views}.visible_asset_types visible ON visible.type_id = kind.id"
+            " WHERE visible.persona = %s"
+        ).format(**names)
+        # Tier words only, over every space: see Venue.tiers.
+        tiers_query = sql.SQL(
+            "SELECT tier->>'value' AS tier, min(jsonb_array_length(ancestor_path)) AS depth"
+            " FROM {views}.spaces GROUP BY 1 ORDER BY 2, 1"
+        ).format(**names)
         with self._connect() as conn:
             loaded = conn.execute(
                 "SELECT status FROM control.snapshots WHERE snapshot = %s", (snapshot,)
@@ -120,5 +163,17 @@ class PostgresStore:
             if loaded is None or loaded["status"] != "loaded":
                 raise StoreError(f"{snapshot} is not a loaded snapshot")
             rows = conn.execute(query, (persona.value,)).fetchall()
+            asset_rows = conn.execute(assets_query, (persona.value,)).fetchall()
+            type_rows = conn.execute(types_query, (persona.value,)).fetchall()
+            tier_rows = conn.execute(tiers_query).fetchall()
         spaces = [Space.model_validate(row) for row in rows]
-        return Venue(snapshot, persona, {space.id: space for space in spaces})
+        assets = [Asset.model_validate(row) for row in asset_rows]
+        types = [AssetType.model_validate(row) for row in type_rows]
+        return Venue(
+            snapshot,
+            persona,
+            {space.id: space for space in spaces},
+            assets={asset.id: asset for asset in assets},
+            asset_types={kind.id: kind for kind in types},
+            tiers=tuple(row["tier"] for row in tier_rows),
+        )

@@ -7,8 +7,9 @@ Campus Süd, from OpenStreetMap.
 Ingestion runs here: `ingest build` turns a pinned OpenStreetMap pull and a document
 corpus into a snapshot bundle holding the venue's structure, its equipment and its
 prose, `ingest load` writes a bundle into Postgres and a search index and checks both,
-and `ingest promote` makes a loaded snapshot current. The service answers one kind of
-question so far, "where is room X". Nothing retrieves the documents yet.
+and `ingest promote` makes a loaded snapshot current. The service answers three kinds
+of question so far: where a place is, what is installed in one, and which floor or
+building has the most of something. Nothing retrieves the documents yet.
 
 The spec and the glossary live in the site's repository
 ([spec](https://github.com/JoranBergfeld/personal-website/issues/73), `CONTEXT.md`).
@@ -344,31 +345,63 @@ AZURE_OPENAI_API_VERSION         optional, 2024-10-21 by default
 SPATIAL_PLANNING_DEPLOYMENT      the deployment that plans
 SPATIAL_COMPOSITION_DEPLOYMENT   the deployment that composes, which must be a different one
 SPATIAL_LLM_TIMEOUT_SECONDS      optional, 30 by default
+SPATIAL_TREE_NODE_CAP            optional, 200 by default: how much of the tree the planner sees
+OTEL_EXPORTER_OTLP_ENDPOINT      optional; where metrics are pushed. Unset, none are
 ```
+
+### Metrics
+
+The service says how it is used, not who uses it
+(`packages/service/src/spatial_service/metrics.py`). Three counters, each a count of
+turns, pushed over OTLP/HTTP to `OTEL_EXPORTER_OTLP_ENDPOINT` plus `/v1/metrics`:
+
+```
+spatial.turns            every turn
+spatial.repair_calls     turns that spent a recovery call, repaired or not
+spatial.coverage_gaps    turns that ended in a coverage-gap abstention
+```
+
+The repair-call rate is `spatial.repair_calls` over `spatial.turns`, worked out wherever
+the metrics land. Every point has the same four labels: `shape`, `persona`, `turn_kind`
+and `snapshot`. There is no visitor, conversation, space or asset id, and a test holds
+the set to those four.
+
+- `shape` is `unknown` when no plan got as far as running, which covers a model that
+  could not be reached.
+- `turn_kind` is the turn's kind, except that a coverage-gap abstention is
+  `coverage-gap` here and not `abstention`. A scope with no recorded installations is
+  the one thing that produces it so far.
+- A request the service refuses (409, 503 with no snapshot) is not a turn and is not
+  counted.
+- Headers, timeout and the export interval come from the usual `OTEL_` variables, 60
+  seconds between pushes by default. `OTEL_SERVICE_NAME` overrides `spatial-service`.
+- With no endpoint the OTel SDK is never loaded and recording does nothing.
 
 A turn is three stages, plus a fourth only when the plan cannot run. A turn makes at
 most three model calls however many steps run (plan, recover, compose), and the host
 enforces that cap rather than trusting the flow to keep it:
 
 - **Plan.** The planning deployment returns a plan (`packages/service/src/spatial_service/plan.py`):
-  the question's shape, the place mentions in it, `within` constraints between them,
-  and a flat ordered list of typed tool steps. A step may work within the ids an
-  earlier step produced. The plan is checked in code before any tool runs. Persona and
-  snapshot are not arguments a plan can carry: the host binds them.
-- **Execute.** The steps run in order with no model call between them. The one tool,
-  `resolve_place`, only ever sees the persona's visible set in that snapshot. It tries
-  an exact label, then a building and room number parsed the way `room-label@1` builds
-  labels ("50.34 room 107", "50.34/107", "room 107 in 50.34"), then a number alone,
-  then the words of a name. Spaces without a label are never answers.
+  the question's shape, the place and asset-type mentions in it, `within` constraints
+  between places, and a flat ordered list of typed tool steps. A step may work within
+  the ids an earlier step produced. The plan is checked in code before any tool runs.
+  Persona and snapshot are not arguments a plan can carry: the host binds them. The
+  planner is shown the collapsed tree (below), not the venue.
+- **Execute.** The steps run in order with no model call between them. Every tool only
+  ever sees the persona's visible set in that snapshot. `resolve_place` tries an exact
+  label, then a building and room number parsed the way `room-label@1` builds labels
+  ("50.34 room 107", "50.34/107", "room 107 in 50.34"), then a number alone, then the
+  words of a name. Spaces without a label are never answers. The asset tools are below.
 - **Recover.** Only on a typed trigger (`packages/service/src/spatial_service/recovery.py`),
   the planning deployment is handed its plan back with the trigger and its reasons, and
   writes a second. That one is checked and run exactly like the first. There is no
   third: a second trigger ends the turn in the clarification still pending, if one is,
   and otherwise in a `plan-rejected` abstention.
 - **Compose.** The composing deployment is told the facts by reference (`{f1}`, `{f2}`)
-  with their tiers, never their labels or ids. It returns segments that cite them; the
-  host fills each placeholder from its fact. Output with a digit anywhere outside a
-  placeholder is rejected whole.
+  with their kinds, never their labels, names, numbers or ids. It returns segments that
+  cite them; the host fills each placeholder from its fact. Output with a digit anywhere
+  outside a placeholder is rejected whole, and so is an answer that leaves out a fact
+  it has to name.
 
 The triggers, and nothing else, buy a recovery call:
 
@@ -377,34 +410,101 @@ The triggers, and nothing else, buy a recovery call:
 | `plan-invalid` | The plan does not parse, or breaks a rule: the step cap, a repeated id, a step feeding nothing. |
 | `unbound-reference` | A reference binds to nothing: a step resolving a mention the plan lacks, or reading a step that is not earlier or whose output it cannot take. It wins over `plan-invalid`, since a dangling reference breaks other rules in its wake. |
 | `empty-retrieval` | Document retrieval returned nothing. Nothing retrieves documents yet, so nothing raises it so far. |
-| `malformed-arguments` | A tool rejected its arguments, such as a mention with nothing to look up once normalised. |
+| `malformed-arguments` | A tool rejected its arguments, such as a mention with nothing to look up once normalised, or a scale level the snapshot has no tier for. |
 
-Outcomes that are answers never buy a call: no visible place matching (which is also
-what a place beyond clearance looks like), several matching, a question of an
-unsupported shape. Every step's arguments are checked before the first step runs. Were
+Outcomes that are answers never buy a call: no visible place or asset type matching
+(which is also what one beyond clearance looks like), several places matching, nothing
+installed in scope, a question of a shape the layer declines. Every step's arguments are checked before the first step runs. Were
 they checked as each step came up, a bad later step would be reached only when the
 earlier ones resolved, and the recovery call would tell what the persona can see.
 
-**The step cap is four.** The one supported shape needs a step per place mention, and
-the longest chain worth reading in one question is three deep ("room 107 on level 1 of
-50.34"), plus one to spare. A plan over the cap is rejected, not truncated, since a
-shortened plan answers a different question.
+**The step cap is six.** The longest place chain worth reading in one question is
+three deep ("room 107 on level 1 of 50.34"), then a type, the assets and a count over
+them. A plan over the cap is rejected, not truncated, since a shortened plan answers a
+different question.
+
+### Assets
+
+Three question shapes run on four tools. `place-location` is "where is room X".
+`asset-containment` is "what is installed in room X" and "where are the lights on floor
+2". `asset-aggregation` is "which floor has the most lights".
+
+| Tool | What it does |
+| --- | --- |
+| `resolve_place` | One place a mention names. As above. |
+| `resolve_asset_type` | The visible asset types a mention names: an exact name, else every word of the mention in a type's name ("lights" is every type of light). A set, so nobody is asked which. |
+| `assets_in_scope` | Every visible asset under one scope node, or under the whole venue, of the given types if any. One step and one pass over ancestor paths, however many spaces lie under the scope. No call per space. |
+| `aggregate` | Those assets counted per space of one tier under the scope. |
+
+A scale level named in the question sets two things. The place it names is the scope
+("the Informatik building"), and the tier it compares across is the grouping ("which
+floor"). The tiers are the snapshot's own, so `aggregate` takes whatever the venue has.
+
+Aggregation walks containment only. An asset counts under the spaces on its ancestor
+path, so one in a stairwell covering three floors counts once, on the floor the
+stairwell hangs from. The service never reads `spans` for a count.
+
+Counts cover what the persona can see and nothing else. The tools are handed a venue
+already cut to the visible set, so a hidden asset is not filtered out of a result, it
+was never in it. Nothing counts what was left out, so no answer can mention it. Ask the
+same question as visitor and as maintenance and the numbers differ, that is all.
+
+A count is never one number over sourced and generated assets. Every tally keeps the
+two apart, and there is no fact for their sum, so the composing model has nothing to
+print it from. A generated count fills in as "3 generated" and a sourced one beside it
+as "1 sourced". The host writes those words, not the model. An answer that names one
+half of a split count without the other is rejected.
+
+No recorded installations is not zero. A scope with nothing visible installed in it at
+all is a `coverage-gap` abstention, worded by the host, with no composition call. In a count
+across floors, a floor with nothing recorded is listed apart and never ranked, and the
+answer has to name it. A floor with other things installed and none of the type asked
+for is a zero, and is ranked.
+
+An asset without a placement reads as `position not recorded` in the trace, and the
+answer can say how many of the assets it found have none. A placement is never printed
+as coordinates, anywhere.
+
+A question that needs one step's result to choose the next ("what is in the room with
+the most lights") is its own shape, `step-dependent`, and gets an abstention. The plan
+schema could not run it anyway: nothing reads what `aggregate` produces.
+
+### The collapsed tree
+
+The planner is shown the top of the containment tree: labels and tiers of the spaces
+the persona can see, cut by code at the deepest level where everything down to it still
+fits under `SPATIAL_TREE_NODE_CAP` spaces. What lies below the cut is given as counts
+per tier. The model never expands it. A plan names a scope in words and the tools look
+under it.
+
+The depth is measured every turn and recorded in the trace under `tree`: the depth of
+the cut, the depth of the whole visible tree, and how many spaces each has. On the test
+fixture (12 spaces for a visitor) the default cap shows all four levels and a cap of 8
+cuts it at the floors. It has not been measured on the real campus yet, since there is
+no bundle to hand here. 200 is a guess until then. With a few hundred buildings it will
+most likely cut at the buildings or above.
 
 A turn is one of four kinds:
 
 | Kind | When |
 | --- | --- |
-| `answer` | Every step resolved one place and the composition passed its checks. |
+| `answer` | Every step found what it needed and the composition passed its checks. |
 | `clarification` | A step matched several places, or the mention was a bare room number, which is never a label. The candidates are all visible to the persona, at most six. The state carries them, and the next turn's planner sees their labels. |
-| `abstention` | `no-such-place` when nothing the persona can see matches. A place beyond clearance and a place that does not exist give the same abstention, and the same trace but for the words asked. Also `unsupported-question`, `plan-rejected` and `composition-rejected`. |
+| `abstention` | `no-such-place` when nothing the persona can see matches. A place beyond clearance and a place that does not exist give the same abstention, and the same trace but for the words asked. `no-such-asset-type` is the same for a type. Also `nothing-at-scale-level`, `step-dependent-question`, `unsupported-question`, `plan-rejected` and `composition-rejected`. And `coverage-gap`, with the turn's `gap` saying which: so far only `no-recorded-installations`, when nothing the persona can see is installed in the scope asked about. A gap in the data, not a count of zero. |
 | `unavailable` | A model could not be reached. HTTP 503, no answer, and the prior state back unchanged. |
 
 Every turn carries its trace, the new conversation state, each model call's token usage
 with the deployment that served it, and `recovery`: `not-needed`, `repaired` or
 `unrepaired`, so the repair rate is a count over turns. A second plan that calls the
 question unsupported runs nothing, so it counts as `unrepaired`. The trace holds the shape, the
-step and call caps, what was resolved and how, the provenance of every label in the
-answer, and any authored default clearance among them, and under `plans` each version
+step and call caps, the tree's measure, what was resolved and how, the provenance of
+every label in the answer, and any authored default clearance among them. For an asset
+question it holds the types asked for with the rule that cleared them, and under
+`assets` the scope, the grouping, the rows as numbers, and every asset touched with
+both provenance fields: record provenance, and the value provenance of its name and
+placement with the rule or basis. Assets are listed one by one up to 200. Past that
+they are still all accounted for, by provenance class, and the steps carry every id.
+Under `plans` it holds each version
 of the plan: as the model wrote it, its verdict and reasons, each step it ran with its
 result ids, the trigger it raised, and for the second version its changes against the
 first as JSON Pointer paths. Steps and mentions are matched by id, so one added or
@@ -412,10 +512,22 @@ dropped at the front shows as one change.
 
 A conversation keeps the persona and snapshot it began with, and is refused once its
 snapshot is neither current nor previous. State a client sends back is cut down to what
-the persona can see before anything reads it.
+the persona can see before anything reads it. It holds the place and the asset types the
+last answer was about.
 
-Still to come: one question shape, one tool, and clarifications and abstentions are
-worded by the host rather than composed.
+Rough or not done yet on the asset side:
+
+- Asset types match on the words of their name, with a trailing "s" folded off. "AC
+  units" finds "AC Unit Type 1". "Air conditioners" finds nothing, and neither does any
+  synonym. The planner is not shown the type names either.
+- A space with no label cannot be named, so it cannot win "which has the most". Its
+  count is in the trace and the answer gets one row for everything in unlabelled spaces.
+- An answer spells out twelve rows and counts the rest.
+- A campus-wide question puts every asset id in the trace's step. That is a lot of ids.
+- Nothing uses an asset's placement yet beyond saying whether it is recorded.
+- Clarifications, abstentions and coverage gaps are worded by the host, not composed.
+- The plan schema is a plain union of step types, because strict structured output
+  refuses `oneOf`. Whether the real deployment takes it has not been tried.
 
 ## Develop
 
