@@ -37,15 +37,21 @@ CREATE TABLE IF NOT EXISTS control.snapshots (
     manifest     jsonb,
     loaded_at    timestamptz NOT NULL
 );
+-- The search index holding the snapshot's document chunks.
+ALTER TABLE control.snapshots ADD COLUMN IF NOT EXISTS search_index text;
 
 -- The current-snapshot pointer: exactly one row. Promotion is one update of it,
--- and the snapshot it replaces becomes the previous one, which load keeps.
+-- and the snapshot it replaces becomes the previous one, which load keeps. The
+-- row names the snapshot, whose row above names the schema pair, and the search
+-- index beside it, for the current one and the previous one alike.
 CREATE TABLE IF NOT EXISTS control.current_snapshot (
     singleton   boolean PRIMARY KEY DEFAULT true CHECK (singleton),
     snapshot    date REFERENCES control.snapshots,
     previous    date REFERENCES control.snapshots,
     promoted_at timestamptz
 );
+ALTER TABLE control.current_snapshot ADD COLUMN IF NOT EXISTS search_index text;
+ALTER TABLE control.current_snapshot ADD COLUMN IF NOT EXISTS previous_search_index text;
 INSERT INTO control.current_snapshot (singleton) VALUES (true) ON CONFLICT DO NOTHING;
 
 GRANT SELECT ON control.snapshots, control.current_snapshot TO {reader};
