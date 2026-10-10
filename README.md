@@ -176,7 +176,7 @@ SPATIAL_EMBEDDING_DEPLOYMENT     embeds the chunks. The RAG pipeline's, for now
 | `text-from-source@1` | The text of an HTML page, a PDF or a plain text file. HTML keeps what a reader sees, one line per block element. Where the corpus names two markers, only what lies between them is read, which keeps navigation and footers out. |
 | `chunk-by-paragraph@1` | Whole paragraphs packed into passages of at most 1200 characters. A longer paragraph is cut at line ends, then sentence ends. |
 | `translate-to-english@1` | A passage that is not English is translated by the composition deployment. This is the prompt's version, not a rule: the words are in `models.py`, and the manifest records the deployment, the model and this version for every translated document. |
-| `numbers-in-words@1` | In the English text, a clock time ("16:30" is "sixteen thirty"), a floor ordinal ("2nd floor" is "second floor", "floor 2" is "floor two") and a small standalone count up to twenty ("2 steps" is "two steps") are written out. A measured value with its unit stays as digits ("90 cm", "37.1 MHz", "5 minutes"), and so does a number that names something ("room 7", "channel 2", "10.11"). |
+| `numbers-in-words@1` | In the English text, a clock time ("16:30" is "sixteen thirty", and both ends of "8:00-16:00"), a floor ordinal ("2nd floor" is "second floor", "floor 2" is "floor two") and a small standalone count up to twenty ("2 steps" is "two steps") are written out. A measured value with its unit stays as digits ("90 cm", "37.1 MHz", "5 minutes", "5 psi", "2 ft"), and so does a number that names something ("room 7", "channel 2", "10.11"). |
 | `date-from-last-change@1` | A page's document date is the day its own "letzte Änderung:" line says. No line, no date: the document is undated. Manuals are never dated. The day it was fetched is never its date. |
 | `document-clearance@1` | A document's clearance class is its strictest anchor's. A manual shared by several types takes the least restrictive of those types first. An anchor with no clearance of its own (an untagged building) limits nothing. It lives in `packages/core`, with the other clearance rules. |
 
@@ -287,8 +287,12 @@ then writes, then checks what it wrote:
   through a visible asset
 - the visible assets and the visible asset types nest, like the spaces
 - each table holds as many rows as the manifest says
+- every chunk belongs to a document of the bundle and carries that document's anchors,
+  no more and no fewer
 - every chunk is anchored to spaces, types and assets of the snapshot
-- every chunk's clearance class is its strictest anchor's, by `document-clearance@1`
+- every chunk's clearance class is its strictest anchor's, by `document-clearance@1`,
+  worked out from the document's anchors and not from the chunk's own id lists. A chunk
+  that dropped its strictest anchor and filed itself lower used to agree with itself
 - every chunk's ancestor ids are its space and asset anchors' paths
 - every summary was built from passages of its own document and its own clearance class
 - every document in the index has exactly one summary, and it is one the bundle recorded
@@ -326,6 +330,8 @@ gets a room wrong is fixed by changing the rule.
 
 Every derived value in a bundle names the rule that made it. The rules are plain
 functions under `packages/ingest/src/spatial_ingest/rules/`, each with its own tests.
+The two crossable rules are in `packages/core/src/spatial_core/circulation.py`, since
+the service runs them.
 
 | Rule | What it does |
 | --- | --- |
@@ -340,9 +346,10 @@ functions under `packages/ingest/src/spatial_ingest/rules/`, each with its own t
 | `clearance-authored-default@1` | Untagged corridors and areas, and untagged rooms of a public function (toilets, auditorium, classroom, seminar room, hall, library, stairs, elevator, entrance), are visitor. Any other untagged room is staff. Flagged as an authored default, and never over a tag. Doors and spaces above the room tier get no default. |
 | `edge-clearance@1` | An edge takes the stricter of its door's tag and the clearance of the space it enters. An untagged door constrains nothing. |
 | `visible-by-edges@1` | A space is visible to a persona when an edge it clears enters the space, or, with no edge entering, by the space's own clearance. Its ancestors are visible with it. Only edges through a door count. A snap shows nobody anything. |
-| `snap-doorless-room@1` | A room-tier space with no door at all is joined to the nearest circulation space on a level they share, if their outlines come within 2 m. Two edges with no door, derived, for routes only. It joins a room to circulation, never two rooms through a wall. |
+| `snap-doorless-room@1` | An `indoor=room` with no door at all is joined to the nearest circulation space on a level they share, if their outlines come within 2 m. Two edges with no door, derived, for routes only. It joins a room to circulation, never two rooms through a wall. Rooms only: a corridor or an area with no door stays as mapped. |
+| `snap-open-space-point@1` | A route destination that is a point in open space (a hydrant on the site) is taken to mean the nearest place a route can reach within 5 m. Derived, and flagged in the route with how far the point was moved. Worked out by the service per route, not stored. |
 | `crossable-by-tags@1` | What a route may pass through by sourced tags: corridors and areas, stairs and lifts, footways, and rooms tagged hall, lobby, entrance, foyer or corridor. Also what a doorless room may snap to. |
-| `crossable-by-door-count@1` | An `indoor=room` with no `room`, `amenity` or `office` tag and three or more doors may be passed through too. Derived, and flagged in every route that uses one, since it may still be an office. Worked out by the service from the edges, not stored. |
+| `crossable-by-door-count@1` | An `indoor=room` with no `room`, `amenity` or `office` tag and three or more doors may be passed through too. Derived, and flagged in every route that uses one, since it may still be an office. Worked out by the service from the persona's own edges, not stored: a door they may not take is not counted, so the same room can be a way through for staff and not for a visitor. |
 | `strip-person-names@1` | Removes academic titles with the name after them, and the capitalised words after Büro, Sekretariat, Labor or AG. Runs over names and descriptions. Rooms named after someone are left alone. |
 
 Things that are rough or just not done yet:
@@ -364,7 +371,8 @@ Things that are rough or just not done yet:
   a room: only about a third of the hall names match an OSM room name.
 - A document's title is the corpus's and stays in the original language.
 - `numbers-in-words` works off lists of units and label words. A unit that is missing
-  gets its number written out. It also leaves a count alone when the sentence before
+  gets its number written out. "in" for inches is missing on purpose, since "2 in the
+  lobby" is a count. It also leaves a count alone when the sentence before
   it ended in a full stop ("Mind the stairs. 2 of them are loose"), since that looks
   like an abbreviation.
 - If a model call fails midway, the build stops and the translations and summaries it
@@ -384,7 +392,8 @@ Things that are rough or just not done yet:
   level in a route, so a stair door mapped without one makes the climb free.
 - The snap only helps a room with no door at all. A room with one mapped door and a
   second unmapped opening gets nothing, and two corridor polygons that meet without a
-  door node stay apart unless one of them has no door anywhere.
+  door node stay apart, always. The spec says doorless rooms only. On a campus mapped
+  with few doors that will leave holes in the graph. Not measured.
 - The footways between buildings are in the pull and make no spaces, so there is no
   graph outdoors. No route crosses from one building to another yet.
 - The default origin is a door node typed into the venue definition (`default_origin`).
@@ -394,8 +403,9 @@ Things that are rough or just not done yet:
 ## The service
 
 One operation, `POST /turn`, plus `GET /eval` for the last evaluation run's figures
-(see "Evaluation runs and the eval snapshot"). `POST /turn` It takes a persona, a snapshot (none means the current
-one), the conversation's prior state and a question, and returns a turn:
+(see "Evaluation runs and the eval snapshot"). `POST /turn` takes a persona, a snapshot
+(none means the current one), the conversation's prior state and a question, and returns
+a turn:
 
 ```
 {"persona": "visitor", "snapshot": null, "state": null, "question": "Where is 50.34 room 107?"}
@@ -652,8 +662,9 @@ did not fit it.
 
 **What a route may cross.** Circulation by its sourced tags, plus an untagged room
 with three or more doors, which is flagged `derived` in the route wherever one is
-used. A room with a function that is not circulation is never crossed, three doors or
-not. The rooms a route starts and ends in are always enterable. A doorless room is
+used. Only doors the persona may take count. A door into a room they cannot see is
+not theirs, so it cannot turn a room into a way through for them. A room with a
+function that is not circulation is never crossed, three doors or not. The rooms a route starts and ends in are always enterable. A doorless room is
 reached by its snap, flagged too.
 
 **A destination is places before anything is routed.**
@@ -677,10 +688,10 @@ origin, one entrance shared by every persona.
 
 **No route is one abstention.** `no-route`, with the same words, whether a restricted
 corridor is in the way, the crossing rule stopped it, the mapping has a gap, the
-venue names no default origin or the destination came to no place. The trace gives a
-reason only where it cannot be clearance: no default origin, no destination, or a
-route that exists with stairs and not without. A place the persona cannot see never
-gets that far. It is `no-such-place`, as everywhere else.
+venue names no default origin, the destination came to no place or the only way is
+by stairs and step-free was asked for. The trace gives no reason either. It says the
+step found nothing and stops. A place the persona cannot see never gets that far. It
+is `no-such-place`, as everywhere else.
 
 **A plan holds at most two route steps, each with at most three alternatives.** Over
 either and the plan is rejected.
@@ -781,14 +792,22 @@ step and a query the planner wrote:
 
 ```
 resolve_place -> resolve_asset_type -> assets_in_scope -> retrieve_documents   asset-document
+resolve_asset -> retrieve_documents                                            asset-document
 resolve_place -> retrieve_documents                                            place-document
 ```
+
+The second one is the follow-up: "what does its manual say", about the one asset an
+earlier turn found. `resolve_asset` reads conversation state, so an asset the persona
+cannot see is not there to point at and the turn ends in `nothing-referred-to` before
+anything is searched. The answer opens with the asset's room and a count of one, like
+any asset-document answer. It reads stiff.
 
 The anchors are ids the persona can see, and nothing else:
 
 | Anchored by | The ids the filter names |
 | --- | --- |
 | assets | the assets the step found, and the types of those assets |
+| one asset | that asset and its type |
 | a place | the place and every visible space under it, the visible assets under it, and their types |
 
 The filter the index gets is: clearance class within the persona's, and at least one of
@@ -884,7 +903,7 @@ new one goes back out. It holds:
 | `since` | For each of those three, the turn that set it. |
 | `constraints` | The constraints in force: one per attribute filter of the last asset question, kind `attribute-filter`. Scope and types as ids, the filter (attribute, test, date) in `args`. An asset question replaces them, with none if it had no filter. Any other turn leaves them. The next planner hears them as `conversation.filters`, minus any whose attribute is not in the persona's catalogue. |
 | `route` | The last route, kind `route`: its ends as space ids, origin first, and `step_free` in `args`. A default origin is not an id, so then only the destination is there and `args.default_origin` is true. Seconds and metres are not carried, a follow-up routes again. The next planner hears it as `conversation.last_route`, by name. A route answer replaces it, any other turn leaves it. |
-| `pending` | The candidates a clarification offered, their kind (place or asset) and the turn that offered them. |
+| `pending` | The candidates a clarification offered, their kind (place or asset) and the turn that offered them. Its `mention`, the words that were ambiguous, is capped at 200 characters like a plan's own mention. Longer and the request is refused. |
 
 A turn that resolves nothing for a slot leaves it alone. So a third question can reach
 back past the second, and the trace says which turn it reached.
@@ -1031,12 +1050,18 @@ runs three things:
   looks for names only hidden things carry, and attributes only hidden assets carry. No
   model input here carries an id today, so ids alone would pass a service that showed a
   visitor the whole building by label. What the asker typed themselves does not count.
-- **Counterfactual leak check.** The bundle is copied twice: once with every restricted
-  asset and document removed, once with more of them added (every restricted asset and
-  document doubled, restricted types dropped into rooms a visitor walks through, and a
-  restricted twin of every document a visitor can read). Each copy is loaded into its
-  own stores and the visitor's questions are asked again. Every turn has to come back
-  identical, whole, not just in kind, ids and numbers.
+  It runs under all three personas. Gold is paired for the visitor and the technician,
+  so staff are asked the same words with no gold behind them. A leak check needs none.
+- **Counterfactual leak check.** The bundle is copied twice. Once with everything
+  restricted removed: every space a visitor cannot see, every edge they may not take,
+  every restricted asset and document. Once with more added: every restricted asset and
+  document doubled, restricted types dropped into rooms a visitor walks through, a
+  restricted twin of every document a visitor can read, and a hidden room behind three
+  new doors next to rooms a visitor walks through. Each copy is loaded into its own
+  stores and the visitor's questions are asked again. Every turn has to come back
+  identical, whole, not just in kind, ids and numbers. On a venue with edges it also
+  asks the visitor the way to up to 25 rooms they can see, on the bundle and on each
+  copy. Routes have no gold, but this check only needs a turn to stay the same.
 
 Each passes or fails. CI runs gold generation, the load invariants and all three on the
 hand-made handover, and a failure fails the build.
@@ -1058,9 +1083,16 @@ Rough here:
 - Gold only asks with words that name one thing: a label nothing else shares, a building
   and room number, a type's full name. Loose wording is for the hand-written questions,
   which do not exist yet.
-- An attribute whose name is not plain words (`fire_extinguisher:type`, straight from an
-  OSM tag) is in the catalogue and shown to the planner, but no plan can name it: the
-  filter's pattern refuses the colon. Gold skips those. Found by the regression, not fixed.
+- An attribute named like an OSM tag (`fire_extinguisher:type`) can be filtered on now:
+  the filter's pattern takes the colon. Gold still skips those names, so only a service
+  test covers it.
+- The counterfactual check missed a real defect once: a door into a hidden room counted
+  towards making a visible room crossable. It varied assets and documents only, and it
+  asked no route. It does both now. The test bench has no edges though, so on the bench
+  the route probes ask nothing. They only bite on a venue with doors, which here means
+  the mini campus and a hand-drawn building in the tests.
+- Staff turns are only held to the input leak check. No gold, so no tool correctness
+  and no counterfactual for them.
 - `within` (a place's enclosing spaces) is in gold and not compared. The trace does not
   carry a place's ancestors, only the composer's facts do, so there is nothing to compare
   with short of adding them to the trace.
@@ -1110,7 +1142,9 @@ The ceiling is what actually holds. Before every turn the run checks that what i
 spent, plus the dearest turn so far (or the estimate's turn, if that is more), still fits.
 If not it stops, exits 3, writes its report and writes no eval snapshot: figures over the
 questions it happened to reach are not figures over the question set. It also gives up
-after five turns in a row with no model or no index behind them. One turn much dearer
+after five turns in a row with no model or no index behind them, and on the first turn
+that calls a deployment with no rate. That turn is counted and scored, its unpriced
+calls are listed in the report with no cost, and nothing more is asked. One turn much dearer
 than every turn before it could still overshoot by the difference. Search request units
 (the semantic ranker's) are not costed at all.
 
@@ -1124,8 +1158,9 @@ model judges anything.
   what the persona can see. That last one is also reported as a figure of its own.
 - **Retrieval.** Recall@5 and MRR of the documents gold says the question is after, over
   the documents retrieved, in rank order. Only questions that are after a document count.
-- **Composition.** Every number in the composed text is a count a citation carries, and
-  every segment that cites a passage is entailed by it.
+- **Composition.** Every number in the composed text is the number of a fact its segment
+  cites (a count, a route's seconds, its metres), and every segment that cites a passage
+  is entailed by it.
 
 An answer is correct only when all three hold and the turn kind is the expected one.
 Each question is scored against its own persona's gold, and the figures are given per
@@ -1134,6 +1169,15 @@ persona as well.
 Results include a confusion matrix, expected turn kind against the kind produced.
 Answered-when-it-should-have-declined (gold says abstention or coverage gap, the layer
 answered) is counted on its own and should be zero.
+
+Those two do not read the same thing, on purpose:
+
+- The matrix is over what the site would send, after the NLI drop. An answer whose
+  document segments the NLI model all drops is an abstention there.
+- Answered-when-it-should-have-declined is over what the layer produced, before the NLI
+  drop. The layer answered. The backend catching it afterwards does not undo that.
+
+The run report has both kinds per question, `produced` and `layer_produced`.
 
 Entailment uses the NLI model the site's backend runs,
 `MoritzLaurer/DeBERTa-v3-large-mnli-fever-anli-ling-wanli` as fp32 ONNX, with the same
@@ -1146,9 +1190,10 @@ Decided here, since the spec does not say:
 
 - Retrieval holds for a question when every document it is after is in the top five.
 - A segment that cites several passages is scored against each and keeps its best score.
-- The kind produced is what the site would send. The backend drops segments the NLI
-  model does not back and abstains when none is left, so an answer whose document
-  segments all fail is an abstention in the matrix.
+- The kind produced, in the matrix, is what the site would send. The backend drops
+  segments the NLI model does not back and abstains when none is left, so an answer
+  whose document segments all fail is an abstention there. See above for the one
+  figure that reads the layer's own kind instead.
 - The run id is the date plus eight random hex digits.
 
 #### Hand-written questions
@@ -1172,11 +1217,16 @@ snapshot.
 
 #### What a run writes
 
-Two files in `--out`:
+Three files in `--out`:
 
 - `run-<id>.json` (`spatial-eval-run@1`): the owner's copy. Every question with its
   stages, the estimate, the spend, the adoption rules. Gold ids are in the mismatches,
   so do not publish it.
+- `segments-<id>.jsonl`: every segment the NLI model scored, one a line, with the full
+  text of each passage it cites, the score against each, the best score and whether it
+  was kept. It is there so a person can label segments and check the NLI model by hand.
+  Private: it holds passage text of every clearance class, it is written readable by
+  the owner only, and none of it goes into the eval snapshot or the metrics.
 - `eval-snapshot.json` (`spatial-eval@1`): what the site reads. Only written when the run
   got through every question.
 
@@ -1187,8 +1237,9 @@ you. The eval snapshot has no money in it.
 
 The confusion matrix is also pushed as a metric, `spatial.eval.turns`, to
 `OTEL_EXPORTER_OTLP_ENDPOINT` when that is set. Labels: `run_id`, `snapshot`,
-`planning_deployment`, `composition_deployment`, `question_set`, `expected_turn_kind`,
-`turn_kind`. It is a series of its own and never adds to the live `spatial.turns`.
+`planning_deployment`, `composition_deployment`, `embedding_deployment` ("none" for a
+keyword-only run), `nli_deployment`, `question_set`, `expected_turn_kind`, `turn_kind`.
+It is a series of its own and never adds to the live `spatial.turns`.
 
 #### The eval snapshot
 
@@ -1228,8 +1279,10 @@ stages.tools               a figure
 stages.retrieval           recall_at_5 and mrr, a figure each
 stages.composition         holds, numbers and entailment (over segments), a figure each
 turn_kinds.matrix          {expected kind: {produced kind: count}}, {} when n is 0.
-                           Produced kinds are the four plus "unavailable"
-turn_kinds.answered_when_it_should_have_declined   {count, of}
+                           Produced kinds are the four plus "unavailable", as the
+                           site would send them, after the NLI drop
+turn_kinds.answered_when_it_should_have_declined   {count, of}, on what the layer
+                           produced, before the NLI drop
 clarification_candidates   a figure
 by_persona                 {persona: figure of correct}
 ```
@@ -1276,14 +1329,16 @@ Rough here:
 - `OnnxNli` has never loaded the model. The label order comes from the model's
   `config.json` when the directory has one, and is assumed to be entailment first when
   not.
-- The numbers check looks for digits. The composer may not write digits, so every digit
-  in an answer came from a placeholder. A number the model writes out as a word gets
-  past it.
+- The numbers check reads digits and holds each to a fact the same segment cites. The
+  composer may not write digits, so every digit in an answer came from a placeholder. A
+  number the model writes out as a word gets past it. It does not go back to the trace
+  either: that a cited count is what the tools counted is the tools stage's to say.
 - Tool correctness leans on the trace. A model that plans differently from the scripted
   one and still answers right could be marked wrong on a detail of the trace. Not seen,
   since no real model has been run.
 - NLI precision is to be re-checked by hand on about 50 real composed segments. Nothing
-  here does that. The run report has the segment counts per question, not the segments.
+  here does that. A run writes the segments to label, with passage text and scores, to
+  `segments-<id>.jsonl`. The labelling and the comparing are still to do.
 - Timing leaks are listed as unmeasured and that is all.
 
 ## Develop
