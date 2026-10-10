@@ -219,7 +219,8 @@ FILTER_CAP = 3
 class Filter(_Model):
     """One test on one attribute. The attribute is one the venue's catalogue names."""
 
-    attribute: str = Field(pattern=r"^[a-z][a-z0-9_]{0,59}$")
+    # A colon too: a fire asset's attributes are OSM keys, "fire_extinguisher:type".
+    attribute: str = Field(pattern=r"^[a-z][a-z0-9_:]{0,59}$")
     test: FilterTest
     # The date to compare against, for before and after. None for the other two.
     date: datetime.date | None = None

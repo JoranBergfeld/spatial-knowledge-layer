@@ -14,6 +14,7 @@ from spatial_core.records import PERSONAS, Persona
 from spatial_service.app import create_app
 from spatial_service.llm import Llm
 from spatial_service.plan import STEP_CAP
+from spatial_service.store import Store
 from spatial_service.turn import CALL_CAP
 
 ROOM_107_A = "osm:way/1003"
@@ -35,8 +36,8 @@ NOTHING_HELD: dict[str, Any] = {
 }
 
 
-def client(llm: Llm) -> TestClient:
-    return TestClient(create_app(fixture.store(), llm))
+def client(llm: Llm, store: Store | None = None) -> TestClient:
+    return TestClient(create_app(store or fixture.store(), llm))
 
 
 def ask(
@@ -49,6 +50,7 @@ def ask(
     inputs: list[str] | None = None,
     snapshot: str | None = None,
     status: int = 200,
+    store: Store | None = None,
 ) -> dict[str, Any]:
     llm = fixture.llm(
         planner if callable(planner) or planner is None else (lambda _p: planner),
@@ -58,7 +60,7 @@ def ask(
     body: dict[str, Any] = {"persona": persona, "question": question, "state": state}
     if snapshot:
         body["snapshot"] = snapshot
-    response = client(llm).post("/turn", json=body)
+    response = client(llm, store).post("/turn", json=body)
     assert response.status_code == status, response.text
     result: dict[str, Any] = response.json()
     return result
