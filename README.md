@@ -56,14 +56,16 @@ documents/fetched.json  where each original came from, its sha256 and its link c
 documents/documents.jsonl     one line per document: anchors, clearance class, date, link
 documents/chunks.jsonl        the English passages the index will hold
 documents/translations.jsonl  each translated passage beside its original, and what made it
-documents/vectors.jsonl       each chunk's embedding
+documents/summaries.jsonl     one summary per document, what it was made from and what made it
+documents/vectors.jsonl       each chunk's and each summary's embedding
 manifest.json           input hashes, what produced each part, counts, the sourced-clearance
                         share, the inventory's seed, fill rates and attribute catalogue,
-                        and for the documents: links, translations and ingestion spend
+                        and for the documents: links, translations, summaries and
+                        ingestion spend
 ```
 
-Run it again and it reuses the stored pull, originals, translations and vectors, calls
-nobody and writes the same bytes. `--refetch` replaces the pull, `--refetch-documents`
+Run it again and it reuses the stored pull, originals, translations, summaries and
+vectors, calls nobody and writes the same bytes. `--refetch` replaces the pull, `--refetch-documents`
 fetches the originals again. If the stored pull or an original no longer matches the
 hash it was pinned with, the build stops.
 
@@ -156,7 +158,8 @@ Build needs these for a corpus with anything in it:
 AZURE_OPENAI_ENDPOINT            the Azure OpenAI resource
 AZURE_OPENAI_API_KEY             its key
 AZURE_OPENAI_API_VERSION         optional, 2024-10-21 by default
-SPATIAL_COMPOSITION_DEPLOYMENT   translates. The same deployment that composes answers
+SPATIAL_COMPOSITION_DEPLOYMENT   translates and summarises. The same deployment that
+                                 composes answers
 SPATIAL_EMBEDDING_DEPLOYMENT     embeds the chunks. The RAG pipeline's, for now
 ```
 
@@ -179,6 +182,36 @@ Spend is tokens per deployment times a dated rate from
 `packages/ingest/src/spatial_ingest/rates.json`, the same rows as the site's budget
 table. A deployment with no row is recorded with its tokens and no cost, and the build
 says so. Right now that is the translation deployment: I have no price for it yet.
+Summaries run on the same deployment, so they are tokens without a cost too.
+
+### Summaries
+
+Every document gets one summary of at most 60 words, written by the composition
+deployment from the document's own English passages and its title. This is SAC,
+summary-augmented chunking, from the retrieval research (decision ticket 43 on the
+map). A summary does two things:
+
+- It goes in front of each of its document's passages when the passage is embedded:
+  title, summary, passage. The passage's text does not change. Only the vector knows.
+- It goes in the index as a chunk of its own with `role: summary`, carrying its
+  document's anchors and clearance class. Passages have `role: passage`.
+
+A summary is never evidence. It is there to find passages with. It is not quoted, not
+cited, not checked for entailment and not shown. Retrieval hands back passages only.
+
+Summaries are built one clearance class at a time, lowest first, and a summary only
+ever reads passages of one document, which all share a class. The summariser refuses
+anything else, and load checks the bundle's record again: every summary's sources must
+be passages of its own document and its own class, or the snapshot fails. So what a
+visitor's search can match never came from a staff or maintenance document.
+
+A document longer than about 20,000 characters is summarised window by window, then
+the part summaries are summarised into one. Parts stay in the bundle.
+
+`documents/summaries.jsonl` keeps each summary with its sources, the hash of what the
+model read, the deployment, the model, the prompt version (`summarise-document@1`, the
+words are in `summaries.py`) and the tokens. A rebuild reads them from there. Load
+never makes one. A summary made under another prompt version is made again.
 
 ## Load and promote
 
@@ -200,8 +233,8 @@ uv run ingest promote --date 2026-09-15   # make it current
 uv run ingest promote --date 2026-09-08   # roll back: the same command, the previous date
 ```
 
-Load also writes the document chunks to a search index, one per snapshot, named after
-the venue and the date (`spatial-kit-campus-sued-20260915`). It finds the search
+Load also writes the document chunks and summaries to a search index, one per snapshot,
+named after the venue and the date (`spatial-kit-campus-sued-20260915`). It finds the search
 service in the environment:
 
 ```
@@ -212,8 +245,9 @@ SPATIAL_SEARCH_DIR      instead of those two: a directory, one JSON file per ind
 
 The directory is a stand-in for tests and laptops. It stores chunks and vectors and
 ranks nothing. The Azure index is hybrid: text and title searchable for BM25, a vector
-field for the embedding, and the anchor ids by kind, the flattened ancestor ids and the
-clearance class all filterable. Load makes no model call. The vectors are the bundle's.
+field for the embedding, and the anchor ids by kind, the flattened ancestor ids, the
+clearance class and the role (passage or summary) all filterable. Load makes no model
+call. The summaries and the vectors are the bundle's.
 
 Load writes a snapshot as three schemas (ADR 0001 in the site's repository):
 
@@ -246,7 +280,10 @@ then writes, then checks what it wrote:
 - every chunk is anchored to spaces, types and assets of the snapshot
 - every chunk's clearance class is its strictest anchor's, by `document-clearance@1`
 - every chunk's ancestor ids are its space and asset anchors' paths
-- the index holds as many chunks as the manifest says, in all and per clearance class
+- every summary was built from passages of its own document and its own clearance class
+- every document in the index has exactly one summary, and it is one the bundle recorded
+- the index holds as many chunks as the manifest says in all, and as many passages and
+  as many summaries per clearance class
 
 The chunk checks run over what the index gives back, not over the bundle. The link
 check is reported in the log and never blocks.
@@ -317,8 +354,16 @@ Things that are rough or just not done yet:
   gets its number written out. It also leaves a count alone when the sentence before
   it ended in a full stop ("Mind the stairs. 2 of them are loose"), since that looks
   like an abbreviation.
-- If a model call fails midway, the build stops and the translations it already paid
-  for are not kept. The corpus is 36 short pages, so I have not bothered.
+- If a model call fails midway, the build stops and the translations and summaries it
+  already paid for are not kept. The corpus is 36 short pages, so I have not bothered.
+- The summary prompt is mine, adapted from the prototype's. The +8 points of recall were
+  measured with a local 7B model on another building's handover, not with this prompt,
+  this model or this corpus. Nothing here measures it again.
+- The 60 words are asked for, not enforced. The long-document window is counted in
+  characters because build has no tokenizer.
+- Changing the summary prompt version re-embeds every passage, since the summary is in
+  front of it.
+- An index loaded before summaries existed has no `role` field. Load the snapshot again.
 - The real Azure AI Search client is only tested against a stand-in on localhost.
   Nobody has pointed it at a real service yet.
 

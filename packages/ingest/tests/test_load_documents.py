@@ -85,7 +85,8 @@ def test_load_writes_one_index_for_the_snapshot_holding_every_chunk(
     assert f"with index {INDEX_C}" in capsys.readouterr().out
     assert [path.name for path in search_dir.iterdir()] == [f"{INDEX_C}.json"]
     stored = LocalIndex(search_dir).entries(INDEX_C)
-    assert len(stored) == 8
+    # Eight passages, and a summary for each of the seven documents.
+    assert len(stored) == 15
     held = {entry.chunk.id: entry for entry in stored}
     vectors = {v["chunk_id"]: v["vector"] for v in read_jsonl(built / "documents/vectors.jsonl")}
     for record in chunks(built):
@@ -218,7 +219,8 @@ def test_load_fails_when_the_index_does_not_hold_the_chunks_the_manifest_counts(
     bundle: Bundle, database_url: str
 ) -> None:
     built = bundle(C)
-    rewrite(built, "documents/chunks.jsonl", chunks(built)[:-1])
+    # The second half of the B1 manual goes missing.
+    rewrite(built, "documents/chunks.jsonl", [c for c in chunks(built) if c["id"] != "manual:b1#1"])
 
     def recount(manifest: dict[str, Any]) -> None:
         manifest["parts"]["documents/chunks.jsonl"]["records"] = 8
@@ -227,9 +229,9 @@ def test_load_fails_when_the_index_does_not_hold_the_chunks_the_manifest_counts(
 
     assert ingest("load", built, database_url) == 1
     found = failures(database_url, C)
-    assert "the index holds 7 chunks, the manifest says 8" in found
-    # room:107 is the last chunk and the only staff one.
-    assert "the index holds 0 staff chunks, the manifest says 1" in found
+    # Eight passages and seven summaries were promised.
+    assert "the index holds 14 chunks, the manifest says 15" in found
+    assert "the index holds 5 visitor passages, the manifest says 6" in found
 
 
 def test_load_fails_when_the_counts_by_clearance_class_disagree(
@@ -248,8 +250,8 @@ def test_load_fails_when_the_counts_by_clearance_class_disagree(
 
     assert ingest("load", built, database_url) == 1
     assert failures(database_url, C) == [
-        "the index holds 6 visitor chunks, the manifest says 5",
-        "the index holds 1 staff chunks, the manifest says 2",
+        "the index holds 6 visitor passages, the manifest says 5",
+        "the index holds 1 staff passages, the manifest says 2",
     ]
 
 
@@ -261,9 +263,10 @@ def test_load_fails_when_a_chunk_is_anchored_to_nothing_in_the_snapshot(
     edit_chunk(built, "manual:b1#0", asset_type_ids=[])
 
     assert ingest("load", built, database_url) == 1
+    # A summary chunk takes its anchors from its document's first passage.
     assert (
         "a chunk's anchors are spaces, types and assets of the snapshot: "
-        "fails for hall:gaede#0, manual:b1#0"
+        "fails for hall:gaede#0, hall:gaede#summary, manual:b1#0, manual:b1#summary"
     ) in failures(database_url, C)
 
 
@@ -275,7 +278,7 @@ def test_load_fails_when_a_chunks_ancestor_paths_disagree_with_the_tree(
 
     assert ingest("load", built, database_url) == 1
     assert failures(database_url, C) == [
-        "a chunk's ancestor paths agree with the tree: fails for manual:ext#0"
+        "a chunk's ancestor paths agree with the tree: fails for manual:ext#0, manual:ext#summary"
     ]
 
 
@@ -321,14 +324,23 @@ def test_a_reload_replaces_what_the_index_held(
     assert ingest("load", built, database_url) == 0
     kept = [c for c in chunks(built) if c["document_id"] != "manual:b1"]
     rewrite(built, "documents/chunks.jsonl", kept)
+    summaries = read_jsonl(built / "documents" / "summaries.jsonl")
+    rewrite(
+        built,
+        "documents/summaries.jsonl",
+        [s for s in summaries if s["document_id"] != "manual:b1"],
+    )
 
     def recount(manifest: dict[str, Any]) -> None:
         manifest["documents"]["chunks_by_clearance_class"]["visitor"] = 4
+        manifest["documents"]["summaries"]["documents"] = 6
+        manifest["documents"]["summaries"]["by_clearance_class"]["visitor"] = 4
 
     edit_manifest(built, recount)
 
     assert ingest("load", built, database_url) == 0
-    assert len(LocalIndex(search_dir).chunks(INDEX_C)) == 6
+    # Six passages and their six summaries.
+    assert len(LocalIndex(search_dir).chunks(INDEX_C)) == 12
 
 
 def test_load_makes_no_model_call(
@@ -420,7 +432,8 @@ def test_load_writes_to_azure_ai_search_when_the_environment_names_one(
     assert not search_dir.exists()
     assert list(azure.definitions) == [INDEX_C]
     held = sorted(azure.documents[INDEX_C].values(), key=lambda document: document["id"])
-    assert [document["id"] for document in held] == [record["id"] for record in chunks(built)]
+    passages = [document for document in held if document["role"] == "passage"]
+    assert [document["id"] for document in passages] == [record["id"] for record in chunks(built)]
     room = next(document for document in held if document["id"] == "room:107#0")
     assert room["clearance_class"] == "staff"
     assert room["space_ids"] == ["osm:way/100", "osm:way/1001"]
@@ -458,7 +471,9 @@ def test_the_azure_client_reads_back_what_it_wrote_and_drops_it(
     client = AzureSearchIndex(endpoint=azure.url, api_key="search-key")
 
     assert client.exists(INDEX_C)
-    assert client.chunks(INDEX_C) == [Chunk.model_validate(record) for record in chunks(built)]
+    assert [chunk for chunk in client.chunks(INDEX_C) if chunk.role == "passage"] == [
+        Chunk.model_validate(record) for record in chunks(built)
+    ]
 
     client.delete(INDEX_C)
     client.delete(INDEX_C)

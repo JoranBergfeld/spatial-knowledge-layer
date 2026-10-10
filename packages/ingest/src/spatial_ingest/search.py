@@ -34,7 +34,15 @@ _BATCH = 500
 _PAGE = 1000
 
 _COLLECTIONS = ("space_ids", "asset_type_ids", "asset_ids", "ancestor_ids")
-_FILTERABLE = ("id", "document_id", "kind", "language", "clearance_class", "link_status")
+_FILTERABLE = (
+    "id",
+    "document_id",
+    "role",
+    "kind",
+    "language",
+    "clearance_class",
+    "link_status",
+)
 _STORED = ("url", "original_text_sha256", "document_date", "link_checked_on")
 
 

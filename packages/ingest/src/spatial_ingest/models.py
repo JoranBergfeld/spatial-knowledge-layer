@@ -1,8 +1,8 @@
-"""The model calls build makes: translating a passage and embedding one.
+"""The model calls build makes: translating a passage, summarising a document, embedding.
 
-Both go to deployments on the Azure OpenAI resource the service uses, named by
-the same environment variables. Translation is the composition deployment's job.
-The embedding deployment is the RAG pipeline's, for now.
+All go to deployments on the Azure OpenAI resource the service uses, named by
+the same environment variables. Translation and summaries are the composition
+deployment's job. The embedding deployment is the RAG pipeline's, for now.
 
 Every call reports the model that served it and its token usage, which is where
 the manifest's ingestion spend comes from.
@@ -58,11 +58,18 @@ class Embedded:
     input_tokens: int
 
 
+# A summary comes back in the same shape: text, who wrote it, what it cost.
+Summarised = Translated
+
+
 class Models(Protocol):
     translation_deployment: str
     embedding_deployment: str
 
     def translate(self, text: str, language: str) -> Translated: ...
+
+    def summarise(self, instruction: str, text: str) -> Summarised:
+        """A summary of ``text``. The instruction is spatial_ingest.summaries' business."""
 
     def embed(self, text: str) -> Embedded: ...
 
@@ -99,23 +106,23 @@ class AzureOpenAI:
             raise ModelError(f"{operation} on {deployment} failed: {error}") from error
         return answer
 
-    def translate(self, text: str, language: str) -> Translated:
+    def _chat(self, system: str, user: str, what: str) -> Translated:
         deployment = self.translation_deployment
         answer = self._post(
             deployment,
             "chat/completions",
             {
                 "messages": [
-                    {"role": "system", "content": PROMPT.format(language=language)},
-                    {"role": "user", "content": text},
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
                 ]
             },
         )
         try:
-            english = answer["choices"][0]["message"]["content"]
+            written = answer["choices"][0]["message"]["content"]
             usage = answer["usage"]
-            translated = Translated(
-                text=str(english).strip(),
+            said = Translated(
+                text=str(written).strip(),
                 deployment=deployment,
                 model=str(answer.get("model") or deployment),
                 input_tokens=int(usage["prompt_tokens"]),
@@ -123,9 +130,15 @@ class AzureOpenAI:
             )
         except (KeyError, IndexError, TypeError, ValueError) as error:
             raise ModelError(f"{deployment} answered something unreadable: {error!r}") from error
-        if not translated.text:
-            raise ModelError(f"{deployment} returned an empty translation")
-        return translated
+        if not said.text:
+            raise ModelError(f"{deployment} returned an empty {what}")
+        return said
+
+    def translate(self, text: str, language: str) -> Translated:
+        return self._chat(PROMPT.format(language=language), text, "translation")
+
+    def summarise(self, instruction: str, text: str) -> Summarised:
+        return self._chat(instruction, text, "summary")
 
     def embed(self, text: str) -> Embedded:
         deployment = self.embedding_deployment
@@ -147,7 +160,9 @@ def from_env(env: Mapping[str, str] | None = None) -> Models:
     names = (ENDPOINT_ENV, API_KEY_ENV, TRANSLATION_DEPLOYMENT_ENV, EMBEDDING_DEPLOYMENT_ENV)
     missing = [name for name in names if not env.get(name)]
     if missing:
-        raise ModelError(f"the corpus needs translating and embedding, so set {', '.join(missing)}")
+        raise ModelError(
+            f"the corpus needs translating, summarising and embedding, so set {', '.join(missing)}"
+        )
     return AzureOpenAI(
         endpoint=env[ENDPOINT_ENV],
         api_key=env[API_KEY_ENV],

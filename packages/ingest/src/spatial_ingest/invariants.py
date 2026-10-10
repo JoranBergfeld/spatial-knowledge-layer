@@ -15,8 +15,16 @@ import psycopg
 from psycopg import sql
 
 from spatial_core import clearance
-from spatial_core.records import PERSONAS, AnchorKind, Chunk, Persona, RecordProvenance
+from spatial_core.records import (
+    PERSONAS,
+    AnchorKind,
+    Chunk,
+    ChunkRole,
+    Persona,
+    RecordProvenance,
+)
 from spatial_core.stores import SnapshotSchemas
+from spatial_ingest.summaries import Summary
 
 # How many offending ids a failure names. The count is always complete.
 EXAMPLES = 5
@@ -292,8 +300,12 @@ def check_chunks(
     schemas: SnapshotSchemas,
     chunks: Sequence[Chunk],
     manifest: dict[str, Any],
+    summaries: Sequence[Summary] = (),
 ) -> list[str]:
-    """What does not hold of the chunks the index holds, against the stores and the manifest."""
+    """What does not hold of the chunks the index holds, against the stores and the manifest.
+
+    ``summaries`` is the bundle's record of what each summary was made from.
+    """
 
     def rows(query: str) -> list[tuple[Any, ...]]:
         return conn.execute(sql.SQL(query).format(views=sql.Identifier(schemas.views))).fetchall()
@@ -354,16 +366,54 @@ def check_chunks(
         *_failure("a chunk's ancestor paths agree with the tree", mispathed),
     ]
 
-    summary = manifest.get("documents", {})
-    expected = int(manifest.get("parts", {}).get("documents/chunks.jsonl", {}).get("records", 0))
+    passages = {chunk.id: chunk for chunk in chunks if chunk.role is ChunkRole.PASSAGE}
+    summarised = [chunk for chunk in chunks if chunk.role is ChunkRole.SUMMARY]
+    # A summary may only have read passages of its own document, which are all of
+    # its own class. This is the check that no summary crosses a clearance class.
+    crossed = [
+        made.id
+        for made in summaries
+        if not made.source_chunk_ids
+        or any(
+            source not in passages
+            or passages[source].document_id != made.document_id
+            or passages[source].clearance_class is not made.clearance_class
+            for source in made.source_chunk_ids
+        )
+    ]
+    recorded = {made.id for made in summaries if made.indexed}
+    unrecorded = [chunk.id for chunk in summarised if chunk.id not in recorded]
+    counted: dict[str, int] = {}
+    for chunk in summarised:
+        counted[chunk.document_id] = counted.get(chunk.document_id, 0) + 1
+    documents = {chunk.document_id for chunk in passages.values()} | set(counted)
+    failures += [
+        *_failure(
+            "a summary is built from passages of its own document and clearance class", crossed
+        ),
+        *_failure("a summary chunk is a summary the bundle recorded", unrecorded),
+        *_failure(
+            "every document in the index has one summary",
+            [document for document in documents if counted.get(document, 0) != 1],
+        ),
+    ]
+
+    said = manifest.get("documents", {})
+    parts = manifest.get("parts", {})
+    told = said.get("summaries", {})
+    expected = int(parts.get("documents/chunks.jsonl", {}).get("records", 0))
+    expected += int(told.get("documents", 0))
     if len(chunks) != expected:
         failures.append(f"the index holds {len(chunks)} chunks, the manifest says {expected}")
-    by_class = summary.get("chunks_by_clearance_class", {})
-    for cleared in PERSONAS:
-        held = sum(1 for chunk in chunks if chunk.clearance_class is cleared)
-        said = int(by_class.get(cleared.value, 0))
-        if held != said:
-            failures.append(
-                f"the index holds {held} {cleared.value} chunks, the manifest says {said}"
-            )
+    for what, held, by_class in (
+        ("passages", list(passages.values()), said.get("chunks_by_clearance_class", {})),
+        ("summaries", summarised, told.get("by_clearance_class", {})),
+    ):
+        for cleared in PERSONAS:
+            found = sum(1 for chunk in held if chunk.clearance_class is cleared)
+            listed = int(by_class.get(cleared.value, 0))
+            if found != listed:
+                failures.append(
+                    f"the index holds {found} {cleared.value} {what}, the manifest says {listed}"
+                )
     return failures

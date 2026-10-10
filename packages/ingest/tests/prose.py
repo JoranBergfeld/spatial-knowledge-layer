@@ -202,6 +202,21 @@ def translation(text: str) -> str:
     return TRANSLATIONS.get(text, "EN: " + text)
 
 
+def asks_for_summary(system: str) -> bool:
+    return system.startswith("Summarise")
+
+
+SUMMARY_WORDS = 40
+
+
+def summary(text: str) -> str:
+    """What the stand-in summariser answers: the first words it was shown, and nothing else.
+
+    So whatever a summary says, it says because it was in what the model read.
+    """
+    return "Covers: " + " ".join(text.split()[:SUMMARY_WORDS])
+
+
 def embedding(text: str) -> list[float]:
     """A small vector that depends on nothing but the text."""
     digest = hashlib.sha256(text.encode()).digest()
