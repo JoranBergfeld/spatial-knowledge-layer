@@ -2,16 +2,16 @@
 
 Load writes the bundle's osm/ half into the snapshot's osm schema and its seed/
 half into its seed schema, joins them in a schema of views, writes the document
-chunks with their vectors to a search index of the snapshot's own, then runs the
-invariants over what it wrote. A snapshot that fails them is recorded as failed
+chunks and summaries with their vectors to a search index of the snapshot's own,
+then runs the invariants over what it wrote. A snapshot that fails them is recorded as failed
 and cannot be promoted. Load never touches the current-snapshot pointer, and it
 refuses to overwrite the current or the previous snapshot, so it never changes
 what a visitor reads. It does drop every snapshot older than those two, index
 included, so exactly one previous snapshot is ever kept.
 
 Loading the same bundle again rebuilds the snapshot's schemas and its index from
-scratch, so it yields the same stores. It makes no model call: the translations
-and the vectors are the bundle's.
+scratch, so it yields the same stores. It makes no model call: the translations,
+the summaries and the vectors are the bundle's.
 """
 
 from __future__ import annotations
@@ -45,7 +45,7 @@ from spatial_core.records import (
 )
 from spatial_core.search import IndexEntry, SearchIndex
 from spatial_core.stores import index_name, snapshot_schemas
-from spatial_ingest import db, invariants, search
+from spatial_ingest import db, invariants, search, summaries
 from spatial_ingest.build import MANIFEST_FILE
 from spatial_ingest.documents import (
     CHUNKS_PART,
@@ -56,6 +56,7 @@ from spatial_ingest.documents import (
     Vector,
 )
 from spatial_ingest.documents import DIR as DOCUMENTS_DIR
+from spatial_ingest.summaries import Summary
 
 log = logging.getLogger(__name__)
 
@@ -73,12 +74,13 @@ TABLES: dict[str, type[BaseModel]] = {
     "visible_asset_types": VisibleAssetType,
 }
 HALVES = ("osm", "seed")
-# The bundle's document parts. Only the chunks and their vectors leave the bundle,
-# and they go to the search index, not to Postgres.
+# The bundle's document parts. Only the chunks, the document summaries and their
+# vectors leave the bundle, and they go to the search index, not to Postgres.
 DOCUMENT_PARTS: dict[str, type[BaseModel]] = {
     DOCUMENTS_PART: Document,
     CHUNKS_PART: Chunk,
     TRANSLATIONS_PART: Translation,
+    summaries.PART: Summary,
     VECTORS_PART: Vector,
 }
 # What an index with no chunks is created with: text-embedding-3-small's size.
@@ -142,8 +144,11 @@ def _parse(bundle: Path, name: str, listed: dict[str, Any], model: type[BaseMode
     return records
 
 
-def _read_entries(bundle: Path, manifest: dict[str, Any]) -> list[IndexEntry]:
-    """The bundle's chunks, each with its vector. Every document part is checked on the way."""
+def _read_entries(bundle: Path, manifest: dict[str, Any]) -> tuple[list[IndexEntry], list[Summary]]:
+    """The bundle's chunks and summary chunks, each with its vector, and its summaries.
+
+    Every document part is checked on the way.
+    """
     listed: dict[str, Any] = dict(manifest.get("parts", {}))
     read: dict[str, list[Any]] = {}
     for name, model in DOCUMENT_PARTS.items():
@@ -155,12 +160,16 @@ def _read_entries(bundle: Path, manifest: dict[str, Any]) -> list[IndexEntry]:
                 f"{DOCUMENTS_DIR}/{path.name} is in the bundle but not in its manifest"
             )
     vectors: dict[str, Vector] = {vector.chunk_id: vector for vector in read[VECTORS_PART]}
+    try:
+        summarised = summaries.chunks_of(read[summaries.PART], read[CHUNKS_PART])
+    except summaries.SummaryError as error:
+        raise BundleError(str(error)) from error
     entries = []
-    for chunk in read[CHUNKS_PART]:
+    for chunk in [*read[CHUNKS_PART], *summarised]:
         if chunk.id not in vectors:
             raise BundleError(f"chunk {chunk.id} has no vector in {VECTORS_PART}")
         entries.append(IndexEntry(chunk=chunk, vector=vectors[chunk.id].vector))
-    return entries
+    return entries, read[summaries.PART]
 
 
 def _read_parts(bundle: Path, manifest: dict[str, Any]) -> list[_Part]:
@@ -334,7 +343,7 @@ def load(*, bundle: Path, database_url: str, index: SearchIndex | None = None) -
         rows: dict[str, int] = {}
         try:
             parts = _read_parts(bundle, manifest)
-            entries = _read_entries(bundle, manifest)
+            entries, made = _read_entries(bundle, manifest)
             embedding = manifest.get("documents", {}).get("embedding") or {}
             with conn.transaction():
                 db.drop_snapshot(conn, schemas)
@@ -349,7 +358,9 @@ def load(*, bundle: Path, database_url: str, index: SearchIndex | None = None) -
                 log.info("wrote %d chunks to the index %s", len(entries), name)
                 failures = invariants.check(conn, schemas, _expected_rows(manifest))
                 # Read back from the index, so this checks what the service will search.
-                failures += invariants.check_chunks(conn, schemas, index.chunks(name), manifest)
+                failures += invariants.check_chunks(
+                    conn, schemas, index.chunks(name), manifest, made
+                )
                 _record(conn, manifest, failures, name)
         except (BundleError, psycopg.Error, search.SearchError) as error:
             # Whatever an earlier load of this snapshot left behind is no longer

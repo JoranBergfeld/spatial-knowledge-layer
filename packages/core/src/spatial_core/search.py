@@ -14,8 +14,9 @@ else. The filter is a value, not a string, so the stand-in can apply it and the
 Azure client can render it, and there is one definition of which chunk passes:
 Filter.matches.
 
-Only passages are searched. A chunk whose kind is not in PASSAGE_KINDS (a summary,
-say) passes no filter, so it is never retrieved, cited or quoted.
+An index holds passages and one summary per document, told apart by role. A
+search returns both unless the filter names a role. What to do with a summary hit
+is the caller's business (the service's retrieval.py): the index only ranks.
 """
 
 from __future__ import annotations
@@ -31,13 +32,10 @@ from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict
 
-from spatial_core.records import Chunk, DocumentKind, Persona
+from spatial_core.records import Chunk, ChunkRole, Persona
 
 # Names a directory for LocalIndex. Ingestion and the service read the same one.
 SEARCH_DIR_ENV = "SPATIAL_SEARCH_DIR"
-# The kinds of chunk that are evidence. An allow-list on purpose: a kind added
-# later is not a passage until someone says so here.
-PASSAGE_KINDS: tuple[DocumentKind, ...] = (DocumentKind.ACCESSIBILITY_PAGE, DocumentKind.MANUAL)
 # The semantic configuration an Azure index carries, for when the ranker is switched on.
 SEMANTIC_CONFIGURATION = "chunks"
 # The constant in reciprocal rank fusion. Azure AI Search uses the same.
@@ -89,7 +87,10 @@ class Filter:
     space_ids: frozenset[str] = frozenset()
     asset_type_ids: frozenset[str] = frozenset()
     asset_ids: frozenset[str] = frozenset()
-    kinds: tuple[DocumentKind, ...] = PASSAGE_KINDS
+    # Passages and summaries both, unless narrowed.
+    roles: tuple[ChunkRole, ...] = (ChunkRole.PASSAGE, ChunkRole.SUMMARY)
+    # Only chunks of these documents, when any are named.
+    document_ids: frozenset[str] = frozenset()
 
     @property
     def anchored(self) -> bool:
@@ -98,7 +99,8 @@ class Filter:
 
     def matches(self, chunk: Chunk) -> bool:
         return (
-            chunk.kind in self.kinds
+            chunk.role in self.roles
+            and (not self.document_ids or chunk.document_id in self.document_ids)
             and chunk.clearance_class in self.clearance_classes
             and bool(
                 self.space_ids.intersection(chunk.space_ids)

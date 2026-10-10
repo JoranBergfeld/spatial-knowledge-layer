@@ -30,6 +30,7 @@ from spatial_ingest.promote import PromoteError, promote
 from spatial_ingest.pull import PullError
 from spatial_ingest.seed.generate import InventoryError
 from spatial_ingest.structure import StructureError
+from spatial_ingest.summaries import SummaryError
 from spatial_ingest.venue import load_venue
 
 DATABASE_URL_ENV = "SPATIAL_DATABASE_URL"
@@ -134,6 +135,7 @@ def _build(args: argparse.Namespace) -> int:
         CorpusError,
         DocumentsError,
         ModelError,
+        SummaryError,
         InventoryError,
         PullError,
         StructureError,
@@ -154,6 +156,7 @@ def _build(args: argparse.Namespace) -> int:
     prose = manifest["documents"]
     print(
         f"documents: {prose['documents']} in {prose['chunks']} chunks, "
+        f"{prose['summaries']['documents']} summaries, "
         f"{len(prose['skipped'])} skipped, {prose['offline']} with their source offline, "
         f"${prose['spend']['total_usd']} spent"
     )

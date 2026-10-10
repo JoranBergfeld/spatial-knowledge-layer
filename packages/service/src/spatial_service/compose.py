@@ -7,7 +7,8 @@ checks what comes back and fills the placeholders from the facts. Output carryin
 digit is rejected, whatever it says: a number the model typed is a number nobody
 checked.
 
-A fact is a place (filled with its label), an asset type (its name) or a count. A
+A fact is a place (filled with its label), an asset type (its name), one asset (its
+name, followed by "(generated)" when it is) or a count. A
 count is always of one record provenance. Where sourced and generated assets mix,
 there are two count facts and no fact for their sum, so the model has no way to
 print one number over both. A generated count fills in as "3 generated", and its
@@ -81,6 +82,7 @@ class Draft(_Model):
 class FactKind(StrEnum):
     PLACE = "place"
     ASSET_TYPE = "asset-type"
+    ASSET = "asset"
     COUNT = "count"
 
 
@@ -88,6 +90,7 @@ class Citation(_Model):
     kind: FactKind = FactKind.PLACE
     space_id: str | None = None
     type_id: str | None = None
+    asset_id: str | None = None
     # What the placeholder was filled with.
     label: str
     # Value provenance of a label or a type's name, and the rule or basis behind it.
@@ -98,6 +101,26 @@ class Citation(_Model):
     record_provenance: str | None = None
     # The number a count stands for.
     count: int | None = None
+
+
+POSITION_RECORDED = "recorded"
+POSITION_NOT_RECORDED = "position not recorded"
+
+
+def asset_citation(asset: Asset) -> Citation:
+    """One asset, as a citation. A generated one says so in its label."""
+    generated = asset.record_provenance is not RecordProvenance.SOURCED
+    return Citation(
+        kind=FactKind.ASSET,
+        space_id=asset.space_id,
+        type_id=asset.type_id,
+        asset_id=asset.id,
+        label=f"{asset.name.value} ({GENERATED})" if generated else asset.name.value,
+        provenance=asset.name.provenance.value,
+        rule=asset.name.rule,
+        basis=asset.name.basis,
+        record_provenance=asset.record_provenance.value,
+    )
 
 
 @dataclass(frozen=True)
@@ -161,6 +184,11 @@ class Facts:
                 ),
             )
         return self._seen[key]
+
+    def asset(self, asset: Asset) -> str:
+        citation = asset_citation(asset)
+        position = POSITION_RECORDED if asset.position else POSITION_NOT_RECORDED
+        return self._add(FactKind.ASSET, citation.label, citation, told={"position": position})
 
     def number(self, count: int, *, about: str, space_id: str | None = None) -> str:
         """A plain number that counts something other than assets of one provenance."""
@@ -250,6 +278,24 @@ def location(venue: Venue, question: str, subject: Space) -> Answer:
         "facts": [{"ref": f.ref, "tier": f.told["tier"]} for f in facts.items],
     }
     return Answer(facts.items, payload, required=[facts.items[0].ref])
+
+
+def asset_location(venue: Venue, question: str, asset: Asset) -> Answer:
+    """One asset, then the space it is in and each labelled place enclosing that."""
+    facts = Facts()
+    subject = facts.asset(asset)
+    home = venue.spaces[asset.space_id]
+    for space in [home, *venue.ancestors(home)]:
+        if space.label:
+            facts.place(space)
+    payload = {
+        "question": question,
+        "shape": "asset-location",
+        "subject": subject,
+        "required": [subject],
+        "facts": facts.told(),
+    }
+    return Answer(facts.items, payload, required=[subject])
 
 
 def containment(venue: Venue, question: str, found: ScopeResult) -> Answer:

@@ -22,7 +22,13 @@ from typing import Any
 import httpx
 
 from spatial_core.records import Chunk
-from spatial_core.search import SEARCH_DIR_ENV, IndexEntry, LocalIndex, SearchIndex
+from spatial_core.search import (
+    SEARCH_DIR_ENV,
+    SEMANTIC_CONFIGURATION,
+    IndexEntry,
+    LocalIndex,
+    SearchIndex,
+)
 
 ENDPOINT_ENV = "AZURE_SEARCH_ENDPOINT"
 API_KEY_ENV = "AZURE_SEARCH_API_KEY"
@@ -34,7 +40,15 @@ _BATCH = 500
 _PAGE = 1000
 
 _COLLECTIONS = ("space_ids", "asset_type_ids", "asset_ids", "ancestor_ids")
-_FILTERABLE = ("id", "document_id", "kind", "language", "clearance_class", "link_status")
+_FILTERABLE = (
+    "id",
+    "document_id",
+    "role",
+    "kind",
+    "language",
+    "clearance_class",
+    "link_status",
+)
 _STORED = ("url", "original_text_sha256", "document_date", "link_checked_on")
 
 
@@ -83,6 +97,19 @@ def definition(name: str, dimensions: int) -> dict[str, Any]:
         "vectorSearch": {
             "algorithms": [{"name": "hnsw", "kind": "hnsw"}],
             "profiles": [{"name": _PROFILE, "algorithm": "hnsw"}],
+        },
+        # For the semantic ranker, which the service leaves off unless told otherwise.
+        # Having the configuration costs nothing until a query asks for it.
+        "semantic": {
+            "configurations": [
+                {
+                    "name": SEMANTIC_CONFIGURATION,
+                    "prioritizedFields": {
+                        "titleField": {"fieldName": "title"},
+                        "prioritizedContentFields": [{"fieldName": "text"}],
+                    },
+                }
+            ]
         },
     }
 

@@ -62,13 +62,14 @@ def odata(chosen: Filter) -> str:
         )
         if values
     ]
-    return " and ".join(
-        [
-            _in("kind", [kind.value for kind in chosen.kinds]),
-            _in("clearance_class", [persona.value for persona in chosen.clearance_classes]),
-            f"({' or '.join(anchors)})",
-        ]
-    )
+    clauses = [
+        _in("role", [role.value for role in chosen.roles]),
+        _in("clearance_class", [persona.value for persona in chosen.clearance_classes]),
+        f"({' or '.join(anchors)})",
+    ]
+    if chosen.document_ids:
+        clauses.append(_in("document_id", chosen.document_ids))
+    return " and ".join(clauses)
 
 
 class AzureSearch:

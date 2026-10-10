@@ -8,8 +8,8 @@ down to one persona, and the anchors are built from that venue alone:
                       assets under it, and the types of those assets
     from assets       those assets and their types
 
-The filter the index gets is then: clearance class within the persona's, and a
-passage kind, and at least one of the chunk's anchors among those ids. That is
+The filter the index gets is then: clearance class within the persona's, and at
+least one of the chunk's anchors among those ids. That is
 the spec's filter with its last two clauses folded into one. "Scope matches, or
 an asset type is visible in scope" and "an anchor is in the visible set" are the
 same test once the scope is spelled out as the visible ids in it. It is stricter
@@ -28,25 +28,37 @@ refuses what does not pass, in case an index ever gets it wrong.
 Rough edge: for a place high in the tree the id lists get long (every visible
 space and asset under it). Fine on the mini campus, not measured on the real one.
 
+Summaries. The index also holds one summary per document (role "summary"), with
+its document's anchors and clearance, so the same filter admits it. The search
+covers both roles, and a summary that hits is a hit for its document: each of the
+document's passages gets the summary's rank added to its own, RRF style. If none
+of that document's passages made the candidates, one more search fetches them
+(same filter, that document, passages only). Then every summary is dropped. Only
+a chunk that is evidence leaves this module: the passages list, the ids a step
+reports and the trace are built from that and nothing else. The trace says a
+document was found through its summary and never shows the summary.
+
 Passages and facts are separate lists from here to composition. Nothing here
-scores a fact, and the ranking is the index's own.
+scores a fact. The fusion above is over document search results only.
 """
 
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict
 
-from spatial_core.records import PERSONAS, Chunk, Persona
-from spatial_core.search import Filter, Query, SearchQueries
+from spatial_core.records import PERSONAS, Chunk, ChunkRole, Persona
+from spatial_core.search import RRF_K, Filter, Hit, Query, SearchQueries
 from spatial_service.assets import ScopeResult
 from spatial_service.places import Venue
 
 # How many passages a retrieval returns.
 TOP = 5
+# How many chunks, of either role, the index is asked for per passage returned.
+CANDIDATES_PER_PASSAGE = 4
 
 ANCHORED_BY_PLACE = "places"
 ANCHORED_BY_ASSETS = "assets"
@@ -100,7 +112,7 @@ def anchors_of_assets(venue: Venue, found: ScopeResult) -> Anchors:
 
 
 def document_filter(persona: Persona, anchors: Anchors) -> Filter:
-    """The retrieval filter for one persona. The passage-only clause is Filter's default."""
+    """The retrieval filter for one persona. Both roles: summaries rank, passages return."""
     return Filter(
         clearance_classes=tuple(p for p in PERSONAS if p.rank <= persona.rank),
         space_ids=anchors.space_ids,
@@ -134,6 +146,8 @@ class Passage:
     ref: str
     rank: int
     chunk: Chunk
+    # Whether its document's summary matched the query too.
+    via_summary: bool = False
 
 
 @dataclass(frozen=True)
@@ -187,29 +201,59 @@ class Retriever:
         embedded = None
         if self.embedder is not None and ref.embedding_deployment is not None:
             embedded = self.embedder.embed(ref.embedding_deployment, query)
-        hits = self.index.search(
-            ref.name,
-            Query(
-                text=query,
-                filter=chosen,
-                vector=embedded.vector if embedded else None,
-                top=self.top,
-                semantic_ranker=self.semantic_ranker,
-            ),
-        )
-        passed = [hit for hit in hits if chosen.matches(hit.chunk)][: self.top]
-        return Retrieval(
-            query=query,
-            anchors=anchors,
+        asked = Query(
+            text=query,
             filter=chosen,
-            passages=tuple(
-                Passage(ref=f"p{number}", rank=number, chunk=hit.chunk)
-                for number, hit in enumerate(passed, start=1)
-            ),
-            index=ref.name,
+            vector=embedded.vector if embedded else None,
+            top=self.top * CANDIDATES_PER_PASSAGE,
             semantic_ranker=self.semantic_ranker,
-            top=self.top,
-            refused=len(hits) - len(passed),
+        )
+        hits = self.index.search(ref.name, asked)
+        passed = [hit for hit in hits if chosen.matches(hit.chunk)]
+        refused = len(hits) - len(passed)
+
+        # A summary's rank is its document's. The best one, if an index held two.
+        by_summary: dict[str, int] = {}
+        for hit in passed:
+            if not hit.chunk.is_evidence:
+                by_summary.setdefault(hit.chunk.document_id, hit.rank)
+        own = {hit.chunk.id: hit for hit in passed if hit.chunk.is_evidence}
+        missing = by_summary.keys() - {hit.chunk.document_id for hit in own.values()}
+        fetched: dict[str, Hit] = {}
+        if missing:
+            only = replace(chosen, roles=(ChunkRole.PASSAGE,), document_ids=frozenset(missing))
+            more = self.index.search(ref.name, replace(asked, filter=only))
+            fetched = {hit.chunk.id: hit for hit in more if only.matches(hit.chunk)}
+            refused += len(more) - len(fetched)
+
+        def fused(chunk: Chunk) -> float:
+            score = 0.0
+            if chunk.id in own:
+                score += 1 / (RRF_K + own[chunk.id].rank)
+            if chunk.document_id in by_summary:
+                score += 1 / (RRF_K + by_summary[chunk.document_id])
+            return score
+
+        def order(chunk: Chunk) -> tuple[float, int, str]:
+            # Passages fetched for a summary have no rank of their own: after those that do.
+            rank = own[chunk.id].rank if chunk.id in own else len(passed) + fetched[chunk.id].rank
+            return (-fused(chunk), rank, chunk.id)
+
+        evidence = [hit.chunk for hit in (*own.values(), *fetched.values())]
+        assert all(chunk.is_evidence for chunk in evidence)
+        best = sorted(evidence, key=order)[: self.top]
+        return replace(
+            result,
+            passages=tuple(
+                Passage(
+                    ref=f"p{number}",
+                    rank=number,
+                    chunk=chunk,
+                    via_summary=chunk.document_id in by_summary,
+                )
+                for number, chunk in enumerate(best, start=1)
+            ),
+            refused=refused,
             embedding=embedded,
         )
 
@@ -244,6 +288,8 @@ class RetrievedDocument(_Model):
     space_ids: list[str]
     asset_type_ids: list[str]
     asset_ids: list[str]
+    # Its document's summary matched the query and lifted it. The summary is not shown.
+    via_summary: bool = False
 
 
 class DocumentsTrace(_Model):
@@ -261,7 +307,6 @@ class DocumentsTrace(_Model):
     assets: int
     asset_types: list[str]
     clearance_classes: list[Persona]
-    kinds: list[str]
     retrieved: list[RetrievedDocument]
     refused: int = 0
 
@@ -302,7 +347,6 @@ def trace(step: str, found: Retrieval) -> DocumentsTrace:
         assets=len(chosen.asset_ids),
         asset_types=sorted(chosen.asset_type_ids),
         clearance_classes=list(chosen.clearance_classes),
-        kinds=[kind.value for kind in chosen.kinds],
         retrieved=[
             RetrievedDocument(
                 ref=passage.ref,
@@ -323,6 +367,7 @@ def trace(step: str, found: Retrieval) -> DocumentsTrace:
                     chosen.asset_type_ids.intersection(passage.chunk.asset_type_ids)
                 ),
                 asset_ids=sorted(chosen.asset_ids.intersection(passage.chunk.asset_ids)),
+                via_summary=passage.via_summary,
             )
             for passage in found.passages
         ],

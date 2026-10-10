@@ -148,7 +148,9 @@ def create_app(
         try:
             taken = await service.take(request)
         except TurnRefused as refused:
-            return JSONResponse(status_code=refused.status, content={"detail": str(refused)})
+            # The code, where there is one, is what the caller acts on. The detail is for reading.
+            content = {"detail": str(refused), "code": refused.code}
+            return JSONResponse(status_code=refused.status, content=content)
         # Every turn that comes out, of any kind, is recorded here and nowhere else.
         recorder.record(taken)
         if taken.kind is TurnKind.UNAVAILABLE:
