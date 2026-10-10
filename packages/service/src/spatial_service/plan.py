@@ -10,6 +10,7 @@ The tools, and what each produces:
 
     resolve_place        a place mention           -> places (one, or the turn stops)
     resolve_asset_type   an asset-type mention     -> asset types (a set)
+    resolve_asset        an asset mention          -> an asset (one, or the turn stops)
     assets_in_scope      a scope and types, both optional references -> assets
     aggregate            assets, and a scale level to count them by  -> groups
 
@@ -22,6 +23,13 @@ The step cap is six. The longest place chain worth reading in one question is
 three deep ("room 107 on level 1 of 50.34"), then a type, the assets and a count
 over them. Plans over the cap are rejected, never truncated: running a shortened
 plan would answer a different question.
+
+A mention may be a follow-up reference: words that name nothing themselves and point
+back into the conversation ("that one", "like it", "the second one"). It says where it
+points, at what an earlier turn resolved or at a candidate a clarification offered,
+and the step that resolves it reads conversation state and looks nothing up
+(conversation.py). An asset mention is only ever one of these so far: nothing finds an
+asset by its name yet.
 
 A plan that may not run raises a trigger, unbound-reference when a reference in
 it binds to nothing and plan-invalid otherwise, which buys it one recovery call.
@@ -36,7 +44,7 @@ import json
 from enum import StrEnum
 from typing import Any, ClassVar, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from spatial_service.recovery import TriggerKind
 
@@ -51,6 +59,8 @@ class QuestionShape(StrEnum):
     ASSET_CONTAINMENT = "asset-containment"
     # "Which floor has the most lights?": assets counted per space of a scale level.
     ASSET_AGGREGATION = "asset-aggregation"
+    # "Where is that one?": one asset an earlier turn resolved, and where it sits.
+    ASSET_LOCATION = "asset-location"
     # A question whose next step depends on what an earlier one finds. No steps:
     # the turn abstains, it does not loop.
     STEP_DEPENDENT = "step-dependent"
@@ -65,6 +75,14 @@ DECLINED = (QuestionShape.STEP_DEPENDENT, QuestionShape.UNSUPPORTED)
 class MentionKind(StrEnum):
     PLACE = "place"
     ASSET_TYPE = "asset-type"
+    ASSET = "asset"
+
+
+class FollowUpTarget(StrEnum):
+    # What an earlier turn resolved: "that one", "there", "like it".
+    EARLIER_TURN = "earlier-turn"
+    # A candidate the pending clarification offered: "the second one".
+    CANDIDATE = "candidate"
 
 
 class ConstraintKind(StrEnum):
@@ -76,11 +94,30 @@ class _Model(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
 
+class Refers(_Model):
+    """Where a follow-up reference points. The model says where, code finds what."""
+
+    to: FollowUpTarget
+    # Which candidate, counted from 1 in the order the clarification offered them.
+    ordinal: int | None = None
+
+    @model_validator(mode="after")
+    def _ordinal_goes_with_candidate(self) -> Refers:
+        # Checked here and not with ge=1, to keep number keywords out of the schema.
+        if self.to is FollowUpTarget.CANDIDATE and (self.ordinal is None or self.ordinal < 1):
+            raise ValueError("a candidate reference needs an ordinal, counted from 1")
+        if self.to is FollowUpTarget.EARLIER_TURN and self.ordinal is not None:
+            raise ValueError("only a candidate reference takes an ordinal")
+        return self
+
+
 class Mention(_Model):
     id: str = Field(pattern=r"^m[0-9]+$")
     # The words of the question that name it, as written.
     text: str = Field(min_length=1, max_length=200)
     kind: MentionKind
+    # Set when the words are a follow-up reference. Then nothing is looked up by them.
+    refers: Refers | None = None
 
 
 class Constraint(_Model):
@@ -127,6 +164,15 @@ class ResolveAssetType(_Step):
     mention: str
 
 
+class ResolveAsset(_Step):
+    """The one asset a mention points back at. By follow-up reference only, so far."""
+
+    RESOLVES: ClassVar[MentionKind] = MentionKind.ASSET
+
+    tool: Literal["resolve_asset"]
+    mention: str
+
+
 class AssetsInScope(_Step):
     """Every visible asset under one scope node. One step, however many spaces lie under it."""
 
@@ -152,14 +198,15 @@ class Aggregate(_Step):
 
 # Every tool a step can call. A plain union, not a discriminated one: that would
 # put a oneOf in the schema, which strict structured output does not take.
-Step = ResolvePlace | ResolveAssetType | AssetsInScope | Aggregate
+Step = ResolvePlace | ResolveAssetType | AssetsInScope | Aggregate | ResolveAsset
 # The steps that resolve a mention.
-Resolving = (ResolvePlace, ResolveAssetType)
+Resolving = (ResolvePlace, ResolveAssetType, ResolveAsset)
 STEPS: dict[str, type[_Step]] = {
     "resolve_place": ResolvePlace,
     "resolve_asset_type": ResolveAssetType,
     "assets_in_scope": AssetsInScope,
     "aggregate": Aggregate,
+    "resolve_asset": ResolveAsset,
 }
 
 # What each tool's steps produce. A reference binds only to an earlier step whose
@@ -169,6 +216,8 @@ PRODUCES = {
     "resolve_asset_type": "asset-types",
     "assets_in_scope": "assets",
     "aggregate": "groups",
+    # Nothing reads one asset yet. A proximity step could, as where to start from.
+    "resolve_asset": "asset",
 }
 
 # The tool a shape's last step calls: the one whose result is the answer.
@@ -176,6 +225,7 @@ ENDS_IN = {
     QuestionShape.PLACE_LOCATION: "resolve_place",
     QuestionShape.ASSET_CONTAINMENT: "assets_in_scope",
     QuestionShape.ASSET_AGGREGATION: "aggregate",
+    QuestionShape.ASSET_LOCATION: "resolve_asset",
 }
 
 
