@@ -29,6 +29,7 @@ from spatial_core.records import (
     PERSONAS,
     Asset,
     AssetType,
+    Edge,
     Persona,
     Space,
     VisibleAsset,
@@ -60,6 +61,21 @@ def _venue_input(venue: Venue) -> dict[str, Any]:
     definition = asdict(venue)
     canonical = json.dumps(definition, ensure_ascii=False, sort_keys=True).encode()
     return {"definition": definition, "sha256": hashlib.sha256(canonical).hexdigest()}
+
+
+def _default_origin(venue: Venue, edges: Iterable[Edge]) -> dict[str, str] | None:
+    """The venue's default origin as the edge that comes in through it from outside."""
+    if venue.default_origin is None:
+        return None
+    entering = [
+        edge for edge in edges if edge.door == venue.default_origin and edge.from_id is None
+    ]
+    if len(entering) != 1:
+        raise BuildError(
+            f"the default origin {venue.default_origin} is not a door that opens from "
+            "outside into one mapped space"
+        )
+    return {"door": venue.default_origin, "edge": entering[0].id}
 
 
 def _clearance_counts(
@@ -146,7 +162,9 @@ def build(
         for space_id in sorted(sets[persona])
     ]
     # Each element once: a door makes an edge each way.
-    door_clearances = {edge.door: edge.door_clearance for edge in structure.edges}
+    door_clearances = {
+        edge.door: edge.door_clearance for edge in structure.edges if edge.door is not None
+    }
     unrecognised = sum(
         1
         for cleared in [
@@ -225,6 +243,7 @@ def build(
     manifest = {
         "snapshot": date,
         "venue": venue.id,
+        "default_origin": _default_origin(venue, structure.edges),
         "inputs": {
             "pull": stored.pin,
             "venue": _venue_input(venue),

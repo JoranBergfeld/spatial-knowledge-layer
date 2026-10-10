@@ -219,7 +219,10 @@ def visible_sets(spaces: Iterable[Space], edges: Iterable[Edge]) -> dict[Persona
     by_id = {space.id: space for space in spaces}
     entering: dict[str, list[Clearance]] = {}
     for edge in edges:
-        entering.setdefault(edge.to_id, []).append(edge.clearance)
+        # A snap has no door. It joins a room to circulation for routes, and says
+        # nothing about who may enter either.
+        if edge.door is not None:
+            entering.setdefault(edge.to_id, []).append(edge.clearance)
 
     sets = {}
     for persona in PERSONAS:

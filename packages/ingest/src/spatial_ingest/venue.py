@@ -18,6 +18,9 @@ class Venue:
     # The closed ways that together are the site. Everything outside them is dropped.
     part_ways: tuple[int, ...]
     overpass_url: str
+    # The door every persona starts a route from when a question names no origin:
+    # one entrance, as an OSM node ("node/123"). None until one is picked.
+    default_origin: str | None = None
 
 
 def load_venue(name_or_path: str) -> Venue:
@@ -38,4 +41,5 @@ def load_venue(name_or_path: str) -> Venue:
         bbox=(south, west, north, east),
         part_ways=tuple(int(way) for way in data["part_ways"]),
         overpass_url=data["overpass_url"],
+        default_origin=data.get("default_origin"),
     )
