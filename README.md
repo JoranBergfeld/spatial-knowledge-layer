@@ -4,11 +4,12 @@ A retrieval system that answers questions about a physical place: its structure,
 assets installed in it, and the documents anchored to both. The demo venue is KIT
 Campus Süd, from OpenStreetMap.
 
-Ingestion runs here: `ingest build` turns a pinned OpenStreetMap pull into a snapshot
-bundle holding the venue's structure and its equipment, `ingest load` writes a bundle
-into Postgres and checks it, and `ingest promote` makes a loaded snapshot current. The
-service answers three kinds of question so far: where a place is, what is installed in
-one, and which floor or building has the most of something. Documents are a later issue.
+Ingestion runs here: `ingest build` turns a pinned OpenStreetMap pull and a document
+corpus into a snapshot bundle holding the venue's structure, its equipment and its
+prose, `ingest load` writes a bundle into Postgres and a search index and checks both,
+and `ingest promote` makes a loaded snapshot current. The service answers three kinds
+of question so far: where a place is, what is installed in one, and which floor or
+building has the most of something. Nothing retrieves the documents yet.
 
 The spec and the glossary live in the site's repository
 ([spec](https://github.com/JoranBergfeld/personal-website/issues/73), `CONTEXT.md`).
@@ -50,13 +51,21 @@ seed/assets.jsonl       the generated assets
 seed/maintenance_tasks.jsonl  planned jobs per type, after COBie 2.4 Job
 seed/service_events.jsonl     the latest service per asset, after COBie v3 Event
 seed/visible_assets.jsonl, seed/visible_asset_types.jsonl
+documents/originals/    the pages and manuals as fetched. Private, like the pull
+documents/fetched.json  where each original came from, its sha256 and its link check
+documents/documents.jsonl     one line per document: anchors, clearance class, date, link
+documents/chunks.jsonl        the English passages the index will hold
+documents/translations.jsonl  each translated passage beside its original, and what made it
+documents/vectors.jsonl       each chunk's embedding
 manifest.json           input hashes, what produced each part, counts, the sourced-clearance
-                        share, the inventory's seed, fill rates and attribute catalogue
+                        share, the inventory's seed, fill rates and attribute catalogue,
+                        and for the documents: links, translations and ingestion spend
 ```
 
-Run it again and it reuses the stored pull and writes the same bytes. `--refetch`
-replaces the pull. If the stored pull no longer matches the hash it was pinned with,
-the build stops.
+Run it again and it reuses the stored pull, originals, translations and vectors, calls
+nobody and writes the same bytes. `--refetch` replaces the pull, `--refetch-documents`
+fetches the originals again. If the stored pull or an original no longer matches the
+hash it was pinned with, the build stops.
 
 Overpass rate limits after a few heavy queries. The fallback is a dated regional extract
 (Geofabrik has them), which the build cuts down to the same box and pins the same way:
@@ -119,6 +128,58 @@ the way `clearance.unrecognised_access` does for spaces. It never blocks a load.
 attribute catalogue (per asset type, which attributes at least one asset carries) is in
 the manifest and in the `attribute_catalogue` view.
 
+## Documents
+
+The snapshot's prose comes from a corpus: a published JSON file listing sources, each
+with a URL, a language and what it is about. Text is never in the corpus. Build fetches
+it. KIT's is `packages/ingest/src/spatial_ingest/corpora/kit-campus-sued.json`: the 36
+lecture hall pages of KIT's Studium und Behinderung office, each keyed by the building
+number the page itself starts with. `--documents <file>` builds from another corpus. A
+venue with no corpus gets no documents and needs no model.
+
+It lists no manuals yet. I have not found manual links for the generated types that I
+would trust, so that half is built and tested but the real corpus is pages only. Add a
+manual as a `"kind": "manual"` entry anchored to its `asset_type` ids.
+
+A document has one or more anchors, each a space, an asset type or one asset. Build
+resolves them against the snapshot and drops what it cannot find, so a manual is only
+ingested for a type that is actually placed, and its file is not even fetched otherwise.
+A source with no anchor left is skipped, and the manifest says which and why.
+
+Originals stay in `documents/originals/` and nothing ever serves them. A chunk carries
+the original's URL, its language and the sha256 of the passage's original text, and
+that is all that leaves the bundle. The German is in `translations.jsonl`, also private.
+
+Build needs these for a corpus with anything in it:
+
+```
+AZURE_OPENAI_ENDPOINT            the Azure OpenAI resource
+AZURE_OPENAI_API_KEY             its key
+AZURE_OPENAI_API_VERSION         optional, 2024-10-21 by default
+SPATIAL_COMPOSITION_DEPLOYMENT   translates. The same deployment that composes answers
+SPATIAL_EMBEDDING_DEPLOYMENT     embeds the chunks. The RAG pipeline's, for now
+```
+
+| Rule | What it does |
+| --- | --- |
+| `anchor-building-by-ref@1` | A building number in the corpus is the building space whose sourced `ref` is that number. The anchor is flagged derived. No such building, no anchor. |
+| `text-from-source@1` | The text of an HTML page, a PDF or a plain text file. HTML keeps what a reader sees, one line per block element. Where the corpus names two markers, only what lies between them is read, which keeps navigation and footers out. |
+| `chunk-by-paragraph@1` | Whole paragraphs packed into passages of at most 1200 characters. A longer paragraph is cut at line ends, then sentence ends. |
+| `translate-to-english@1` | A passage that is not English is translated by the composition deployment. This is the prompt's version, not a rule: the words are in `models.py`, and the manifest records the deployment, the model and this version for every translated document. |
+| `numbers-in-words@1` | In the English text, a clock time ("16:30" is "sixteen thirty"), a floor ordinal ("2nd floor" is "second floor", "floor 2" is "floor two") and a small standalone count up to twenty ("2 steps" is "two steps") are written out. A measured value with its unit stays as digits ("90 cm", "37.1 MHz", "5 minutes"), and so does a number that names something ("room 7", "channel 2", "10.11"). |
+| `date-from-last-change@1` | A page's document date is the day its own "letzte Änderung:" line says. No line, no date: the document is undated. Manuals are never dated. The day it was fetched is never its date. |
+| `document-clearance@1` | A document's clearance class is its strictest anchor's. A manual shared by several types takes the least restrictive of those types first. An anchor with no clearance of its own (an untagged building) limits nothing. It lives in `packages/core`, with the other clearance rules. |
+
+Fetching an original is also its link check: the source answered or it did not, and
+the manifest and every chunk record `online` or `offline` with the day build asked. A
+source that goes offline later keeps the original the bundle already has, so it is
+still quoted. One that never answered has nothing to quote and is skipped.
+
+Spend is tokens per deployment times a dated rate from
+`packages/ingest/src/spatial_ingest/rates.json`, the same rows as the site's budget
+table. A deployment with no row is recorded with its tokens and no cost, and the build
+says so. Right now that is the translation deployment: I have no price for it yet.
+
 ## Load and promote
 
 The layer has a Postgres database of its own on the site's instance. Ingestion owns its
@@ -138,6 +199,21 @@ uv run ingest load --date 2026-09-15      # write bundles/2026-09-15 and check i
 uv run ingest promote --date 2026-09-15   # make it current
 uv run ingest promote --date 2026-09-08   # roll back: the same command, the previous date
 ```
+
+Load also writes the document chunks to a search index, one per snapshot, named after
+the venue and the date (`spatial-kit-campus-sued-20260915`). It finds the search
+service in the environment:
+
+```
+AZURE_SEARCH_ENDPOINT   the Azure AI Search service
+AZURE_SEARCH_API_KEY    an admin key, since load creates and drops indexes
+SPATIAL_SEARCH_DIR      instead of those two: a directory, one JSON file per index
+```
+
+The directory is a stand-in for tests and laptops. It stores chunks and vectors and
+ranks nothing. The Azure index is hybrid: text and title searchable for BM25, a vector
+field for the embedding, and the anchor ids by kind, the flattened ancestor ids and the
+clearance class all filterable. Load makes no model call. The vectors are the bundle's.
 
 Load writes a snapshot as three schemas (ADR 0001 in the site's repository):
 
@@ -167,16 +243,26 @@ then writes, then checks what it wrote:
   through a visible asset
 - the visible assets and the visible asset types nest, like the spaces
 - each table holds as many rows as the manifest says
+- every chunk is anchored to spaces, types and assets of the snapshot
+- every chunk's clearance class is its strictest anchor's, by `document-clearance@1`
+- every chunk's ancestor ids are its space and asset anchors' paths
+- the index holds as many chunks as the manifest says, in all and per clearance class
+
+The chunk checks run over what the index gives back, not over the bundle. The link
+check is reported in the log and never blocks.
 
 A snapshot that fails any of them is recorded as failed in `control.snapshots` and
-`promote` refuses it. Its schemas stay, for looking at. Loading the same bundle again
-rebuilds the schemas from scratch, so it yields the same stores.
+`promote` refuses it. Its schemas and its index stay, for looking at. Loading the same
+bundle again rebuilds the schemas and the index from scratch, so it yields the same stores.
 
 Load never moves the current-snapshot pointer (`control.current_snapshot`, one row), and
 it refuses to reload the current or the previous snapshot, since conversations may be
 held on either. Promote is one update of that row: the snapshot it names becomes current
-and the one it replaces becomes previous. The next load drops every snapshot older than
-both; snapshots loaded but not yet promoted stay until they are older than both too.
+and the one it replaces becomes previous. The row names the search index too, in
+`search_index` and `previous_search_index`, beside the snapshot whose row in
+`control.snapshots` names the schema pair. The next load drops every snapshot older than
+both, index included; snapshots loaded but not yet promoted stay until they are older
+than both too.
 
 The service gets a login that is a member of `spatial_reader`. That role can read
 `control` and the views schemas and nothing else; it cannot write anywhere. Ingestion's
@@ -224,6 +310,17 @@ Things that are rough or just not done yet:
   Entrances on a building outline make edges only where a room's outline holds them too.
 - A door node shared by spaces on different levels joins them. The door's `level` is not
   checked against theirs.
+- KIT's pages anchor to buildings only. The hall inside the building is not matched to
+  a room: only about a third of the hall names match an OSM room name.
+- A document's title is the corpus's and stays in the original language.
+- `numbers-in-words` works off lists of units and label words. A unit that is missing
+  gets its number written out. It also leaves a count alone when the sentence before
+  it ended in a full stop ("Mind the stairs. 2 of them are loose"), since that looks
+  like an abbreviation.
+- If a model call fails midway, the build stops and the translations it already paid
+  for are not kept. The corpus is 36 short pages, so I have not bothered.
+- The real Azure AI Search client is only tested against a stand-in on localhost.
+  Nobody has pointed it at a real service yet.
 
 ## The service
 
@@ -513,8 +610,17 @@ in `SPATIAL_TEST_DATABASE_URL` and make databases of their own. Without it they 
 except in CI. The turn tests run against a fixture snapshot in memory and a scripted
 model, and need neither.
 
+No test makes a paid call. The venue's pages, the manuals, Azure OpenAI and Azure AI
+Search are all stand-ins on localhost (`packages/ingest/tests/stubs.py`), and the root
+`conftest.py` points every test's search index at a temporary directory.
+
 ## Data
 
 Venue structure is © OpenStreetMap contributors, under the
 [ODbL](https://opendatacommons.org/licenses/odbl/). The `osm/` half of a bundle is the
 derived database, and the rules above are the method.
+
+The accessibility pages are KIT's (Studium und Behinderung), which allows reuse for
+educational, scientific or private purposes with the source named. They are translated,
+quoted and linked. They are not OSM's and never go in the `osm` schema: chunks live in
+the search index only.
