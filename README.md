@@ -249,7 +249,36 @@ SPATIAL_PLANNING_DEPLOYMENT      the deployment that plans
 SPATIAL_COMPOSITION_DEPLOYMENT   the deployment that composes, which must be a different one
 SPATIAL_LLM_TIMEOUT_SECONDS      optional, 30 by default
 SPATIAL_TREE_NODE_CAP            optional, 200 by default: how much of the tree the planner sees
+OTEL_EXPORTER_OTLP_ENDPOINT      optional; where metrics are pushed. Unset, none are
 ```
+
+### Metrics
+
+The service says how it is used, not who uses it
+(`packages/service/src/spatial_service/metrics.py`). Three counters, each a count of
+turns, pushed over OTLP/HTTP to `OTEL_EXPORTER_OTLP_ENDPOINT` plus `/v1/metrics`:
+
+```
+spatial.turns            every turn
+spatial.repair_calls     turns that spent a recovery call, repaired or not
+spatial.coverage_gaps    turns that ended in a coverage-gap abstention
+```
+
+The repair-call rate is `spatial.repair_calls` over `spatial.turns`, worked out wherever
+the metrics land. Every point has the same four labels: `shape`, `persona`, `turn_kind`
+and `snapshot`. There is no visitor, conversation, space or asset id, and a test holds
+the set to those four.
+
+- `shape` is `unknown` when no plan got as far as running, which covers a model that
+  could not be reached.
+- `turn_kind` is the turn's kind, except that a coverage-gap abstention is
+  `coverage-gap` here and not `abstention`. A scope with no recorded installations is
+  the one thing that produces it so far.
+- A request the service refuses (409, 503 with no snapshot) is not a turn and is not
+  counted.
+- Headers, timeout and the export interval come from the usual `OTEL_` variables, 60
+  seconds between pushes by default. `OTEL_SERVICE_NAME` overrides `spatial-service`.
+- With no endpoint the OTel SDK is never loaded and recording does nothing.
 
 A turn is three stages, plus a fourth only when the plan cannot run. A turn makes at
 most three model calls however many steps run (plan, recover, compose), and the host
@@ -330,7 +359,7 @@ as "1 sourced". The host writes those words, not the model. An answer that names
 half of a split count without the other is rejected.
 
 No recorded installations is not zero. A scope with nothing visible installed in it at
-all is a `coverage-gap` turn, worded by the host, with no composition call. In a count
+all is a `coverage-gap` abstention, worded by the host, with no composition call. In a count
 across floors, a floor with nothing recorded is listed apart and never ranked, and the
 answer has to name it. A floor with other things installed and none of the type asked
 for is a zero, and is ranked.
@@ -358,14 +387,13 @@ cuts it at the floors. It has not been measured on the real campus yet, since th
 no bundle to hand here. 200 is a guess until then. With a few hundred buildings it will
 most likely cut at the buildings or above.
 
-A turn is one of five kinds:
+A turn is one of four kinds:
 
 | Kind | When |
 | --- | --- |
 | `answer` | Every step found what it needed and the composition passed its checks. |
 | `clarification` | A step matched several places, or the mention was a bare room number, which is never a label. The candidates are all visible to the persona, at most six. The state carries them, and the next turn's planner sees their labels. |
-| `abstention` | `no-such-place` when nothing the persona can see matches. A place beyond clearance and a place that does not exist give the same abstention, and the same trace but for the words asked. `no-such-asset-type` is the same for a type. Also `nothing-at-scale-level`, `step-dependent-question`, `unsupported-question`, `plan-rejected` and `composition-rejected`. |
-| `coverage-gap` | `no-recorded-installations`: nothing the persona can see is installed in the scope asked about. A gap in the data, not a count of zero. |
+| `abstention` | `no-such-place` when nothing the persona can see matches. A place beyond clearance and a place that does not exist give the same abstention, and the same trace but for the words asked. `no-such-asset-type` is the same for a type. Also `nothing-at-scale-level`, `step-dependent-question`, `unsupported-question`, `plan-rejected` and `composition-rejected`. And `coverage-gap`, with the turn's `gap` saying which: so far only `no-recorded-installations`, when nothing the persona can see is installed in the scope asked about. A gap in the data, not a count of zero. |
 | `unavailable` | A model could not be reached. HTTP 503, no answer, and the prior state back unchanged. |
 
 Every turn carries its trace, the new conversation state, each model call's token usage

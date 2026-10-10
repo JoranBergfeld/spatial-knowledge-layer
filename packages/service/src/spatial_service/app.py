@@ -14,6 +14,8 @@ Configuration is from the environment:
     SPATIAL_LLM_TIMEOUT_SECONDS      optional, 30 by default
     SPATIAL_TREE_NODE_CAP            optional: how many spaces of the collapsed tree the
                                      planner is shown, 200 by default
+    OTEL_EXPORTER_OTLP_ENDPOINT      optional; where metrics are pushed (metrics.py).
+                                     Unset, none are.
 """
 
 from __future__ import annotations
@@ -25,7 +27,9 @@ from dataclasses import dataclass
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
+from spatial_service import metrics
 from spatial_service.llm import Deployment, Llm
+from spatial_service.metrics import Metrics
 from spatial_service.store import PostgresStore, Store
 from spatial_service.tree import NODE_CAP
 from spatial_service.turn import Turn, TurnKind, TurnRefused, TurnRequest, TurnService
@@ -97,8 +101,11 @@ def azure_llm(settings: Settings) -> Llm:
     )
 
 
-def create_app(store: Store, llm: Llm, tree_node_cap: int = NODE_CAP) -> FastAPI:
+def create_app(
+    store: Store, llm: Llm, recorder: Metrics | None = None, *, tree_node_cap: int = NODE_CAP
+) -> FastAPI:
     service = TurnService(store, llm, tree_node_cap)
+    recorder = recorder or Metrics()
     app = FastAPI(title="spatial-knowledge-layer")
 
     @app.post("/turn", response_model=Turn)
@@ -107,6 +114,8 @@ def create_app(store: Store, llm: Llm, tree_node_cap: int = NODE_CAP) -> FastAPI
             taken = await service.take(request)
         except TurnRefused as refused:
             return JSONResponse(status_code=refused.status, content={"detail": str(refused)})
+        # Every turn that comes out, of any kind, is recorded here and nowhere else.
+        recorder.record(taken)
         if taken.kind is TurnKind.UNAVAILABLE:
             return JSONResponse(status_code=503, content=taken.model_dump(mode="json"))
         return taken
@@ -120,8 +129,12 @@ def main() -> None:
     settings = Settings.from_env()
     store = PostgresStore(settings.database_url)
     store.check_role()
-    uvicorn.run(
-        create_app(store, azure_llm(settings), settings.tree_node_cap),
-        host=os.environ.get("SPATIAL_SERVICE_HOST", "127.0.0.1"),
-        port=int(os.environ.get("SPATIAL_SERVICE_PORT", "8000")),
-    )
+    recorder = metrics.from_env()
+    try:
+        uvicorn.run(
+            create_app(store, azure_llm(settings), recorder, tree_node_cap=settings.tree_node_cap),
+            host=os.environ.get("SPATIAL_SERVICE_HOST", "127.0.0.1"),
+            port=int(os.environ.get("SPATIAL_SERVICE_PORT", "8000")),
+        )
+    finally:
+        recorder.close()

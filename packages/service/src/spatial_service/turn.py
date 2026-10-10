@@ -14,11 +14,13 @@
 So a turn makes at most three model calls, however many steps run: CALL_CAP, which
 the host enforces rather than trusts.
 
-Every turn is one of five kinds. An answer. A clarification, when a mention names
-more than one place the persona can see. An abstention, with its cause. A coverage
-gap, when the scope asked about has no recorded installations, which is a gap in
-the data and not a count of zero. Or unavailable, when a model could not be
-reached, which answers nothing at all.
+Every turn is one of four kinds. An answer. A clarification, when a mention names
+more than one place the persona can see. An abstention, with its cause. Or
+unavailable, when a model could not be reached, which answers nothing at all.
+
+A coverage gap is an abstention with a cause of its own, and says which gap: so
+far only that the scope asked about has no recorded installations, which is a gap
+in the data and not a count of zero.
 
 Nothing the persona cannot see reaches a model: the planner gets the question,
 the collapsed tree of visible spaces and the labels of pending candidates, and the
@@ -104,7 +106,6 @@ class TurnKind(StrEnum):
     ANSWER = "answer"
     CLARIFICATION = "clarification"
     ABSTENTION = "abstention"
-    COVERAGE_GAP = "coverage-gap"
     UNAVAILABLE = "unavailable"
 
 
@@ -116,13 +117,21 @@ class AbstentionCause(StrEnum):
     NO_SUCH_ASSET_TYPE = "no-such-asset-type"
     # The scope holds no visible space of the scale level asked for.
     NOTHING_AT_SCALE_LEVEL = "nothing-at-scale-level"
-    # The one cause a coverage gap has so far: nothing visible is installed in scope.
-    NO_RECORDED_INSTALLATIONS = "no-recorded-installations"
     # The next step would depend on what an earlier one found.
     STEP_DEPENDENT_QUESTION = "step-dependent-question"
     UNSUPPORTED_QUESTION = "unsupported-question"
     PLAN_REJECTED = "plan-rejected"
     COMPOSITION_REJECTED = "composition-rejected"
+    # The venue's data does not reach far enough. The turn's `gap` says where. The
+    # metrics count it apart (metrics.py).
+    COVERAGE_GAP = "coverage-gap"
+
+
+class CoverageGap(StrEnum):
+    """Which gap a coverage-gap abstention found."""
+
+    # Nothing the persona can see is installed in the scope asked about.
+    NO_RECORDED_INSTALLATIONS = "no-recorded-installations"
 
 
 class Candidate(_Model):
@@ -312,6 +321,8 @@ class Trace(_Model):
 class Turn(_Model):
     kind: TurnKind
     cause: AbstentionCause | None = None
+    # Which gap, when the cause is a coverage gap.
+    gap: CoverageGap | None = None
     segments: list[Segment]
     candidates: list[Candidate] = []
     state: ConversationState
@@ -502,12 +513,14 @@ class _Turn:
         segments: list[Segment],
         *,
         cause: AbstentionCause | None = None,
+        gap: CoverageGap | None = None,
         candidates: list[Candidate] | None = None,
         state: ConversationState | None = None,
     ) -> Turn:
         return Turn(
             kind=kind,
             cause=cause,
+            gap=gap,
             segments=segments,
             candidates=candidates or [],
             state=state or self.state,
@@ -784,9 +797,10 @@ def _coverage_gap(turn: _Turn, venue: Venue, found: ScopeResult, state: Conversa
     else:
         segment = Segment(text=NO_INSTALLATIONS_ANYWHERE, citations=[])
     return turn.finish(
-        TurnKind.COVERAGE_GAP,
+        TurnKind.ABSTENTION,
         [segment],
-        cause=AbstentionCause.NO_RECORDED_INSTALLATIONS,
+        cause=AbstentionCause.COVERAGE_GAP,
+        gap=CoverageGap.NO_RECORDED_INSTALLATIONS,
         state=state,
     )
 

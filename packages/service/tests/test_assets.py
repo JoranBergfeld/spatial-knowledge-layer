@@ -121,7 +121,8 @@ def test_none_of_a_type_where_other_things_are_installed_is_a_count_of_zero() ->
 def test_a_scope_with_nothing_installed_is_a_coverage_gap_not_a_zero(kind: str | None) -> None:
     turn = ask("visitor", "What is in 30.10 room 107?", installed("30.10 room 107", kind), None)
 
-    assert (turn["kind"], turn["cause"]) == ("coverage-gap", "no-recorded-installations")
+    assert (turn["kind"], turn["cause"]) == ("abstention", "coverage-gap")
+    assert turn["gap"] == "no-recorded-installations"
     assert texts(turn) == ["No installations are recorded for 30.10 room 107."]
     assert [c["space_id"] for c in turn["segments"][0]["citations"]] == ["osm:way/2001"]
     # The host says it. No model is asked to word a gap, so none can dress it up as a count.
