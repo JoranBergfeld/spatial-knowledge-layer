@@ -70,6 +70,8 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 from spatial_service.recovery import TriggerKind
 
 STEP_CAP = 6
+# How long a mention's words may be.
+MENTION_CAP = 200
 # Route caps. A route step may return runners-up to other places of a set.
 ROUTE_STEP_CAP = 2
 ALTERNATIVES_CAP = 3
@@ -150,7 +152,7 @@ class Refers(_Model):
 class Mention(_Model):
     id: str = Field(pattern=r"^m[0-9]+$")
     # The words of the question that name it, as written.
-    text: str = Field(min_length=1, max_length=200)
+    text: str = Field(min_length=1, max_length=MENTION_CAP)
     kind: MentionKind
     # Set when the words are a follow-up reference. Then nothing is looked up by them.
     refers: Refers | None = None

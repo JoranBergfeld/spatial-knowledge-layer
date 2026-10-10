@@ -43,7 +43,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from spatial_core.records import Persona
 from spatial_service.places import CLARIFY_CAP, Outcome, Venue
-from spatial_service.plan import FollowUpTarget, Mention, MentionKind
+from spatial_service.plan import MENTION_CAP, FollowUpTarget, Mention, MentionKind
 
 # How many assets an answer may rest on and still leave them in state. More than a
 # clarification can name could never be told apart by "that one".
@@ -64,7 +64,9 @@ class _Model(BaseModel):
 class Pending(_Model):
     """A clarification asked and not yet answered."""
 
-    mention: str
+    # The words that were ambiguous. Client-held like the rest, and told to the planner
+    # again, so capped where a plan's own mention is.
+    mention: str = Field(max_length=MENTION_CAP)
     candidates: list[str]
     # What the candidates are: places or assets.
     kind: MentionKind = MentionKind.PLACE

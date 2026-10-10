@@ -122,6 +122,26 @@ def test_an_ordinal_past_the_last_candidate_offers_them_again() -> None:
     assert (reference["outcome"], reference["ids"], reference["ordinal"]) == ("none", [], 5)
 
 
+def test_a_pending_mention_longer_than_a_mention_may_be_is_refused() -> None:
+    # The state comes back from a client, and the pending mention goes on to the planner.
+    # A plan's own mention is capped at 200 characters, so this one is too.
+    def pending(mention: str) -> dict[str, Any]:
+        held = {"mention": mention, "candidates": [ROOM_107_B, ROOM_107_A], "kind": "place"}
+        return state_for("visitor", pending=held)
+
+    plan = where_is(pointing("place", "the second one", 2))
+    inputs: list[str] = []
+
+    kept = ask("visitor", "the second one", plan, state=pending("x" * 200))
+    refused = ask(
+        "visitor", "the second one", plan, state=pending("x" * 201), status=422, inputs=inputs
+    )
+
+    assert kept["kind"] == "answer"
+    assert refused["detail"][0]["loc"] == ["body", "state", "pending", "mention"]
+    assert inputs == []
+
+
 # --- an asset from an earlier turn --------------------------------------------------------
 
 
