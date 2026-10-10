@@ -92,6 +92,9 @@ class AbstentionCause(StrEnum):
     UNSUPPORTED_QUESTION = "unsupported-question"
     PLAN_REJECTED = "plan-rejected"
     COMPOSITION_REJECTED = "composition-rejected"
+    # The venue's data does not reach far enough. Nothing ends a turn in it yet;
+    # the metrics already count it apart (metrics.py).
+    COVERAGE_GAP = "coverage-gap"
 
 
 class Candidate(_Model):

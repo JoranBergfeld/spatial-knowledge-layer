@@ -248,7 +248,36 @@ AZURE_OPENAI_API_VERSION         optional, 2024-10-21 by default
 SPATIAL_PLANNING_DEPLOYMENT      the deployment that plans
 SPATIAL_COMPOSITION_DEPLOYMENT   the deployment that composes, which must be a different one
 SPATIAL_LLM_TIMEOUT_SECONDS      optional, 30 by default
+OTEL_EXPORTER_OTLP_ENDPOINT      optional; where metrics are pushed. Unset, none are
 ```
+
+### Metrics
+
+The service says how it is used, not who uses it
+(`packages/service/src/spatial_service/metrics.py`). Three counters, each a count of
+turns, pushed over OTLP/HTTP to `OTEL_EXPORTER_OTLP_ENDPOINT` plus `/v1/metrics`:
+
+```
+spatial.turns            every turn
+spatial.repair_calls     turns that spent a recovery call, repaired or not
+spatial.coverage_gaps    turns that ended in a coverage-gap abstention
+```
+
+The repair-call rate is `spatial.repair_calls` over `spatial.turns`, worked out wherever
+the metrics land. Every point has the same four labels: `shape`, `persona`, `turn_kind`
+and `snapshot`. There is no visitor, conversation, space or asset id, and a test holds
+the set to those four.
+
+- `shape` is `unknown` when no plan got as far as running, which covers a model that
+  could not be reached.
+- `turn_kind` is the turn's kind, except that a coverage-gap abstention is
+  `coverage-gap` here and not `abstention`. Nothing produces one yet, so that series
+  stays empty for now.
+- A request the service refuses (409, 503 with no snapshot) is not a turn and is not
+  counted.
+- Headers, timeout and the export interval come from the usual `OTEL_` variables, 60
+  seconds between pushes by default. `OTEL_SERVICE_NAME` overrides `spatial-service`.
+- With no endpoint the OTel SDK is never loaded and recording does nothing.
 
 A turn is three stages, plus a fourth only when the plan cannot run. A turn makes at
 most three model calls however many steps run (plan, recover, compose), and the host
