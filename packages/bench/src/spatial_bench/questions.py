@@ -167,3 +167,57 @@ def from_cobie(
 def from_bundle(bundle: Path, out: Path, per_template: int = 6) -> QuestionSet:
     """Gold for the demo venue's regression, read off its bundle."""
     return generate("bundle", "--bundle", str(bundle), "--per-template", str(per_template), out=out)
+
+
+# The hand-written questions. A person writes these, about fifty of them, and an
+# evaluation run reports them apart from the template ones. There are none yet.
+HAND_WRITTEN_FORMAT = "spatial-hand-written@1"
+HAND_WRITTEN = "hand-written"
+HAND_WRITTEN_FILE = Path("questions") / "hand-written.json"
+
+
+class HandWritten(_Model):
+    """One hand-written question. Gold is written by hand too, in the template questions' terms."""
+
+    id: str
+    persona: Persona
+    shape: str
+    question: str
+    expected: Expected
+    # Set it on both copies when the same words are asked under two personas.
+    pair: str | None = None
+
+
+class HandWrittenSet(_Model):
+    format: str
+    # The venue the gold was written against. The test bench, by its venue id.
+    venue: str
+    questions: list[HandWritten]
+
+
+def load_hand_written(path: Path) -> list[Question]:
+    """The hand-written questions in ``path``. No file is no questions, which is fine."""
+    if not path.exists():
+        return []
+    try:
+        found = HandWrittenSet.model_validate_json(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise GoldError(f"cannot read the hand-written questions {path}: {error}") from error
+    if found.format != HAND_WRITTEN_FORMAT:
+        raise GoldError(f"{path} is {found.format}, this reads {HAND_WRITTEN_FORMAT}")
+    ids = [question.id for question in found.questions]
+    if len(ids) != len(set(ids)):
+        raise GoldError(f"{path} has the same question id twice")
+    return [
+        Question(
+            id=f"{HAND_WRITTEN}/{question.id}",
+            pair=f"{HAND_WRITTEN}/{question.pair or question.id}",
+            shape=question.shape,
+            template=HAND_WRITTEN,
+            persona=question.persona,
+            question=question.question,
+            slots=Slots(),
+            expected=question.expected,
+        )
+        for question in found.questions
+    ]

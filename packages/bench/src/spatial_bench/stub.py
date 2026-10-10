@@ -145,10 +145,12 @@ def _refs(told: Any) -> list[str]:
 class ScriptedClient(BaseChatClient):
     """A chat client that answers from a function of the payload and keeps every input."""
 
-    def __init__(self, reply: Reply, inputs: list[str]) -> None:
+    def __init__(self, reply: Reply, inputs: list[str], usage: tuple[int, int] = (0, 0)) -> None:
         super().__init__()
         self.reply = reply
         self.inputs = inputs
+        # Input and output tokens it reports per call. Zero, unless a test of spend says otherwise.
+        self.usage = usage
 
     async def _inner_get_response(  # type: ignore[override]
         self, *, messages: Sequence[Message], stream: bool, options: dict[str, Any], **_: Any
@@ -159,17 +161,26 @@ class ScriptedClient(BaseChatClient):
         return ChatResponse(
             messages=[Message(role="assistant", contents=[answer])],
             usage_details=UsageDetails(
-                input_token_count=0, output_token_count=0, total_token_count=0
+                input_token_count=self.usage[0],
+                output_token_count=self.usage[1],
+                total_token_count=sum(self.usage),
             ),
         )
 
 
-def scripted_llm(questions: Sequence[Question], inputs: list[str]) -> Llm:
+def scripted_llm(
+    questions: Sequence[Question],
+    inputs: list[str],
+    *,
+    usage: tuple[int, int] = (0, 0),
+    composer: Reply = compose,
+) -> Llm:
     """The scripted planner and composer as the service's two deployments.
 
     Everything either is sent, instructions included, is appended to ``inputs``.
+    ``usage`` is the input and output tokens each call reports.
     """
     return Llm(
-        planning=Deployment(PLANNER, ScriptedClient(planner(questions), inputs)),
-        composition=Deployment(COMPOSER, ScriptedClient(compose, inputs)),
+        planning=Deployment(PLANNER, ScriptedClient(planner(questions), inputs, usage)),
+        composition=Deployment(COMPOSER, ScriptedClient(composer, inputs, usage)),
     )
