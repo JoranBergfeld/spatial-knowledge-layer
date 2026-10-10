@@ -9,9 +9,11 @@ from typing import Any
 
 import pytest
 
-from mini_campus import PERSON, VENUE, overpass_response, write_pbf
+from mini_campus import PERSON, VENUE, mini_campus, overpass_response, write_pbf
 from spatial_ingest.cli import main
-from spatial_ingest.osm import from_osm_file
+from spatial_ingest.osm import from_osm_file, from_overpass_json
+from spatial_ingest.structure import build_structure
+from spatial_ingest.venue import load_venue
 from stubs import Overpass
 
 DATE = "2026-09-15"
@@ -524,6 +526,24 @@ def test_a_doorless_room_is_snapped_to_circulation_within_two_metres(bundle: Pat
     assert manifest(bundle)["counts"]["snapped_rooms"] == 1
     produced_by = manifest(bundle)["parts"]["osm/edges.jsonl"]["produced_by"]
     assert "snap-doorless-room@1" in produced_by
+
+
+def test_a_doorless_corridor_or_area_is_not_snapped_only_a_room_is(venue_file: Path) -> None:
+    # The mini campus, with an area and a second corridor that nobody mapped a door on.
+    # Both sit about a metre off corridor 1006, like room 1010 does.
+    osm = mini_campus()
+    osm.rect(1011, 7, 12.1, 10, 12.9, indoor="area", level="0")
+    osm.rect(1012, 3, 10, 6, 10.9, indoor="corridor", level="0")
+    body = {"version": 0.6, "elements": [*osm.nodes, *osm.ways, *osm.relations]}
+
+    built = build_structure(
+        from_overpass_json(json.dumps(body).encode()), load_venue(str(venue_file))
+    )
+
+    assert {"osm:way/1011", "osm:way/1012"} <= {space.id for space in built.spaces}
+    snapped = sorted(edge.id for edge in built.edges if edge.door is None)
+    assert snapped == ["snap:osm:way/1006>osm:way/1010", "snap:osm:way/1010>osm:way/1006"]
+    assert built.counts["snapped_rooms"] == 1
 
 
 def test_a_snap_shows_nobody_a_room(bundle: Path) -> None:
