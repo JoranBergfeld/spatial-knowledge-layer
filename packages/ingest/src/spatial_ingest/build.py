@@ -20,7 +20,7 @@ from __future__ import annotations
 import datetime
 import hashlib
 import json
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import asdict
 from importlib.metadata import version
 from pathlib import Path
@@ -42,7 +42,14 @@ from spatial_core.records import (
 )
 from spatial_core.stores import index_name
 from spatial_ingest import documents, models, pull, summaries
-from spatial_ingest.corpus import default_corpus, read_corpus
+from spatial_ingest.corpus import Corpus, default_corpus, read_corpus
+from spatial_ingest.handover.definition import Definition, check_pins
+from spatial_ingest.handover.records import (
+    ASSET_RULES,
+    DOCUMENT_RULES,
+    STRUCTURE_RULES,
+    read_handover,
+)
 from spatial_ingest.rules import fire, tiers
 from spatial_ingest.seed import generate as inventory
 from spatial_ingest.structure import EDGE_RULES, RULES, TREE_RULES, build_structure
@@ -61,6 +68,26 @@ def _jsonl(records: Iterable[BaseModel]) -> bytes:
         for record in records
     ]
     return "".join(line + "\n" for line in lines).encode()
+
+
+_PartSpec = tuple[str, Sequence[BaseModel], tuple[str, ...]]
+
+
+def _write_parts(bundle: Path, specs: Iterable[_PartSpec]) -> dict[str, Any]:
+    """Write each part as JSON lines and return what the manifest says of it."""
+    tool = f"spatial-ingest@{version('spatial-ingest')}"
+    parts: dict[str, Any] = {}
+    for name, records, rules in specs:
+        content = _jsonl(records)
+        path = bundle / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+        parts[name] = {
+            "sha256": hashlib.sha256(content).hexdigest(),
+            "records": len(records),
+            "produced_by": [tool, *rules],
+        }
+    return parts
 
 
 def _venue_input(venue: Venue) -> dict[str, Any]:
@@ -220,54 +247,46 @@ def build(
     translation_rules = (models.PROMPT_VERSION,) if prose.translations else ()
     summary_rules = (summaries.PROMPT_VERSION,) if prose.summaries else ()
 
-    tool = f"spatial-ingest@{version('spatial-ingest')}"
-    parts: dict[str, Any] = {}
-    for name, records, rules in (
-        ("osm/spaces.jsonl", structure.spaces, RULES),
-        ("osm/spans.jsonl", structure.spans, TREE_RULES),
-        ("osm/edges.jsonl", structure.edges, EDGE_RULES),
-        ("osm/visible_spaces.jsonl", visible, visible_rules),
-        ("osm/asset_types.jsonl", sourced.types, fire_rules),
-        ("osm/assets.jsonl", sourced.assets, (*fire_rules, *TREE_RULES)),
+    parts = _write_parts(
+        bundle,
         (
-            "osm/visible_assets.jsonl",
-            [v for v in visible_assets if v.asset_id in sourced_assets],
-            asset_visible_rules,
+            ("osm/spaces.jsonl", structure.spaces, RULES),
+            ("osm/spans.jsonl", structure.spans, TREE_RULES),
+            ("osm/edges.jsonl", structure.edges, EDGE_RULES),
+            ("osm/visible_spaces.jsonl", visible, visible_rules),
+            ("osm/asset_types.jsonl", sourced.types, fire_rules),
+            ("osm/assets.jsonl", sourced.assets, (*fire_rules, *TREE_RULES)),
+            (
+                "osm/visible_assets.jsonl",
+                [v for v in visible_assets if v.asset_id in sourced_assets],
+                asset_visible_rules,
+            ),
+            (
+                "osm/visible_asset_types.jsonl",
+                [v for v in visible_types if v.type_id in sourced_types],
+                asset_visible_rules,
+            ),
+            ("seed/asset_types.jsonl", seeded.types, inventory.RULES),
+            ("seed/assets.jsonl", seeded.assets, inventory.RULES),
+            ("seed/maintenance_tasks.jsonl", seeded.tasks, seed_rules),
+            ("seed/service_events.jsonl", seeded.events, seed_rules),
+            (
+                "seed/visible_assets.jsonl",
+                [v for v in visible_assets if v.asset_id not in sourced_assets],
+                asset_visible_rules,
+            ),
+            (
+                "seed/visible_asset_types.jsonl",
+                [v for v in visible_types if v.type_id not in sourced_types],
+                asset_visible_rules,
+            ),
+            (documents.DOCUMENTS_PART, prose.documents, (*documents.RULES, *translation_rules)),
+            (documents.CHUNKS_PART, prose.chunks, (*documents.RULES, *translation_rules)),
+            (documents.TRANSLATIONS_PART, prose.translations, translation_rules),
+            (summaries.PART, prose.summaries, summary_rules),
+            (documents.VECTORS_PART, prose.vectors, ()),
         ),
-        (
-            "osm/visible_asset_types.jsonl",
-            [v for v in visible_types if v.type_id in sourced_types],
-            asset_visible_rules,
-        ),
-        ("seed/asset_types.jsonl", seeded.types, inventory.RULES),
-        ("seed/assets.jsonl", seeded.assets, inventory.RULES),
-        ("seed/maintenance_tasks.jsonl", seeded.tasks, seed_rules),
-        ("seed/service_events.jsonl", seeded.events, seed_rules),
-        (
-            "seed/visible_assets.jsonl",
-            [v for v in visible_assets if v.asset_id not in sourced_assets],
-            asset_visible_rules,
-        ),
-        (
-            "seed/visible_asset_types.jsonl",
-            [v for v in visible_types if v.type_id not in sourced_types],
-            asset_visible_rules,
-        ),
-        (documents.DOCUMENTS_PART, prose.documents, (*documents.RULES, *translation_rules)),
-        (documents.CHUNKS_PART, prose.chunks, (*documents.RULES, *translation_rules)),
-        (documents.TRANSLATIONS_PART, prose.translations, translation_rules),
-        (summaries.PART, prose.summaries, summary_rules),
-        (documents.VECTORS_PART, prose.vectors, ()),
-    ):
-        content = _jsonl(records)
-        path = bundle / name
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(content)
-        parts[name] = {
-            "sha256": hashlib.sha256(content).hexdigest(),
-            "records": len(records),
-            "produced_by": [tool, *rules],
-        }
+    )
 
     manifest = {
         "snapshot": date,
@@ -306,6 +325,142 @@ def build(
         "documents": {"index": index_name(venue.id, date), **prose.summary},
     }
     manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    return bundle
+
+
+def build_handover(
+    *,
+    definition: Definition,
+    date: str,
+    out: Path,
+    handover: Path,
+    refetch_documents: bool = False,
+    model_client: Callable[[], models.Models] = models.from_env,
+) -> Path:
+    """The test bench's bundle, from a handover the operator fetched into ``handover``.
+
+    The same bundle as the demo venue's, and the same load. All of it is sourced,
+    so it all lands in the bundle's sourced half and the seed half stays empty.
+    Nothing is generated for the bench.
+    """
+    bundle = out / date
+    pins = check_pins(definition, handover)
+    read = read_handover(definition, handover)
+    spaces, types, assets = list(read.spaces), list(read.types), list(read.assets)
+
+    # No doors and no edges in a handover, so every room is visible by its own clearance.
+    sets = clearance.visible_sets(spaces, [])
+    visible = [
+        VisibleSpace(persona=persona, space_id=space_id)
+        for persona in PERSONAS
+        for space_id in sorted(sets[persona])
+    ]
+    visible_assets, visible_types = _visible_assets(assets, types, sets)
+    visible_rules = (*STRUCTURE_RULES, clearance.VISIBLE_RULE)
+    asset_visible_rules = (*visible_rules, clearance.TYPE_RULE, clearance.ASSET_VISIBLE_RULE)
+
+    canonical = json.dumps(
+        [source.model_dump(mode="json") for source in read.sources],
+        ensure_ascii=False,
+        sort_keys=True,
+    ).encode()
+    corpus = Corpus(
+        venue=definition.id,
+        html_content_between=None,
+        sources=read.sources,
+        sha256=hashlib.sha256(canonical).hexdigest(),
+        name=f"{definition.cobie.file}#Document",
+    )
+
+    def ocr_text(url: str) -> tuple[bytes, str] | None:
+        path = read.texts.get(url)
+        return (path.read_bytes(), "text/plain; charset=utf-8") if path is not None else None
+
+    prose = documents.ingest(
+        corpus=corpus,
+        bundle=bundle,
+        spaces=spaces,
+        types=types,
+        assets=assets,
+        models=model_client,
+        today=datetime.datetime.now(datetime.UTC).date().isoformat(),
+        refetch=refetch_documents,
+        fetcher=ocr_text,
+    )
+    summary_rules = (summaries.PROMPT_VERSION,) if prose.summaries else ()
+    document_rules = (*DOCUMENT_RULES, *documents.RULES)
+
+    parts = _write_parts(
+        bundle,
+        (
+            ("osm/spaces.jsonl", spaces, STRUCTURE_RULES),
+            ("osm/visible_spaces.jsonl", visible, visible_rules),
+            ("osm/asset_types.jsonl", types, ASSET_RULES),
+            ("osm/assets.jsonl", assets, ASSET_RULES),
+            ("osm/maintenance_tasks.jsonl", read.tasks, ()),
+            ("osm/visible_assets.jsonl", visible_assets, asset_visible_rules),
+            ("osm/visible_asset_types.jsonl", visible_types, asset_visible_rules),
+            (documents.DOCUMENTS_PART, prose.documents, document_rules),
+            (documents.CHUNKS_PART, prose.chunks, document_rules),
+            (documents.TRANSLATIONS_PART, prose.translations, ()),
+            (summaries.PART, prose.summaries, summary_rules),
+            (documents.VECTORS_PART, prose.vectors, ()),
+        ),
+    )
+    rooms = [space for space in spaces if space.tier.value == tiers.ROOM]
+    manifest = {
+        "snapshot": date,
+        "venue": definition.id,
+        # What kind of venue this is. The demo venue's bundles do not say.
+        "source": definition.source,
+        "inputs": {
+            "venue": definition.pin(),
+            "handover": {"files": pins},
+            "documents": corpus.pin(),
+        },
+        "parts": parts,
+        "counts": read.counts,
+        "clearance": {
+            "rooms": len(rooms),
+            # A handover carries no access data. Every clearance is an authored default.
+            "rooms_sourced": 0,
+            "sourced_share": 0.0,
+            "authored_defaults": sum(
+                1 for room in rooms if room.clearance and room.clearance.authored_default
+            ),
+            "rooms_by_persona": {
+                persona.value: sum(
+                    1 for room in rooms if room.clearance and room.clearance.persona is persona
+                )
+                for persona in PERSONAS
+            },
+            "visible_spaces": {
+                persona.value: sum(1 for entry in visible if entry.persona is persona)
+                for persona in PERSONAS
+            },
+        },
+        "inventory": {
+            "seed": None,
+            "sourced": {"asset_types": len(types), "assets": len(assets)},
+            "generated": {"asset_types": 0, "assets": 0},
+            "types_by_persona": {
+                persona.value: sum(1 for kind in types if kind.clearance.persona is persona)
+                for persona in PERSONAS
+            },
+            "unrecognised_categories": sum(
+                1 for kind in types if kind.clearance.unrecognised_category
+            ),
+            "visible_assets": {
+                persona.value: sum(1 for v in visible_assets if v.persona is persona)
+                for persona in PERSONAS
+            },
+            "attribute_catalogue": _catalogue(assets),
+        },
+        "documents": {"index": index_name(definition.id, date), **prose.summary},
+    }
+    (bundle / MANIFEST_FILE).write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
     return bundle

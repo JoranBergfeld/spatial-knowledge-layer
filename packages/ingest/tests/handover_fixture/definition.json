@@ -1,0 +1,26 @@
+{
+  "id": "mini-bench",
+  "source": "handover",
+  "handover": {
+    "name": "A hand-made handover for tests",
+    "licence": "none, it is made up"
+  },
+  "cobie": {
+    "file": "handover.xlsx",
+    "sha256": "9db689da0fd67a4040cc53f0308c64c095b8c60140d14769ed819282fd59ecf1"
+  },
+  "ifc": [
+    {
+      "file": "model.ifc",
+      "sha256": "74a15fc9af8c4fbd11dfc9df5c5d53f18307690770509325dd3716b324f3ac31"
+    }
+  ],
+  "ocr_dir": "ocr",
+  "origin": {
+    "lon": 0.0,
+    "lat": 0.0
+  },
+  "placeholder_manufacturers": [
+    "supplycompany@usace.army.mil"
+  ]
+}

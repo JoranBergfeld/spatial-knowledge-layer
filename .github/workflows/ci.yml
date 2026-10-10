@@ -50,4 +50,23 @@ jobs:
       - name: Test
         env:
           SPATIAL_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
-        run: uv run pytest
+        run: uv run pytest --ignore=packages/bench
+
+      # Everything below is the evaluation's deterministic half. No model is called:
+      # the planner and the composer are scripted. The test bench here is the small
+      # hand-made handover in packages/ingest/tests, never the real one.
+
+      - name: Gold generation
+        # -I -S: no site-packages, so the gold scripts cannot import the layer.
+        run: |
+          uv run python -I -S gold cobie \
+            --workbook packages/ingest/tests/handover_fixture/handover.xlsx \
+            --ocr packages/ingest/tests/handover_fixture/ocr \
+            --out "$RUNNER_TEMP/gold.json"
+
+      - name: Invariants, tool correctness and both leak checks
+        # Builds and loads the bench and the mini campus, which runs the load
+        # invariants, then asks every gold question. A leak fails this step.
+        env:
+          SPATIAL_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+        run: uv run pytest packages/bench

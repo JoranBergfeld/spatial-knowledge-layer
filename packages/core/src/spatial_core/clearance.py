@@ -20,6 +20,10 @@ misclassifies something is fixed by changing the rule.
     visible-assets@1               an asset is visible when its type is cleared and
                                    its space is visible; a type only through a
                                    visible asset
+    clearance-from-space-category@1  the test bench only: a space's OmniClass Table 13
+                                   category to the lowest persona it admits. A
+                                   handover has no access tags, so every one is
+                                   an authored default
     document-clearance@1           a document takes its strictest anchor's clearance;
                                    a manual shared by several types takes the
                                    least restrictive of those types first
@@ -51,6 +55,7 @@ EDGE_RULE = "edge-clearance@1"
 VISIBLE_RULE = "visible-by-edges@1"
 TYPE_RULE = "clearance-from-omniclass@1"
 ASSET_VISIBLE_RULE = "visible-assets@1"
+SPACE_CATEGORY_RULE = "clearance-from-space-category@1"
 DOCUMENT_RULE = "document-clearance@1"
 
 # The published mapping. Any value not listed fails closed to maintenance.
@@ -144,6 +149,38 @@ OMNICLASS: Mapping[str, Persona] = {
 _TABLE_23 = re.compile(r"\s*(23-\d{2}(?: \d{2}){0,5})(?!\d)")
 
 
+# The test bench's own mapping over OmniClass Table 13 (Spaces by Function), by code
+# prefix. It is not the demo venue's rule, on purpose: a handover has no access
+# tags to read. Circulation, restrooms, waiting and reception are visitor. Plant
+# and service rooms are maintenance. Anything else, a missing category included,
+# is staff.
+_SPACE_TIERS: Mapping[Persona, tuple[str, ...]] = {
+    Persona.VISITOR: (
+        "13-11 11 31",  # reception space
+        "13-41 11 14 21",  # restroom
+        "13-51 31 11",  # waiting room
+        "13-85 11 11",  # corridor
+        "13-85 21 11",  # stairway
+        "13-85 31",  # vestibules and other transitional circulation
+    ),
+    Persona.MAINTENANCE: (
+        "13-75 41 24",  # hazardous material storage
+        "13-81 11 99",  # other general facility service spaces
+        "13-81 21 11",  # equipment room
+        "13-81 21 17",  # mechanical room
+        "13-81 21 21",  # electrical room
+        "13-81 21 31",  # elevator shaft
+        "13-81 31",  # service distribution spaces
+        "13-91 11 11 33",  # loading dock
+    ),
+}
+SPACE_CATEGORIES: Mapping[str, Persona] = {
+    prefix: persona for persona, prefixes in _SPACE_TIERS.items() for prefix in prefixes
+}
+UNLISTED_SPACE_CATEGORY = Persona.STAFF
+_TABLE_13 = re.compile(r"\s*(13-\d{2}(?: \d{2}){0,5})(?!\d)")
+
+
 def from_access(value: str) -> Clearance:
     """The clearance a sourced `access` value maps to. Unrecognised values fail closed."""
     return Clearance(
@@ -207,6 +244,25 @@ def type_clearance(code: str | None) -> Clearance:
         rule=TYPE_RULE,
         authored_default=True,
         unrecognised_category=not listed,
+    )
+
+
+def space_category_clearance(category: str | None) -> Clearance:
+    """A test-bench space's clearance from its Table 13 category. Always an authored default.
+
+    Only the numeric code is matched, by its longest listed prefix, never the title
+    after it. A missing category, or one the table does not list, is staff.
+    """
+    found = _TABLE_13.match(category) if category else None
+    listed: list[str] = []
+    if found:
+        digits = _code_digits(found.group(1))
+        listed = [p for p in SPACE_CATEGORIES if digits.startswith(_code_digits(p))]
+    return Clearance(
+        persona=SPACE_CATEGORIES[max(listed, key=len)] if listed else UNLISTED_SPACE_CATEGORY,
+        access=None,
+        rule=SPACE_CATEGORY_RULE,
+        authored_default=True,
     )
 
 
