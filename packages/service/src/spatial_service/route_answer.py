@@ -15,9 +15,8 @@ from __future__ import annotations
 from pydantic import BaseModel, ConfigDict
 
 from spatial_core import circulation
-from spatial_core.records import Space
 from spatial_service.executor import Execution
-from spatial_service.places import Venue
+from spatial_service.places import Venue, label
 from spatial_service.routes import (
     CONSTANTS,
     OPEN_SPACE_RULE,
@@ -115,10 +114,6 @@ class RouteTrace(_Model):
     steps: list[RouteStepTrace]
 
 
-def _label(space: Space) -> str | None:
-    return space.label.value if space.label else None
-
-
 def _one(venue: Venue, step: str, found: Found, target: Target | None, run: Routed) -> RouteOut:
     passages = []
     derived = []
@@ -148,7 +143,7 @@ def _one(venue: Venue, step: str, found: Found, target: Target | None, run: Rout
         passages.append(
             Passage(
                 space_id=space.id,
-                label=_label(space),
+                label=label(space),
                 mode=leg.mode,
                 levels=leg.levels,
                 seconds=round(leg.seconds, 1),
@@ -174,13 +169,13 @@ def _one(venue: Venue, step: str, found: Found, target: Target | None, run: Rout
         step=step,
         origin=Endpoint(
             space_id=start.id,
-            label=_label(start),
+            label=label(start),
             default=run.default_origin,
             door=found.entered_by.door if found.entered_by else None,
         ),
         destination=Endpoint(
             space_id=end.id,
-            label=_label(end),
+            label=label(end),
             asset_ids=list(target.assets) if target else [],
             snapped_m=round(target.snapped_m, 1)
             if target and target.snapped_m is not None

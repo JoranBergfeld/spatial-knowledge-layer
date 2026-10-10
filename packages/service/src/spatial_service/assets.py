@@ -33,17 +33,12 @@ from dataclasses import dataclass
 
 from spatial_core.records import Asset, AssetType, RecordProvenance, Space
 from spatial_service.attributes import FillRate, apply
-from spatial_service.places import Outcome, Venue, normalise, tier
+from spatial_service.places import Outcome, Venue, normalise, stem, tier
 from spatial_service.plan import Filter
 
 
-def _stem(word: str) -> str:
-    # Enough to fold "lights" onto "light". Not a stemmer.
-    return word[:-1] if len(word) > 3 and word.endswith("s") else word
-
-
 def _words(text: str) -> frozenset[str]:
-    return frozenset(_stem(word) for word in re.findall(r"\w+", normalise(text)))
+    return frozenset(stem(word) for word in re.findall(r"\w+", normalise(text)))
 
 
 def check_type_arguments(text: str) -> list[str]:
