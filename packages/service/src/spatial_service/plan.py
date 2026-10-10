@@ -12,11 +12,12 @@ The tools, and what each produces:
     resolve_asset_type   an asset-type mention     -> asset types (a set)
     assets_in_scope      a scope and types, both optional references -> assets
     aggregate            assets, and a scale level to count them by  -> groups
+    retrieve_documents   anchors (a step's assets, or its place) and a query -> passages
 
 A reference binds only to an earlier step that produces what it reads. Nothing
-reads groups, and nothing that resolves a mention reads assets, so a plan cannot
-say "take whichever came out on top and look inside it". A question like that is
-its own shape, step-dependent, and gets an abstention.
+reads groups or passages, and nothing that resolves a mention reads assets, so a
+plan cannot say "take whichever came out on top and look inside it". A question
+like that is its own shape, step-dependent, and gets an abstention.
 
 The step cap is six. The longest place chain worth reading in one question is
 three deep ("room 107 on level 1 of 50.34"), then a type, the assets and a count
@@ -25,6 +26,9 @@ plan would answer a different question.
 
 A plan that may not run raises a trigger, unbound-reference when a reference in
 it binds to nothing and plan-invalid otherwise, which buys it one recovery call.
+
+A document shape says what its retrieval is anchored by: assets for asset-document,
+a place for place-document. A plan that mixes them up is invalid.
 
 To add a tool: write its step model with READS for its references, add it to Step
 and STEPS, give it a row in PRODUCES, and teach the executor to run it.
@@ -51,6 +55,11 @@ class QuestionShape(StrEnum):
     ASSET_CONTAINMENT = "asset-containment"
     # "Which floor has the most lights?": assets counted per space of a scale level.
     ASSET_AGGREGATION = "asset-aggregation"
+    # "What does the manual say about servicing the unit in X?": the assets under a
+    # scope, and passages of the documents anchored to them or to their types.
+    ASSET_DOCUMENT = "asset-document"
+    # "What does the accessibility page say about X?": passages anchored to a place.
+    PLACE_DOCUMENT = "place-document"
     # A question whose next step depends on what an earlier one finds. No steps:
     # the turn abstains, it does not loop.
     STEP_DEPENDENT = "step-dependent"
@@ -97,7 +106,8 @@ class StepRef(_Model):
 
 class _Step(_Model):
     id: str = Field(pattern=r"^s[0-9]+$")
-    # Each reference field, and what the step it names must produce.
+    # Each reference field, and what the step it names must produce. Several
+    # words split by "|" where it takes any of them.
     READS: ClassVar[dict[str, str]] = {}
 
     def references(self) -> list[tuple[str, StepRef]]:
@@ -150,9 +160,20 @@ class Aggregate(_Step):
     by: str = Field(min_length=1, max_length=40)
 
 
+class RetrieveDocuments(_Step):
+    """Search the documents anchored to what a step found: its assets, or its place."""
+
+    READS: ClassVar[dict[str, str]] = {"anchors": "assets|places"}
+
+    tool: Literal["retrieve_documents"]
+    anchors: StepRef
+    # What to look for in them, in words. Only the index ever reads it.
+    query: str = Field(min_length=1, max_length=200)
+
+
 # Every tool a step can call. A plain union, not a discriminated one: that would
 # put a oneOf in the schema, which strict structured output does not take.
-Step = ResolvePlace | ResolveAssetType | AssetsInScope | Aggregate
+Step = ResolvePlace | ResolveAssetType | AssetsInScope | Aggregate | RetrieveDocuments
 # The steps that resolve a mention.
 Resolving = (ResolvePlace, ResolveAssetType)
 STEPS: dict[str, type[_Step]] = {
@@ -160,6 +181,7 @@ STEPS: dict[str, type[_Step]] = {
     "resolve_asset_type": ResolveAssetType,
     "assets_in_scope": AssetsInScope,
     "aggregate": Aggregate,
+    "retrieve_documents": RetrieveDocuments,
 }
 
 # What each tool's steps produce. A reference binds only to an earlier step whose
@@ -169,6 +191,7 @@ PRODUCES = {
     "resolve_asset_type": "asset-types",
     "assets_in_scope": "assets",
     "aggregate": "groups",
+    "retrieve_documents": "passages",
 }
 
 # The tool a shape's last step calls: the one whose result is the answer.
@@ -176,6 +199,14 @@ ENDS_IN = {
     QuestionShape.PLACE_LOCATION: "resolve_place",
     QuestionShape.ASSET_CONTAINMENT: "assets_in_scope",
     QuestionShape.ASSET_AGGREGATION: "aggregate",
+    QuestionShape.ASSET_DOCUMENT: "retrieve_documents",
+    QuestionShape.PLACE_DOCUMENT: "retrieve_documents",
+}
+
+# What a document shape's retrieval is anchored by: what the step it reads produces.
+ANCHORED_BY = {
+    QuestionShape.ASSET_DOCUMENT: "assets",
+    QuestionShape.PLACE_DOCUMENT: "places",
 }
 
 
@@ -258,10 +289,10 @@ def bind(plan: Plan) -> list[str]:
             source = earlier.get(ref.step)
             if source is None:
                 reasons.append(f"step {step.id} reads {ref.step}, which is not earlier")
-            elif PRODUCES[source.tool] != reads:
+            elif PRODUCES[source.tool] not in reads.split("|"):
                 reasons.append(
                     f"step {step.id} reads {source.id}, which produces "
-                    f"{PRODUCES[source.tool]}, not {reads}"
+                    f"{PRODUCES[source.tool]}, not {reads.replace('|', ' or ')}"
                 )
         earlier.setdefault(step.id, step)
     for constraint in plan.constraints:
@@ -291,6 +322,15 @@ def check(plan: Plan) -> list[str]:
         reasons.append(
             f"a {plan.shape} plan ends in {ENDS_IN[plan.shape]}, not {plan.steps[-1].tool}"
         )
+
+    last = plan.steps[-1] if plan.steps else None
+    if isinstance(last, RetrieveDocuments) and plan.shape in ANCHORED_BY:
+        anchored = {step.id: PRODUCES[step.tool] for step in plan.steps}.get(last.anchors.step)
+        if anchored in ANCHORED_BY.values() and anchored != ANCHORED_BY[plan.shape]:
+            reasons.append(
+                f"a {plan.shape} plan retrieves by {ANCHORED_BY[plan.shape]}, "
+                f"but step {last.id} reads {anchored}"
+            )
 
     seen: set[str] = set()
     referenced: set[str] = set()

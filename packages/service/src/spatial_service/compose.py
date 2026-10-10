@@ -17,6 +17,21 @@ The two go together: an answer naming one without the other is rejected.
 Each answer builder also says which facts the answer has to name. An answer that
 leaves one out is rejected too.
 
+A document answer gets a second list beside the facts: the passages retrieved
+this turn, by reference too (p1, p2, ...), with their text. The two lists never
+mix. A passage is cited, never a placeholder, so nothing of it is filled in, and
+a number can still only come from a fact: the digit rule holds for a document
+segment as for any other, quoted or not. What a segment says of a passage is
+checked for provenance here, and a segment that fails is dropped on its own, with
+a note for the trace, where anything wrong with a fact still rejects the lot:
+
+    it cites a passage that was not retrieved this turn
+    it quotes a span ("...") that is not, word for word, in a passage it cites
+
+Whether the passage backs what the segment says is not checked here. That is
+entailment, the backend's half, which is why each segment carries the full text
+of the passages it cites.
+
 To add an answer: build its facts with Facts, return an Answer with the payload
 the composer reads, and give the turn an instruction for the shape.
 """
@@ -34,8 +49,12 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from spatial_core.records import Asset, AssetType, RecordProvenance, Space
 from spatial_service.assets import Aggregation, ScopeResult, Tally
 from spatial_service.places import Venue, tier
+from spatial_service.retrieval import DroppedSegment, Passage, Retrieval, link
 
 _PLACEHOLDER = re.compile(r"\{(f[0-9]+)\}")
+_PASSAGE_REF = re.compile(r"p[0-9]+")
+# A quoted span: straight or curly double quotes.
+_QUOTED = re.compile(r"\"([^\"]+)\"|“([^”]+)”")
 
 # How many rows an answer spells out. The rest are counted, not named.
 ROW_CAP = 12
@@ -215,6 +234,8 @@ class Answer:
     # Count facts that are two halves of one tally: named together or not at all.
     together: list[list[str]] = field(default_factory=list)
     rows: list[Row] = field(default_factory=list)
+    # The passages retrieved this turn. The only ones a segment may cite.
+    passages: tuple[Passage, ...] = ()
 
 
 def location(venue: Venue, question: str, subject: Space) -> Answer:
@@ -370,6 +391,39 @@ def aggregation(venue: Venue, question: str, found: ScopeResult, counted: Aggreg
     return Answer(facts.items, payload, required, together, rows)
 
 
+def asset_documents(
+    venue: Venue, question: str, found: ScopeResult, retrieved: Retrieval
+) -> Answer:
+    """The assets a question is about, as containment gives them, and what was retrieved."""
+    base = containment(venue, question, found)
+    payload = {
+        **base.payload,
+        "shape": "asset-document",
+        "passages": _told_passages(retrieved),
+    }
+    return Answer(base.facts, payload, base.required, base.together, base.rows, retrieved.passages)
+
+
+def place_documents(venue: Venue, question: str, subject: Space, retrieved: Retrieval) -> Answer:
+    """The place a question is about, and what was retrieved for it."""
+    base = location(venue, question, subject)
+    payload = {
+        **base.payload,
+        "shape": "place-document",
+        "required": base.required,
+        "passages": _told_passages(retrieved),
+    }
+    return Answer(base.facts, payload, base.required, passages=retrieved.passages)
+
+
+def _told_passages(retrieved: Retrieval) -> list[dict[str, str]]:
+    """What the composer reads of each passage: its words. No id, no link, no date."""
+    return [
+        {"ref": p.ref, "kind": p.chunk.kind.value, "title": p.chunk.title, "text": p.chunk.text}
+        for p in retrieved.passages
+    ]
+
+
 def _scope(venue: Venue, facts: Facts, found: ScopeResult) -> str | None:
     """The scope as a fact, where it has a label to print. The whole venue is its root."""
     space = venue.spaces[found.scope] if found.scope is not None else venue.root
@@ -382,9 +436,33 @@ class CompositionRejected(Exception):
         self.reasons = reasons
 
 
+class PassageCitation(_Model):
+    """A passage a segment cites, with its whole text, for the entailment check elsewhere."""
+
+    ref: str
+    chunk_id: str
+    document_id: str
+    kind: str
+    title: str
+    # The ingested English text: the translation, where the original was not English.
+    text: str
+    # The spans the segment quotes from it, each found in the text word for word.
+    quotes: list[str]
+    # Where the original lives. None when the source was offline at build: then
+    # it is cited unlinked, as of the day build checked.
+    url: str | None
+    link_status: str
+    link_checked_on: str
+    translated: bool
+    # The original's language.
+    language: str
+
+
 class Segment(_Model):
     text: str
     citations: list[Citation]
+    # The passages a document segment cites. Empty for a segment of facts alone.
+    passages: list[PassageCitation] = []
 
 
 def fill(
@@ -394,6 +472,48 @@ def fill(
     together: Iterable[list[str]] = (),
 ) -> list[Segment]:
     """Turn a model's raw output into segments, or raise CompositionRejected."""
+    segments, _ = ground(text, facts, required, together)
+    return segments
+
+
+def _squash(text: str) -> str:
+    return " ".join(text.split())
+
+
+def _ungrounded(
+    segment: DraftSegment, by_passage: dict[str, Passage]
+) -> tuple[list[str], dict[str, list[str]]]:
+    """Why a segment fails provenance, and the spans it quotes, by the passage each is in."""
+    reasons = []
+    cited = [ref for ref in segment.cites if _PASSAGE_REF.fullmatch(ref)]
+    for ref in cited:
+        if ref not in by_passage:
+            reasons.append(f"cites {ref}, which is not a passage retrieved this turn")
+    known = [ref for ref in dict.fromkeys(cited) if ref in by_passage]
+    quotes: dict[str, list[str]] = {ref: [] for ref in known}
+    for match in _QUOTED.finditer(segment.text):
+        span = _squash(match[1] or match[2])
+        home = next((ref for ref in known if span in _squash(by_passage[ref].chunk.text)), None)
+        if home is None:
+            reasons.append("quotes text that is not in a passage it cites")
+        else:
+            quotes[home].append(span)
+    return reasons, quotes
+
+
+def ground(
+    text: str,
+    facts: list[Fact],
+    required: Iterable[str] = (),
+    together: Iterable[list[str]] = (),
+    passages: Iterable[Passage] = (),
+) -> tuple[list[Segment], list[DroppedSegment]]:
+    """Segments from a model's raw output, and the ones provenance dropped.
+
+    Raises CompositionRejected for anything wrong with a fact. With no passages
+    nothing is ever dropped, and a quotation mark is just punctuation.
+    """
+    by_passage = {passage.ref: passage for passage in passages}
     try:
         draft = Draft.model_validate_json(text)
     except ValidationError as error:
@@ -406,14 +526,22 @@ def fill(
     if not draft.segments:
         reasons.append("no segments")
     named: set[str] = set()
+    dropped: dict[int, list[str]] = {}
+    quoted: dict[int, dict[str, list[str]]] = {}
     for number, segment in enumerate(draft.segments, start=1):
+        if by_passage:
+            failures, quoted[number] = _ungrounded(segment, by_passage)
+            if failures:
+                dropped[number] = failures
         # Placeholders carry digits of their own ({f1}); everything around them may not.
         if any(character.isdigit() for character in _PLACEHOLDER.sub("", segment.text)):
             reasons.append(f"segment {number} contains a digit")
         used = set(_PLACEHOLDER.findall(segment.text))
         named |= used
         for ref in sorted((used | set(segment.cites)) - by_ref.keys()):
-            reasons.append(f"segment {number} names {ref}, which is not a fact")
+            # In a document answer a passage reference is provenance's to judge.
+            if not (by_passage and _PASSAGE_REF.fullmatch(ref)):
+                reasons.append(f"segment {number} names {ref}, which is not a fact")
         if not segment.cites and not used:
             reasons.append(f"segment {number} cites nothing")
         if "{" in _PLACEHOLDER.sub("", segment.text) or "}" in _PLACEHOLDER.sub("", segment.text):
@@ -432,12 +560,37 @@ def fill(
         raise CompositionRejected(reasons)
 
     segments = []
-    for segment in draft.segments:
+    for number, segment in enumerate(draft.segments, start=1):
+        if number in dropped:
+            continue
         refs = dict.fromkeys([*_PLACEHOLDER.findall(segment.text), *segment.cites])
         segments.append(
             Segment(
                 text=_PLACEHOLDER.sub(lambda m: by_ref[m[1]].text, segment.text),
-                citations=[by_ref[ref].citation for ref in refs],
+                citations=[by_ref[ref].citation for ref in refs if ref in by_ref],
+                passages=[
+                    _passage_citation(by_passage[ref], quotes)
+                    for ref, quotes in quoted.get(number, {}).items()
+                ],
             )
         )
-    return segments
+    notes = [DroppedSegment(segment=number, reasons=why) for number, why in dropped.items()]
+    return segments, notes
+
+
+def _passage_citation(passage: Passage, quotes: list[str]) -> PassageCitation:
+    chunk = passage.chunk
+    return PassageCitation(
+        ref=passage.ref,
+        chunk_id=chunk.id,
+        document_id=chunk.document_id,
+        kind=chunk.kind.value,
+        title=chunk.title,
+        text=chunk.text,
+        quotes=quotes,
+        url=link(chunk),
+        link_status=chunk.link_status.value,
+        link_checked_on=chunk.link_checked_on,
+        translated=chunk.translated,
+        language=chunk.language,
+    )
