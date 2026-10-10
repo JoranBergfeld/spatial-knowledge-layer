@@ -55,6 +55,9 @@ def test_load_indexes_each_summary_as_a_summary_chunk_of_its_document(
     assert sorted(c.id for c in by_role[ChunkRole.SUMMARY]) == sorted(
         s["id"] for s in summaries(built)
     )
+    # Only a passage is evidence. That is the one thing retrieval has to ask a chunk.
+    assert all(chunk.is_evidence for chunk in by_role[ChunkRole.PASSAGE])
+    assert not any(chunk.is_evidence for chunk in by_role[ChunkRole.SUMMARY])
     room, passage = held["room:107#summary"], held["room:107#0"]
     assert room.text == next(s["text"] for s in summaries(built) if s["id"] == room.id)
     assert room.ordinal == -1

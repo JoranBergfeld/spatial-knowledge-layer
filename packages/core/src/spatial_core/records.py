@@ -406,3 +406,8 @@ class Chunk(_Record):
     document_date: str | None = None
     link_status: LinkStatus
     link_checked_on: str
+
+    @property
+    def is_evidence(self) -> bool:
+        """Whether it may be quoted and cited. A summary never is."""
+        return self.role is ChunkRole.PASSAGE
