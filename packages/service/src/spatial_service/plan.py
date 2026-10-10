@@ -15,6 +15,9 @@ The tools, and what each produces:
                          and attribute filters                       -> assets
     aggregate            assets, and a scale level to count them by  -> groups
     retrieve_documents   anchors (a step's assets, or its place) and a query -> passages
+    places_matching      a description of places   -> a place set (one or many)
+    route                an origin and a destination -> a route
+    nearest              assets, and a place to be near -> the nearest of them
 
 A reference binds only to an earlier step that produces what it reads. Nothing
 reads groups or passages, and nothing that resolves a mention reads assets, so a
@@ -40,6 +43,11 @@ and the step that resolves it reads conversation state and looks nothing up
 (conversation.py). An asset mention is only ever one of these so far: nothing finds an
 asset by its name yet.
 
+A route's destination is a place, a place set or assets, and it ends at the nearest.
+Its origin is a place, or where an earlier route ended, or left out for the persona's
+default origin. Step-free is a flag on the step, set only when the question asks.
+A plan holds at most two route steps, each with at most three alternatives.
+
 A plan that may not run raises a trigger, unbound-reference when a reference in
 it binds to nothing and plan-invalid otherwise, which buys it one recovery call.
 
@@ -62,6 +70,9 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 from spatial_service.recovery import TriggerKind
 
 STEP_CAP = 6
+# Route caps. A route step may return runners-up to other places of a set.
+ROUTE_STEP_CAP = 2
+ALTERNATIVES_CAP = 3
 
 
 class QuestionShape(StrEnum):
@@ -82,6 +93,10 @@ class QuestionShape(StrEnum):
     ATTRIBUTE_FILTER = "attribute-filter"
     # "Where is that one?": one asset an earlier turn resolved, and where it sits.
     ASSET_LOCATION = "asset-location"
+    # "Where is the nearest extinguisher to room 107?": the nearest asset of some types.
+    PROXIMITY = "proximity"
+    # "How do I get to the Audimax?": a route between places, by modelled duration.
+    ROUTE = "route"
     # A question whose next step depends on what an earlier one finds. No steps:
     # the turn abstains, it does not loop.
     STEP_DEPENDENT = "step-dependent"
@@ -222,7 +237,10 @@ class ResolveAsset(_Step):
 class AssetsInScope(_Step):
     """Every visible asset under one scope node. One step, however many spaces lie under it."""
 
-    READS: ClassVar[dict[str, str]] = {"scope": "places", "types": "asset-types"}
+    READS: ClassVar[dict[str, str]] = {
+        "scope": "places",
+        "types": "asset-types",
+    }
 
     tool: Literal["assets_in_scope"]
     # The place to look under. None is the whole venue.
@@ -255,13 +273,68 @@ class RetrieveDocuments(_Step):
     query: str = Field(min_length=1, max_length=200)
 
 
+class PlacesMatching(_Step):
+    """Find every visible place a description fits. A set: nobody is asked which."""
+
+    RESOLVES: ClassVar[MentionKind] = MentionKind.PLACE
+
+    tool: Literal["places_matching"]
+    mention: str
+
+
+class Route(_Step):
+    """The quickest route to a destination, by modelled duration, over what the persona may walk."""
+
+    READS: ClassVar[dict[str, str]] = {
+        "origin": "places",
+        "after": "route",
+        "destination": "places|place-set|assets|asset",
+    }
+
+    tool: Literal["route"]
+    # Where it starts. None, with no `after`, is the persona's default origin.
+    origin: StepRef | None = None
+    # Start where that route ended, for a second route.
+    after: StepRef | None = None
+    # One place, a set of places, assets, or the one asset a follow-up points at.
+    # The route ends at the nearest.
+    destination: StepRef
+    # Take every stair out. Only when the question asks for it.
+    step_free: bool = False
+    # How many places of a set to route to, nearest first.
+    alternatives: int = Field(default=1, ge=1, le=ALTERNATIVES_CAP)
+
+
+class Nearest(_Step):
+    """The nearest of a step's assets to a place, or to the default origin."""
+
+    READS: ClassVar[dict[str, str]] = {
+        "assets": "assets",
+        "to": "places|asset",
+    }
+
+    tool: Literal["nearest"]
+    assets: StepRef
+    # The place to be near, or an asset, which stands for its space. None is the
+    # persona's default origin.
+    to: StepRef | None = None
+
+
 # Every tool a step can call. A plain union, not a discriminated one: that would
 # put a oneOf in the schema, which strict structured output does not take.
 Step = (
-    ResolvePlace | ResolveAssetType | AssetsInScope | Aggregate | ResolveAsset | RetrieveDocuments
+    ResolvePlace
+    | ResolveAssetType
+    | AssetsInScope
+    | Aggregate
+    | ResolveAsset
+    | RetrieveDocuments
+    | PlacesMatching
+    | Route
+    | Nearest
 )
 # The steps that resolve a mention.
-Resolving = (ResolvePlace, ResolveAssetType, ResolveAsset)
+Resolving = (ResolvePlace, ResolveAssetType, ResolveAsset, PlacesMatching)
 STEPS: dict[str, type[_Step]] = {
     "resolve_place": ResolvePlace,
     "resolve_asset_type": ResolveAssetType,
@@ -269,6 +342,9 @@ STEPS: dict[str, type[_Step]] = {
     "aggregate": Aggregate,
     "retrieve_documents": RetrieveDocuments,
     "resolve_asset": ResolveAsset,
+    "places_matching": PlacesMatching,
+    "route": Route,
+    "nearest": Nearest,
 }
 
 # What each tool's steps produce. A reference binds only to an earlier step whose
@@ -279,8 +355,11 @@ PRODUCES = {
     "assets_in_scope": "assets",
     "aggregate": "groups",
     "retrieve_documents": "passages",
-    # Nothing reads one asset yet. A proximity step could, as where to start from.
+    # A route reads one asset as where to go, a nearest step as where to be near.
     "resolve_asset": "asset",
+    "places_matching": "place-set",
+    "route": "route",
+    "nearest": "nearest",
 }
 
 # The tool a shape's last step calls: the one whose result is the answer.
@@ -292,6 +371,8 @@ ENDS_IN = {
     QuestionShape.PLACE_DOCUMENT: "retrieve_documents",
     QuestionShape.ATTRIBUTE_FILTER: "assets_in_scope",
     QuestionShape.ASSET_LOCATION: "resolve_asset",
+    QuestionShape.PROXIMITY: "nearest",
+    QuestionShape.ROUTE: "route",
 }
 
 # What a document shape's retrieval is anchored by: what the step it reads produces.
@@ -422,6 +503,12 @@ def check(plan: Plan) -> list[str]:
                 f"a {plan.shape} plan retrieves by {ANCHORED_BY[plan.shape]}, "
                 f"but step {last.id} reads {anchored}"
             )
+    routes = [step for step in plan.steps if isinstance(step, Route)]
+    if len(routes) > ROUTE_STEP_CAP:
+        reasons.append(f"the plan has {len(routes)} route steps, over the cap of {ROUTE_STEP_CAP}")
+    for route in routes:
+        if route.origin is not None and route.after is not None:
+            reasons.append(f"step {route.id} starts at a place or after a route, not both")
 
     seen: set[str] = set()
     referenced: set[str] = set()

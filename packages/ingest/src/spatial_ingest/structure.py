@@ -15,7 +15,7 @@ from shapely import STRtree, unary_union
 from shapely.geometry import mapping
 from shapely.geometry.base import BaseGeometry
 
-from spatial_core import clearance
+from spatial_core import circulation, clearance
 from spatial_core.records import (
     Ancestor,
     Edge,
@@ -26,7 +26,7 @@ from spatial_core.records import (
     ValueProvenance,
 )
 from spatial_ingest.osm import Element, OsmData
-from spatial_ingest.rules import doors, labels, levels, names, tiers
+from spatial_ingest.rules import doors, labels, levels, names, snap, tiers
 from spatial_ingest.venue import Venue
 
 # Sourced tags copied onto a space as attributes. Name, ref and level have fields
@@ -65,7 +65,13 @@ TREE_RULES = (
     levels.RULE,
 )
 CLEARANCE_RULES = (clearance.ACCESS_RULE, clearance.DEFAULT_RULE)
-EDGE_RULES = (doors.RULE, *CLEARANCE_RULES, clearance.EDGE_RULE)
+EDGE_RULES = (
+    doors.RULE,
+    *CLEARANCE_RULES,
+    clearance.EDGE_RULE,
+    circulation.TAGS_RULE,
+    snap.RULE,
+)
 RULES = (*TREE_RULES, labels.RULE, names.RULE, *CLEARANCE_RULES)
 
 
@@ -107,6 +113,10 @@ def _lists(coordinates: Any) -> Any:
     return coordinates
 
 
+def _tags(space: Space) -> dict[str, str]:
+    return {key: value.value for key, value in space.attributes.items()}
+
+
 def _label_value(label: labels.Label | None) -> Value | None:
     if label is None:
         return None
@@ -129,6 +139,8 @@ class _Join:
         self.edges: list[Edge] = []
         # Room-tier space id -> the nodes of its outline, for finding its doors.
         self.outlines: dict[str, set[int]] = {}
+        # Room-tier space id -> its shape and levels, for snapping the doorless ones.
+        self.shapes: dict[str, snap.Outline] = {}
         self.counts: Counter[str] = Counter()
         self.site_area = self._site_area(osm)
         self.site_id = f"site:{venue.id}"
@@ -154,6 +166,7 @@ class _Join:
         for element in kept[tiers.ROOM]:
             self._add_room(element)
         self._add_edges()
+        self._add_snaps()
 
     def _site_area(self, osm: OsmData) -> BaseGeometry:
         parts = []
@@ -317,6 +330,8 @@ class _Join:
             )
         )
         self.outlines[space_id] = self._outline_nodes(element)
+        if element.geometry is not None and element.geometry.geom_type != "Point":
+            self.shapes[space_id] = snap.Outline(element.geometry, occupied)
 
     def _outline_nodes(self, element: Element) -> set[int]:
         if element.type == "way":
@@ -337,6 +352,8 @@ class _Join:
         for node, space_ids in joined.items():
             door = f"node/{node}"
             door_clearance = clearance.door_clearance(self.osm.node_tags[node])
+            lon, lat = self.osm.locations.get(node, (None, None))
+            level = self._door_level(node, space_ids)
             for from_id, to_id in doors.passages(space_ids):
                 entered = self.spaces[to_id].clearance
                 # Every room-tier space has a clearance, tagged or defaulted.
@@ -351,6 +368,55 @@ class _Join:
                         clearance=clearance.edge_clearance(door_clearance, entered),
                         provenance=ValueProvenance.DERIVED,
                         rule=doors.RULE,
+                        lon=lon,
+                        lat=lat,
+                        level=level,
+                    )
+                )
+
+    def _door_level(self, node: int, space_ids: tuple[str, ...]) -> str | None:
+        """A door's own level tag if it names one level, else the one level its spaces share."""
+        tagged = levels.parse_levels(self.osm.node_tags[node].get("level"))
+        if len(tagged) == 1:
+            return tagged[0]
+        shared: set[str] | None = None
+        for space_id in space_ids:
+            value = self.spaces[space_id].levels
+            occupied = set(value.value.split(";")) if value else set()
+            shared = occupied if shared is None else shared & occupied
+        return next(iter(shared)) if shared and len(shared) == 1 else None
+
+    def _add_snaps(self) -> None:
+        with_door = {edge.to_id for edge in self.edges} | {
+            edge.from_id for edge in self.edges if edge.from_id is not None
+        }
+        walkable = [
+            space_id
+            for space_id in self.shapes
+            if circulation.is_circulation(_tags(self.spaces[space_id]))
+        ]
+        found = snap.snaps(self.shapes, self.shapes.keys() - with_door, walkable)
+        self.counts["snapped_rooms"] = len(found)
+        for joined in found:
+            for from_id, to_id in (
+                (joined.room, joined.circulation),
+                (joined.circulation, joined.room),
+            ):
+                entered = self.spaces[to_id].clearance
+                assert entered is not None
+                self.edges.append(
+                    Edge(
+                        id=f"snap:{from_id}>{to_id}",
+                        door=None,
+                        from_id=from_id,
+                        to_id=to_id,
+                        door_clearance=None,
+                        clearance=clearance.edge_clearance(None, entered),
+                        provenance=ValueProvenance.DERIVED,
+                        rule=snap.RULE,
+                        lon=joined.lon,
+                        lat=joined.lat,
+                        level=joined.level,
                     )
                 )
 
@@ -374,6 +440,7 @@ class _Join:
             counts[key] = self.counts[key]
         counts["edges"] = len(self.edges)
         counts["doors_on_no_space"] = self.counts["doors_on_no_space"]
+        counts["snapped_rooms"] = self.counts["snapped_rooms"]
         spans = tuple(sorted(self.spans, key=lambda span: (span.space_id, span.floor_id)))
         edges = tuple(sorted(self.edges, key=lambda edge: edge.id))
         return Structure(spaces, spans, edges, counts)

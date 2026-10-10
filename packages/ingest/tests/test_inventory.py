@@ -188,7 +188,7 @@ def test_each_mapped_room_draws_its_categorys_mix_and_unmapped_rooms_get_nothing
         assert in_space(bundle, space_id), space_id
     counts = manifest(bundle)["inventory"]["generated"]
     assert counts["rooms_mapped"] == 5
-    assert counts["rooms_unmapped"] == 10
+    assert counts["rooms_unmapped"] == 11
 
 
 def test_every_room_mapping_names_a_bench_category() -> None:

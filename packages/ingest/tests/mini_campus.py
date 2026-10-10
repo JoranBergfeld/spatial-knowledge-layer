@@ -25,6 +25,7 @@ Clearance, with the doors of building A:
     1009  access=staff_only: maintenance, an unrecognised value
     2001  access=customers: visitor
     and door 1106 on no outline at all
+    1010  room, untagged: staff. No door, about a metre off corridor 1006
 
 Seed inventory: 1005 is an office and 1007 an office mapped as a point, so it has
 no outline; 1002 is an auditorium, 1004 stairs and 1006 a corridor. Every other
@@ -54,6 +55,7 @@ VENUE = {
     "site_name": "Mini Campus",
     "bbox": list(BBOX),
     "part_ways": list(PART_WAYS),
+    "default_origin": "node/1101",
     "overpass_url": "http://overpass.invalid/api/interpreter",
 }
 
@@ -174,6 +176,8 @@ def mini_campus() -> _Osm:
         access="staff_only",
     )
     osm.rect(800, 7, 13, 10, 13.2, indoor="wall", level="0")
+    # No door, and about a metre off the corridor: snapped to it.
+    osm.rect(1010, 11, 12.1, 13, 13, indoor="room", level="0")
     osm.door(1101, 3, 11.5, (1006,), entrance="main", level="0")
     osm.door(1102, 8.5, 11, (1005, 1006), door="hinged", level="0")
     osm.door(1103, 8.5, 3, (1002,), door="yes", level="0", access="private")
