@@ -65,6 +65,8 @@ class FactKind(StrEnum):
     ASSET_TYPE = "asset-type"
     ASSET = "asset"
     COUNT = "count"
+    # What a filter tested, in the host's words: "no serial number recorded".
+    CONDITION = "condition"
 
 
 class Citation(_Model):
@@ -82,6 +84,8 @@ class Citation(_Model):
     record_provenance: str | None = None
     # The number a count stands for.
     count: int | None = None
+    # The attribute a condition tests.
+    attribute: str | None = None
 
 
 POSITION_RECORDED = "recorded"
@@ -119,8 +123,9 @@ class Fact:
 class Facts:
     """The facts of one answer, numbered as they are added. A place or type is added once."""
 
-    def __init__(self) -> None:
-        self.items: list[Fact] = []
+    def __init__(self, items: Iterable[Fact] = ()) -> None:
+        # Given an answer's facts, more are numbered on from them.
+        self.items: list[Fact] = list(items)
         self._seen: dict[tuple[str, str], str] = {}
 
     def _add(self, kind: FactKind, text: str, citation: Citation, **more: Any) -> str:
@@ -213,6 +218,10 @@ class Facts:
             )
         return refs
 
+    def condition(self, text: str, citation: Citation, **told: str) -> str:
+        """What a filter tested, worded by the host so the model cannot reword it."""
+        return self._add(FactKind.CONDITION, text, citation, told=told)
+
     def told(self) -> list[dict[str, str]]:
         return [{"ref": f.ref, "kind": f.kind.value, **f.told} for f in self.items]
 
@@ -243,6 +252,8 @@ class Answer:
     # Count facts that are two halves of one tally: named together or not at all.
     together: list[list[str]] = field(default_factory=list)
     rows: list[Row] = field(default_factory=list)
+    # Words the answer may not use, whole and whatever their case.
+    banned: tuple[str, ...] = ()
 
 
 def location(venue: Venue, question: str, subject: Space) -> Answer:
@@ -438,6 +449,7 @@ def fill(
     facts: list[Fact],
     required: Iterable[str] = (),
     together: Iterable[list[str]] = (),
+    banned: Iterable[str] = (),
 ) -> list[Segment]:
     """Turn a model's raw output into segments, or raise CompositionRejected."""
     try:
@@ -462,6 +474,9 @@ def fill(
             reasons.append(f"segment {number} names {ref}, which is not a fact")
         if not segment.cites and not used:
             reasons.append(f"segment {number} cites nothing")
+        for word in banned:
+            if re.search(rf"\b{re.escape(word)}\b", segment.text, re.IGNORECASE):
+                reasons.append(f"segment {number} says {word!r}")
         if "{" in _PLACEHOLDER.sub("", segment.text) or "}" in _PLACEHOLDER.sub("", segment.text):
             reasons.append(f"segment {number} has a malformed placeholder")
     for ref in required:

@@ -414,8 +414,8 @@ the set to those four.
 - `shape` is `unknown` when no plan got as far as running, which covers a model that
   could not be reached.
 - `turn_kind` is the turn's kind, except that a coverage-gap abstention is
-  `coverage-gap` here and not `abstention`. A scope with no recorded installations is
-  the one thing that produces it so far.
+  `coverage-gap` here and not `abstention`. Two things produce it: a building or
+  bigger with no recorded installations, and an attribute no asset in scope carries.
 - A request the service refuses (409, 503 with no snapshot) is not a turn and is not
   counted.
 - Headers, timeout and the export interval come from the usual `OTEL_` variables, 60
@@ -470,19 +470,20 @@ different question.
 
 ### Assets
 
-Three question shapes run on four tools. `place-location` is "where is room X".
+Five question shapes run on five tools. `place-location` is "where is room X".
 `asset-containment` is "what is installed in room X" and "where are the lights on floor
-2". `asset-aggregation` is "which floor has the most lights".
+2". `asset-aggregation` is "which floor has the most lights". `attribute-filter` is
+"which lights have no serial number" and "what falls due for service before June".
 
 | Tool | What it does |
 | --- | --- |
 | `resolve_place` | One place a mention names. As above. |
 | `resolve_asset_type` | The visible asset types a mention names: an exact name, else every word of the mention in a type's name ("lights" is every type of light). A set, so nobody is asked which. |
-| `assets_in_scope` | Every visible asset under one scope node, or under the whole venue, of the given types if any. One step and one pass over ancestor paths, however many spaces lie under the scope. No call per space. |
+| `assets_in_scope` | Every visible asset under one scope node, or under the whole venue, of the given types if any, passing the given attribute filters if any. One step and one pass over ancestor paths, however many spaces lie under the scope. No call per space. |
 | `aggregate` | Those assets counted per space of one tier under the scope. |
 | `resolve_asset` | The one asset a follow-up reference points back at. See Follow-ups. It does not find an asset by name. |
 
-That fifth tool came with a fourth shape: `asset-location` is "where is that one", and
+That fifth tool came with the fifth shape: `asset-location` is "where is that one", and
 ends in `resolve_asset`.
 
 A scale level named in the question sets two things. The place it names is the scope
@@ -504,11 +505,16 @@ print it from. A generated count fills in as "3 generated" and a sourced one bes
 as "1 sourced". The host writes those words, not the model. An answer that names one
 half of a split count without the other is rejected.
 
-No recorded installations is not zero. A scope with nothing visible installed in it at
-all is a `coverage-gap` abstention, worded by the host, with no composition call. In a count
-across floors, a floor with nothing recorded is listed apart and never ranked, and the
-answer has to name it. A floor with other things installed and none of the type asked
-for is a zero, and is ranked.
+No recorded installations is not zero. A building, or anything bigger, with nothing
+visible installed in it at all is a `coverage-gap` abstention, worded by the host, with
+no composition call. That gap is only ever stated at building level or above. Ask about
+a room or a floor with nothing in it and the layer looks at its building: if the whole
+building is empty the gap is stated for the building, and if not the turn is a plain
+`nothing-recorded` abstention that gives no reason. A room is too small a place to call
+a gap in the venue's data, and it still is not a zero. In a count across floors, a
+floor with nothing recorded is listed apart and never ranked, and the answer has to
+name it. A floor with other things installed and none of the type asked for is a zero,
+and is ranked.
 
 An asset without a placement reads as `position not recorded` in the trace, and the
 answer can say how many of the assets it found have none. A placement is never printed
@@ -517,6 +523,60 @@ as coordinates, anywhere.
 A question that needs one step's result to choose the next ("what is in the room with
 the most lights") is its own shape, `step-dependent`, and gets an abstention. The plan
 schema could not run it anyway: nothing reads what `aggregate` produces.
+
+### Attribute filters and service due
+
+`assets_in_scope` takes up to three filters. A filter is an attribute and one of four
+tests, and that is the whole vocabulary:
+
+| Test | Passes when |
+| --- | --- |
+| `recorded` | the asset carries the attribute |
+| `not-recorded` | it does not |
+| `before`, `after` | the attribute is a date and falls before or after the `date` given |
+
+There is no free predicate. A filter has three fields and the step has no other place
+to put one, an attribute's name has to look like a name, and anything else does not
+parse. That is a `plan-invalid` trigger.
+
+Which attributes exist is the attribute catalogue's to say: per asset type, the
+attributes at least one asset carries. Nothing declares it. The service reads it off
+the assets, cut to what the persona can see, and the planner is shown the names under
+`venue.attributes`. A filter on anything else is a `malformed-arguments` trigger that
+lists the names, checked before any step runs. An attribute only hidden assets carry is
+not in a visitor's catalogue, so it is rejected in the same words as one that does not
+exist. `before` and `after` on an attribute that is not a date are rejected the same way.
+
+Two attributes are not stored on any asset and are in the catalogue anyway:
+
+- `service_event` is the start of the asset's latest service event.
+- `service_due` is that, or the installation date where there is no event, plus one
+  year. It is worked out when a question asks and stored nowhere. The year is a default
+  interval, the same for every asset type. It is nobody's standard, and the trace
+  flags it: `default_interval`, `interval_years` and the rule `service-due@1`, with each
+  asset's due date and the date it was counted from.
+
+An asset that does not carry an attribute is not recorded for it, and that is all the
+layer says. It does not pass or fail `before` or `after`. It is counted apart, and the
+answer has to name that count, so "one is due" cannot pass for "the rest are not". The
+host writes the words: the condition fills in as "service due before 2026-01-01" and
+the gap as "no serial number recorded", and the model only places them. An answer that
+says "never" is thrown out, which is a blunt check and the only one on the model's own
+words.
+
+The trace carries the fill rate of every attribute filtered on, under `assets.filters`:
+how many of the assets asked about carry it, out of how many, counting only what the
+persona can see. "Asked about" is the scope and the types in the question, so the rate
+for "lights in the Audimax" is over the lights and not over everything in the room.
+
+A fill rate of zero is a `coverage-gap` abstention with `gap` set to
+`attribute-not-recorded`. The host names the attribute and no model is called. This one
+is stated at any tier, since it is about an attribute and not a place. If there are no
+assets of the type in scope at all there is no rate, and the answer is a count of zero
+as before. The gap turn still leaves its filter in the state.
+
+A filter also works under `aggregate` ("which building has the most lights with no
+service event"), in an `asset-aggregation` plan.
 
 ### The collapsed tree
 
@@ -539,7 +599,7 @@ A turn is one of four kinds:
 | --- | --- |
 | `answer` | Every step found what it needed and the composition passed its checks. |
 | `clarification` | A step matched several places, or the mention was a bare room number, which is never a label. Or a follow-up reference pointed at more than one asset. The candidates are all visible to the persona, at most six. The state carries them, and the next turn's planner sees their labels. |
-| `abstention` | `no-such-place` when nothing the persona can see matches. A place beyond clearance and a place that does not exist give the same abstention, and the same trace but for the words asked. `no-such-asset-type` is the same for a type. Also `nothing-at-scale-level`, `step-dependent-question`, `unsupported-question`, `plan-rejected` and `composition-rejected`. `nothing-referred-to` when a follow-up reference has nothing to point at. And `coverage-gap`, with the turn's `gap` saying which: so far only `no-recorded-installations`, when nothing the persona can see is installed in the scope asked about. A gap in the data, not a count of zero. |
+| `abstention` | `no-such-place` when nothing the persona can see matches. A place beyond clearance and a place that does not exist give the same abstention, and the same trace but for the words asked. `no-such-asset-type` is the same for a type. Also `nothing-at-scale-level`, `step-dependent-question`, `unsupported-question`, `plan-rejected` and `composition-rejected`. `nothing-referred-to` when a follow-up reference has nothing to point at. `nothing-recorded` is a room or floor with nothing in it, inside a building that has installations: no reason given. And `coverage-gap`, with the turn's `gap` saying which: `no-recorded-installations`, when nothing the persona can see is installed in a building or anything bigger, or `attribute-not-recorded`, when no asset asked about carries the attribute filtered on. A gap in the data, not a count of zero. Nothing else gives a reason. |
 | `unavailable` | A model could not be reached. HTTP 503, no answer, and the prior state back unchanged. |
 
 Every turn carries its trace, the new conversation state, each model call's token usage
@@ -574,6 +634,16 @@ Rough or not done yet on the asset side:
 - An answer spells out twelve rows and counts the rest.
 - A campus-wide question puts every asset id in the trace's step. That is a lot of ids.
 - Nothing uses an asset's placement yet beyond saying whether it is recorded.
+- A filter compares against a date the plan carries. The planner is not told today's
+  date, so "what is overdue" only works if the question names a day.
+- A filtered answer counts assets by type or by space. It does not list them one by one
+  with their due dates. Those are in the trace.
+- The catalogue is kept per type but checked flat: a filter on an attribute that some
+  other visible type carries passes the check and comes out as a fill rate of zero.
+- The filters in force are told to the planner, which has to repeat them in its plan
+  for a follow-up to stay filtered. Code does not apply them by itself, and no real
+  model has been asked to yet.
+- There is no test for a value ("made by X"), only for presence and for dates.
 - Clarifications, abstentions and coverage gaps are worded by the host, not composed.
 - The plan schema is a plain union of step types, because strict structured output
   refuses `oneOf`. Whether the real deployment takes it has not been tried.
@@ -590,7 +660,7 @@ new one goes back out. It holds:
 | `asset_types` | The asset types the last asset question asked for. |
 | `assets` | The assets the last containment answer rested on, if there were six or fewer. An answer over more leaves none: nobody can point at one of forty. |
 | `since` | For each of those three, the turn that set it. |
-| `constraints` | The constraints in force. Nothing fills it yet. |
+| `constraints` | The constraints in force: one per attribute filter of the last asset question, kind `attribute-filter`. Scope and types as ids, the filter (attribute, test, date) in `args`. An asset question replaces them, with none if it had no filter. Any other turn leaves them. The next planner hears them as `conversation.filters`, minus any whose attribute is not in the persona's catalogue. |
 | `route` | The last route. Nothing fills it yet. |
 | `pending` | The candidates a clarification offered, their kind (place or asset) and the turn that offered them. |
 

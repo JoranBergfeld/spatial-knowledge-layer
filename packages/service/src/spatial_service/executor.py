@@ -32,6 +32,7 @@ from spatial_service.assets import (
     check_type_arguments,
     resolve_asset_type,
 )
+from spatial_service.attributes import check_filters
 from spatial_service.conversation import HOW, ConversationState, Referred, resolve
 from spatial_service.places import Outcome, Venue, check_arguments, resolve_place
 from spatial_service.plan import (
@@ -120,7 +121,12 @@ def execute(plan: Plan, venue: Venue, state: ConversationState | None = None) ->
 
 
 def _problems(step: Step, mentions: dict[str, Mention], venue: Venue) -> list[str]:
-    """Why a step's arguments are malformed. Nothing here reads what a persona can see."""
+    """Why a step's arguments are malformed, whatever the earlier steps would find.
+
+    Nothing here looks a place or a type up. check_filters does read the persona's
+    own attribute catalogue: an attribute only hidden assets carry is rejected the
+    same as one nothing carries.
+    """
     if isinstance(step, Resolving) and mentions[step.mention].refers is not None:
         # Its words are not looked up, so there is nothing about them to reject.
         return []
@@ -135,6 +141,8 @@ def _problems(step: Step, mentions: dict[str, Mention], venue: Venue) -> list[st
         return check_type_arguments(mentions[step.mention].text)
     if isinstance(step, Aggregate):
         return check_tier(venue, step.by)
+    if isinstance(step, AssetsInScope):
+        return check_filters(venue, step.filters)
     return []
 
 
@@ -176,7 +184,7 @@ def _run(
         # A place step that got this far resolved exactly one place.
         scope = done[step.scope.step].ids[0] if step.scope is not None else None
         types = done[step.types.step].ids if step.types is not None else None
-        found = assets_in_scope(venue, scope, types)
+        found = assets_in_scope(venue, scope, types, step.filters)
         return _result(
             step, mentions, Outcome.RESOLVED, found.ids, matched=len(found.ids), found=found
         )

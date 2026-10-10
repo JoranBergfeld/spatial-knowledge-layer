@@ -10,7 +10,8 @@ and hands back the new one. What the state holds:
     assets        the assets the last asset answer rested on, when they are few
                   enough to point at (ASSET_CARRY_CAP). An answer over more holds none
     since         for each of those three, the turn that set it
-    constraints   the constraints in force. Nothing sets one yet
+    constraints   the constraints in force: the attribute filters of the last asset
+                  question (attribute_answers.py)
     route         the last route. Nothing sets one yet
     pending       the candidates a clarification offered, and what kind they are
 
