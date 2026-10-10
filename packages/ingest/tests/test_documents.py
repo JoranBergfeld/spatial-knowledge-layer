@@ -203,16 +203,12 @@ def test_every_chunk_carries_its_documents_clearance_class(bundle: Path) -> None
 def test_german_text_is_translated_by_the_composition_deployment(
     bundle: Path, openai: OpenAI
 ) -> None:
-    translated = [
-        (deployment, body["messages"][1]["content"])
-        for deployment, operation, body in openai.calls
-        if operation == "chat/completions"
-    ]
+    translated = [body["messages"][1]["content"] for body in openai.chats(summaries=False)]
 
-    assert sorted(translated) == [
-        (prose.TRANSLATION_DEPLOYMENT, prose.BAU_GERMAN),
-        (prose.TRANSLATION_DEPLOYMENT, prose.GAEDE_GERMAN),
-    ]
+    assert sorted(translated) == [prose.BAU_GERMAN, prose.GAEDE_GERMAN]
+    assert {deployment for deployment, op, _ in openai.calls if op == "chat/completions"} == {
+        prose.TRANSLATION_DEPLOYMENT
+    }
     (bau,) = chunks(bundle, "hall:bau")
     assert bau["text"] == prose.BAU_ENGLISH
     assert bau["translated"] is True
@@ -355,10 +351,12 @@ def test_every_chunk_gets_a_vector_from_the_embedding_deployment(
 ) -> None:
     vectors = {v["chunk_id"]: v for v in read_jsonl(bundle / "documents" / "vectors.jsonl")}
 
-    assert sorted(vectors) == sorted(c["id"] for c in chunks(bundle))
-    (gaede,) = chunks(bundle, "hall:gaede")
-    embedded = f"{gaede['title']}\n\n{gaede['text']}"
-    assert vectors[gaede["id"]]["vector"] == prose.embedding(embedded)
+    # A vector per passage and one per document summary. test_summaries has what is in them.
+    documents_ = {c["document_id"] for c in chunks(bundle)}
+    assert sorted(vectors) == sorted(
+        [*(c["id"] for c in chunks(bundle)), *(f"{d}#summary" for d in documents_)]
+    )
+    assert all(len(v["vector"]) == prose.DIMENSIONS for v in vectors.values())
     assert {deployment for deployment, op, _ in openai.calls if op == "embeddings"} == {
         prose.EMBEDDING_DEPLOYMENT
     }
@@ -405,7 +403,8 @@ def test_the_manifest_records_ingestion_spend(bundle: Path, openai: OpenAI) -> N
     assert by_purpose["translation"]["cost_usd"] is None
     assert spend["unpriced"] == [prose.TRANSLATION_DEPLOYMENT]
 
-    assert by_purpose["embedding"]["calls"] == 8
+    # Eight passages and seven summaries.
+    assert by_purpose["embedding"]["calls"] == 15
     assert by_purpose["embedding"]["input_tokens"] == embedded
     # 0.02 dollars a million tokens, as the rate table has it.
     assert by_purpose["embedding"]["rate"]["usd_per_million_input"] == 0.02
@@ -456,7 +455,7 @@ def test_a_translation_is_never_paid_for_twice(
 
     assert build(venue_file, corpus_file, out, "--refetch-documents") == 0
 
-    assert len(openai.made("chat/completions")) == 2
+    assert len(openai.chats(summaries=False)) == 2
     assert manifest(bundle)["documents"]["spend"] == spend
 
 

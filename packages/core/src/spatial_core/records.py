@@ -358,16 +358,33 @@ class Document(_Record):
         return self
 
 
+class ChunkRole(StrEnum):
+    # A passage of the document itself. The only thing that is ever evidence.
+    PASSAGE = "passage"
+    # A model's summary of the document. It helps find the document's passages and
+    # is never quoted, cited, checked for entailment or shown to anyone.
+    SUMMARY = "summary"
+
+
+# What a summary chunk says for an ordinal: it has no place in the document.
+SUMMARY_ORDINAL = -1
+
+
 class Chunk(_Record):
     """One passage of a document, as the search index holds it.
 
     The text is English with numbers-in-words applied. The original text is not
     here: it stays in the private bundle, and the chunk keeps its hash.
+
+    A summary chunk is the one exception: its text is a model's summary of the
+    document, and its hash is of what the model read. Everything else on it is
+    its document's, so the filter that admits a passage admits its summary too.
     """
 
     id: str
     document_id: str
-    # Its place in the document, from 0.
+    role: ChunkRole = ChunkRole.PASSAGE
+    # Its place in the document, from 0. SUMMARY_ORDINAL for a summary.
     ordinal: int
     kind: DocumentKind
     title: str

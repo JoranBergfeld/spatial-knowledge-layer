@@ -8,13 +8,18 @@ For each source of the corpus, build
    documents/originals/. Nothing ever serves that file again.
 3. reads its text, cuts it into passages, translates each passage that is not
    English, and writes small numbers out in words.
-4. reads a document date where the page states one, works out the clearance
-   class from the anchors, and embeds each chunk.
+4. reads a document date where the page states one and works out the clearance
+   class from the anchors.
 
-Fetching, translating and embedding are the three things here that are not
-deterministic, so each keeps what it got in the bundle: documents/fetched.json,
-translations.jsonl and vectors.jsonl. A second build reads those instead of
-asking again, which is why it writes the same bytes and costs nothing.
+Then every document gets a summary, one clearance class at a time (see
+spatial_ingest.summaries), and every chunk is embedded with its document's
+summary in front of it.
+
+Fetching, translating, summarising and embedding are the four things here that
+are not deterministic, so each keeps what it got in the bundle:
+documents/fetched.json, translations.jsonl, summaries.jsonl and vectors.jsonl.
+A second build reads those instead of asking again, which is why it writes the
+same bytes and costs nothing.
 
     anchor-building-by-ref@1   a building number in the corpus is the building
                                space whose sourced ref is that number
@@ -43,6 +48,7 @@ from spatial_core.records import (
     Asset,
     AssetType,
     Chunk,
+    ChunkRole,
     Document,
     DocumentKind,
     LinkCheck,
@@ -54,9 +60,11 @@ from spatial_core.records import (
     Value,
     ValueProvenance,
 )
+from spatial_ingest import summaries as sac
 from spatial_ingest.corpus import AnchorSpec, Corpus, Source
 from spatial_ingest.models import PROMPT_VERSION, Models
 from spatial_ingest.rules import numbers, passages, tiers
+from spatial_ingest.summaries import Summary
 
 ANCHOR_RULE = "anchor-building-by-ref@1"
 RULES = (
@@ -123,6 +131,10 @@ class Ingested:
     documents: list[Document]
     chunks: list[Chunk]
     translations: list[Translation]
+    # One per document and one per part of a long one. Bundle only.
+    summaries: list[Summary]
+    # The summaries as the index holds them. chunks above are the passages.
+    summary_chunks: list[Chunk]
     vectors: list[Vector]
     # What the manifest says about the corpus: counts, links, translations, spend.
     summary: dict[str, Any]
@@ -132,9 +144,17 @@ def sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def embedded_text(chunk: Chunk) -> str:
-    """What a chunk's vector is the embedding of: its document's title, then its text."""
-    return f"{chunk.title}\n\n{chunk.text}"
+def embedded_text(chunk: Chunk, summary: str | None = None) -> str:
+    """What a chunk's vector is the embedding of.
+
+    A passage is embedded as its document's title, the document's summary and
+    then its own text. That is the summary-augmented chunk. The summary is only
+    in the vector: the chunk's text stays the passage. A summary chunk is just
+    its title and text.
+    """
+    if chunk.role is ChunkRole.SUMMARY or summary is None:
+        return f"{chunk.title}\n\n{chunk.text}"
+    return f"{chunk.title}\n\n{summary}\n\n{chunk.text}"
 
 
 def _is_english(language: str) -> bool:
@@ -169,18 +189,21 @@ def _rates() -> dict[str, dict[str, Any]]:
     return {row["deployment"]: row for row in table["rates"]}
 
 
-def _spend(translations: Sequence[Translation], vectors: Sequence[Vector]) -> dict[str, Any]:
+def _spend(
+    translations: Sequence[Translation], summaries: Sequence[Summary], vectors: Sequence[Vector]
+) -> dict[str, Any]:
     """Ingestion spend: tokens per purpose and deployment, times a dated rate where one is listed.
 
-    It counts what the bundle's translations and vectors cost to make, whichever
-    build made them.
+    It counts what the bundle's translations, summaries and vectors cost to make,
+    whichever build made them.
     """
     used: dict[tuple[str, str], list[int]] = {}
-    for made in translations:
-        entry = used.setdefault(("translation", made.deployment), [0, 0, 0])
-        entry[0] += 1
-        entry[1] += made.input_tokens
-        entry[2] += made.output_tokens
+    for purpose, written in (("translation", translations), ("summary", summaries)):
+        for made in written:
+            entry = used.setdefault((purpose, made.deployment), [0, 0, 0])
+            entry[0] += 1
+            entry[1] += made.input_tokens
+            entry[2] += made.output_tokens
     for vector in vectors:
         entry = used.setdefault(("embedding", vector.deployment), [0, 0, 0])
         entry[0] += 1
@@ -456,11 +479,19 @@ def ingest(
             )
         )
 
-    for chunk in chunks:
-        text_hash = sha256(embedded_text(chunk))
+    # A summary made under another prompt version is made again, like a translation.
+    summaries = sac.build(chunks, _read_jsonl(bundle / sac.PART, Summary), model)
+    summary_chunks = sac.chunks_of(summaries, chunks)
+    summary_of = {
+        document_id: summary.text for document_id, summary in sac.by_document(summaries).items()
+    }
+
+    for chunk in [*chunks, *summary_chunks]:
+        text = embedded_text(chunk, summary_of.get(chunk.document_id))
+        text_hash = sha256(text)
         stored = known_vectors.get(text_hash)
         if stored is None:
-            embedded = model().embed(embedded_text(chunk))
+            embedded = model().embed(text)
             stored = Vector(
                 chunk_id=chunk.id,
                 text_sha256=text_hash,
@@ -506,6 +537,7 @@ def ingest(
         "links": links,
         "offline": sum(1 for link_ in links if link_["status"] == LinkStatus.OFFLINE.value),
         "translations": translated,
+        "summaries": sac.manifest(summaries),
         "embedding": (
             {"deployment": served_by[0][0], "model": served_by[0][1], "dimensions": sizes[0]}
             if vectors
@@ -514,9 +546,9 @@ def ingest(
         "originals": {
             source_id: entry["sha256"] for source_id, entry in sorted(kept.items()) if entry["file"]
         },
-        "spend": _spend(translations, vectors),
+        "spend": _spend(translations, summaries, vectors),
     }
-    return Ingested(documents, chunks, translations, vectors, summary)
+    return Ingested(documents, chunks, translations, summaries, summary_chunks, vectors, summary)
 
 
 def _ids(anchors: Sequence[Anchor], kind: AnchorKind) -> tuple[str, ...]:

@@ -7,10 +7,10 @@ The bundle for a snapshot date:
       osm/             everything sourced from OSM or derived from it by a rule
       seed/            the generated seed inventory
       documents/       the corpus: originals as fetched (private), their English
-                       chunks, and the translations and vectors behind them
+                       chunks, and the translations, summaries and vectors behind them
       manifest.json    input hashes and what produced each part
 
-The pull, the fetched originals, the translations and the vectors are kept in the
+The pull, the fetched originals, the translations, the summaries and the vectors are kept in the
 bundle the first time they are made, and a link check keeps the day it ran. So
 building twice from the same bundle gives the same bytes.
 """
@@ -40,7 +40,7 @@ from spatial_core.records import (
     VisibleSpace,
 )
 from spatial_core.stores import index_name
-from spatial_ingest import documents, models, pull
+from spatial_ingest import documents, models, pull, summaries
 from spatial_ingest.corpus import default_corpus, read_corpus
 from spatial_ingest.rules import fire, tiers
 from spatial_ingest.seed import generate as inventory
@@ -200,6 +200,7 @@ def build(
         refetch=refetch_documents,
     )
     translation_rules = (models.PROMPT_VERSION,) if prose.translations else ()
+    summary_rules = (summaries.PROMPT_VERSION,) if prose.summaries else ()
 
     tool = f"spatial-ingest@{version('spatial-ingest')}"
     parts: dict[str, Any] = {}
@@ -237,6 +238,7 @@ def build(
         (documents.DOCUMENTS_PART, prose.documents, (*documents.RULES, *translation_rules)),
         (documents.CHUNKS_PART, prose.chunks, (*documents.RULES, *translation_rules)),
         (documents.TRANSLATIONS_PART, prose.translations, translation_rules),
+        (summaries.PART, prose.summaries, summary_rules),
         (documents.VECTORS_PART, prose.vectors, ()),
     ):
         content = _jsonl(records)

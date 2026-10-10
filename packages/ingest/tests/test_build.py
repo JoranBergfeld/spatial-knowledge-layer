@@ -266,6 +266,7 @@ def test_the_manifest_records_input_hashes_and_what_produced_each_part(bundle: P
     assert sorted(recorded["parts"]) == [
         "documents/chunks.jsonl",
         "documents/documents.jsonl",
+        "documents/summaries.jsonl",
         "documents/translations.jsonl",
         "documents/vectors.jsonl",
         "osm/asset_types.jsonl",
