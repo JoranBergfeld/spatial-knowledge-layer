@@ -1610,6 +1610,7 @@ dependencies = [
     { name = "opentelemetry-exporter-otlp-proto-http" },
     { name = "opentelemetry-sdk" },
     { name = "psycopg", extra = ["binary"] },
+    { name = "shapely" },
     { name = "spatial-core" },
     { name = "uvicorn" },
 ]
@@ -1623,6 +1624,7 @@ requires-dist = [
     { name = "opentelemetry-exporter-otlp-proto-http", specifier = ">=1.30" },
     { name = "opentelemetry-sdk", specifier = ">=1.30" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
+    { name = "shapely", specifier = ">=2.0" },
     { name = "spatial-core", editable = "packages/core" },
     { name = "uvicorn", specifier = ">=0.30" },
 ]

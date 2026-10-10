@@ -12,7 +12,7 @@ and hands back the new one. What the state holds:
     since         for each of those three, the turn that set it
     constraints   the constraints in force: the attribute filters of the last asset
                   question (attribute_answers.py)
-    route         the last route. Nothing sets one yet
+    route         the last route: its ends and whether it was step-free
     pending       the candidates a clarification offered, and what kind they are
 
 The state comes back from a client, so none of it is trusted. `own` runs first every

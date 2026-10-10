@@ -143,11 +143,15 @@ class Edge(_Record):
 
     A door joining two spaces is two edges, one each way, because an edge takes
     the clearance of the space it enters.
+
+    A doorless room snapped to circulation (snap-doorless-room@1) is two edges
+    too, with no door. Those carry routes and nothing else: visibility is read from
+    doors only.
     """
 
     id: str
-    # The OSM node of the door ("node/123").
-    door: str
+    # The OSM node of the door ("node/123"). None for a snap, which has no door.
+    door: str | None
     # None when the door opens onto no mapped space, such as an outside entrance.
     from_id: str | None
     to_id: str
@@ -157,6 +161,13 @@ class Edge(_Record):
     clearance: Clearance
     provenance: ValueProvenance
     rule: str
+    # Where the door is, in WGS84. For a snap, the point on the circulation's
+    # outline nearest the room. None in snapshots built before routes.
+    lon: float | None = None
+    lat: float | None = None
+    # The level the door is on: its own level tag, else the one level both sides
+    # share. None when neither says, and then passing it changes no level.
+    level: str | None = None
 
 
 class VisibleSpace(_Record):

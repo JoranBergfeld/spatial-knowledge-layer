@@ -19,10 +19,19 @@ import psycopg
 from psycopg import sql
 from psycopg.rows import dict_row
 
-from spatial_core.records import Asset, AssetType, Persona, ServiceEvent, Space, VisibleSpace
+from spatial_core.records import (
+    Asset,
+    AssetType,
+    Edge,
+    Persona,
+    ServiceEvent,
+    Space,
+    VisibleSpace,
+)
 from spatial_core.search import IndexRef
 from spatial_core.stores import CONTROL_SCHEMA, READER_ROLE, snapshot_schemas
 from spatial_service.places import Venue
+from spatial_service.routes import door_counts, subgraph
 
 
 class StoreError(Exception):
@@ -55,6 +64,8 @@ class MemoryStore:
         visible_asset_types: Mapping[Persona, Collection[str]] | None = None,
         index: IndexRef | None = None,
         service_events: Iterable[ServiceEvent] = (),
+        edges: Iterable[Edge] = (),
+        default_origin: str | None = None,
     ) -> None:
         self.index = index
         self.snapshot = snapshot
@@ -68,6 +79,8 @@ class MemoryStore:
         self._visible_assets = visible_assets or {}
         self._visible_types = visible_asset_types or {}
         self._events = list(service_events)
+        self._edges = tuple(edges)
+        self._default_origin = default_origin
 
     def served(self) -> tuple[str | None, str | None]:
         return self.snapshot, self.previous
@@ -85,6 +98,7 @@ class MemoryStore:
             tiers=tiers_of(self._spaces.values()),
             index=self.index,
             service_events=by_asset(e for e in self._events if e.asset_id in assets),
+            **circulation(self._edges, ids, persona, self._default_origin),
         )
 
 
@@ -93,6 +107,19 @@ def by_asset(events: Iterable[ServiceEvent]) -> dict[str, tuple[ServiceEvent, ..
     for event in events:
         grouped.setdefault(event.asset_id, []).append(event)
     return {asset_id: tuple(found) for asset_id, found in grouped.items()}
+
+
+def circulation(
+    edges: Collection[Edge], visible: Collection[str], persona: Persona, default_origin: str | None
+) -> dict[str, Any]:
+    """What a venue holds for routes: the persona's edges, door counts, the default origin."""
+    taken = subgraph(edges, visible, persona)
+    usable = default_origin is not None and any(edge.id == default_origin for edge in taken)
+    return {
+        "edges": taken,
+        "doors": door_counts(edges, visible),
+        "default_origin": default_origin if usable else None,
+    }
 
 
 def tiers_of(spaces: Iterable[Space]) -> tuple[str, ...]:
@@ -176,10 +203,12 @@ class PostgresStore:
             "SELECT tier->>'value' AS tier, min(jsonb_array_length(ancestor_path)) AS depth"
             " FROM {views}.spaces GROUP BY 1 ORDER BY 2, 1"
         ).format(**names)
+        edges_query = sql.SQL("SELECT * FROM {views}.edges").format(**names)
         with self._connect() as conn:
             loaded = conn.execute(
                 "SELECT status, search_index,"
-                " manifest #>> '{documents,embedding,deployment}' AS embedding_deployment"
+                " manifest #>> '{documents,embedding,deployment}' AS embedding_deployment,"
+                " manifest -> 'default_origin' ->> 'edge' AS default_origin"
                 " FROM control.snapshots WHERE snapshot = %s",
                 (snapshot,),
             ).fetchone()
@@ -190,9 +219,13 @@ class PostgresStore:
             type_rows = conn.execute(types_query, (persona.value,)).fetchall()
             event_rows = conn.execute(events_query, (persona.value,)).fetchall()
             tier_rows = conn.execute(tiers_query).fetchall()
+            edge_rows = conn.execute(edges_query).fetchall()
         spaces = [Space.model_validate(row) for row in rows]
         assets = [Asset.model_validate(row) for row in asset_rows]
         types = [AssetType.model_validate(row) for row in type_rows]
+        # Every edge is read, and cut to the persona before anything else sees one.
+        edges = [Edge.model_validate(row) for row in edge_rows]
+        visible = {space.id for space in spaces}
         return Venue(
             snapshot,
             persona,
@@ -205,4 +238,5 @@ class PostgresStore:
             if loaded["search_index"]
             else None,
             service_events=by_asset(ServiceEvent.model_validate(row) for row in event_rows),
+            **circulation(edges, visible, persona, loaded["default_origin"]),
         )

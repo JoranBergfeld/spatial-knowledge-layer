@@ -38,17 +38,26 @@ from spatial_service.assets import (
 )
 from spatial_service.attributes import check_filters
 from spatial_service.conversation import HOW, ConversationState, Referred, resolve
-from spatial_service.places import Outcome, Venue, check_arguments, resolve_place
+from spatial_service.places import (
+    Outcome,
+    Venue,
+    check_arguments,
+    places_matching,
+    resolve_place,
+)
 from spatial_service.plan import (
     Aggregate,
     AssetsInScope,
     Mention,
+    Nearest,
+    PlacesMatching,
     Plan,
     ResolveAsset,
     ResolveAssetType,
     ResolvePlace,
     Resolving,
     RetrieveDocuments,
+    Route,
     Step,
 )
 from spatial_service.recovery import Trigger, TriggerKind
@@ -60,6 +69,8 @@ from spatial_service.retrieval import (
     check_query,
     document_filter,
 )
+from spatial_service.routes import Nearest as NearestFound
+from spatial_service.routes import Origin, Routed, Target, asset_targets, find, nearest
 
 # The one reason an empty retrieval gives. It never says why nothing came back.
 NOTHING_RETRIEVED = "retrieval returned nothing"
@@ -86,6 +97,9 @@ class StepResult:
     retrieval: Retrieval | None = None
     # What a follow-up reference came to, when the step's mention was one.
     referred: Referred | None = None
+    # What a route step came to, and what a nearest step picked.
+    routed: Routed | None = None
+    near: NearestFound | None = None
 
 
 @dataclass(frozen=True)
@@ -165,7 +179,7 @@ def _problems(step: Step, mentions: dict[str, Mention], venue: Venue) -> list[st
             f"{mentions[step.mention].text!r} is not a follow-up reference, "
             "and an asset is found by one or not at all"
         ]
-    if isinstance(step, ResolvePlace):
+    if isinstance(step, (ResolvePlace, PlacesMatching)):
         return check_arguments(mentions[step.mention].text)
     if isinstance(step, ResolveAssetType):
         return check_type_arguments(mentions[step.mention].text)
@@ -179,7 +193,7 @@ def _problems(step: Step, mentions: dict[str, Mention], venue: Venue) -> list[st
 
 
 def _refer(
-    step: ResolvePlace | ResolveAssetType | ResolveAsset,
+    step: ResolvePlace | ResolveAssetType | ResolveAsset | PlacesMatching,
     mentions: dict[str, Mention],
     venue: Venue,
     state: ConversationState | None,
@@ -220,6 +234,43 @@ def _run(
         return _result(
             step, mentions, Outcome.RESOLVED, found.ids, matched=len(found.ids), found=found
         )
+    if isinstance(step, PlacesMatching):
+        fitting = places_matching(venue, mentions[step.mention].text)
+        return _result(
+            step, mentions, fitting.outcome, fitting.ids, how=fitting.how, matched=fitting.matched
+        )
+    if isinstance(step, Route):
+        origin = None
+        if step.origin is not None:
+            origin = Origin(space_id=done[step.origin.step].ids[0])
+        elif step.after is not None:
+            # A route step that got this far found a route. It starts where that ended.
+            origin = Origin(space_id=done[step.after.step].ids[0])
+        wanted = done[step.destination.step]
+        if wanted.found is not None or wanted.tool == "resolve_asset":
+            # A route to an asset goes to its space.
+            targets = asset_targets(venue, (venue.assets[i] for i in wanted.ids))
+        else:
+            targets = [Target(space_id) for space_id in wanted.ids]
+        routed = find(
+            venue, origin, targets, step_free=step.step_free, alternatives=step.alternatives
+        )
+        ends = tuple(found.destination for found in routed.found)
+        outcome = Outcome.RESOLVED if ends else Outcome.NONE
+        return _result(step, mentions, outcome, ends, matched=len(ends), routed=routed)
+    if isinstance(step, Nearest):
+        anchor = None
+        if step.to is not None:
+            near_to = done[step.to.step]
+            # An asset to be near stands for the space it is in.
+            asset_anchor = near_to.tool == "resolve_asset"
+            space_id = venue.assets[near_to.ids[0]].space_id if asset_anchor else near_to.ids[0]
+            anchor = Origin(space_id=space_id)
+        among = done[step.assets.step]
+        near = nearest(venue, anchor, [venue.assets[i] for i in among.ids])
+        ids = near.asset_ids if near is not None else ()
+        outcome = Outcome.RESOLVED if near is not None else Outcome.NONE
+        return _result(step, mentions, outcome, ids, matched=len(ids), found=among.found, near=near)
     # A step over an asset mention is a follow-up reference or is rejected, so it never gets here.
     assert isinstance(step, Aggregate)
     source = done[step.assets.step].found
