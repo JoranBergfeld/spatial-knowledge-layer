@@ -2,7 +2,9 @@
 
 Load and promote write to the layer's database, named by --database-url or the
 SPATIAL_DATABASE_URL environment variable. Ingestion holds those credentials; the
-service never does.
+service never does. Load also writes the search index, which it finds through
+AZURE_SEARCH_ENDPOINT and AZURE_SEARCH_API_KEY. Build translates and embeds, and
+finds its deployments through the AZURE_OPENAI_* variables the service uses.
 """
 
 from __future__ import annotations
@@ -20,11 +22,15 @@ from pathlib import Path
 import psycopg
 
 from spatial_ingest.build import MANIFEST_FILE, BuildError, build
+from spatial_ingest.corpus import CorpusError
+from spatial_ingest.documents import DocumentsError
 from spatial_ingest.load import LoadError, load
+from spatial_ingest.models import ModelError
 from spatial_ingest.promote import PromoteError, promote
 from spatial_ingest.pull import PullError
 from spatial_ingest.seed.generate import InventoryError
 from spatial_ingest.structure import StructureError
+from spatial_ingest.summaries import SummaryError
 from spatial_ingest.venue import load_venue
 
 DATABASE_URL_ENV = "SPATIAL_DATABASE_URL"
@@ -61,6 +67,17 @@ def _parser() -> argparse.ArgumentParser:
         "--inventory",
         type=Path,
         help="the seed inventory's pinned inputs (default: the published inventory.json)",
+    )
+
+    build_cmd.add_argument(
+        "--documents",
+        type=Path,
+        help="the document corpus (default: the venue's published corpus, if it has one)",
+    )
+    build_cmd.add_argument(
+        "--refetch-documents",
+        action="store_true",
+        help="fetch every document source again, which checks its link again too",
     )
 
     for name, help_text in (
@@ -110,9 +127,15 @@ def _build(args: argparse.Namespace) -> int:
             extract=args.extract,
             refetch=args.refetch,
             inventory_file=args.inventory,
+            corpus_file=args.documents,
+            refetch_documents=args.refetch_documents,
         )
     except (
         BuildError,
+        CorpusError,
+        DocumentsError,
+        ModelError,
+        SummaryError,
         InventoryError,
         PullError,
         StructureError,
@@ -130,6 +153,17 @@ def _build(args: argparse.Namespace) -> int:
         f"inventory: {stock['sourced']['assets']} sourced fire assets, "
         f"{stock['generated']['assets']} generated assets (seed {stock['seed']})"
     )
+    prose = manifest["documents"]
+    print(
+        f"documents: {prose['documents']} in {prose['chunks']} chunks, "
+        f"{prose['summaries']['documents']} summaries, "
+        f"{len(prose['skipped'])} skipped, {prose['offline']} with their source offline, "
+        f"${prose['spend']['total_usd']} spent"
+    )
+    for skipped in prose["skipped"]:
+        print(f"  skipped {skipped['id']}: {skipped['reason']}")
+    if prose["spend"]["unpriced"]:
+        print(f"  no rate for {', '.join(prose['spend']['unpriced'])}, so its cost is not counted")
     return 0
 
 
@@ -140,7 +174,7 @@ def _load(args: argparse.Namespace) -> int:
         for failure in result.failures:
             print(f"  {failure}")
         return 1
-    print(f"loaded {result.snapshot}. It is not current until promoted.")
+    print(f"loaded {result.snapshot} with index {result.index}. It is not current until promoted.")
     print(json.dumps(result.rows, indent=2))
     if result.dropped:
         print(f"dropped {', '.join(result.dropped)}")
@@ -150,6 +184,7 @@ def _load(args: argparse.Namespace) -> int:
 def _promote(args: argparse.Namespace) -> int:
     pointer = promote(snapshot=args.date, database_url=args.database_url)
     print(f"current snapshot {pointer.current}, previous {pointer.previous}")
+    print(f"current index {pointer.index}, previous {pointer.previous_index}")
     return 0
 
 

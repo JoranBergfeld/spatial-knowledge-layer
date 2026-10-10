@@ -49,6 +49,7 @@ def ask(
     *,
     store: Store | None = None,
     inputs: list[str] | None = None,
+    state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     llm = fixture.llm(
         plan if callable(plan) else (lambda _p: plan),
@@ -56,7 +57,8 @@ def ask(
         inputs if inputs is not None else [],
     )
     app = create_app(store or rf.store(), llm)
-    response = TestClient(app).post("/turn", json={"persona": persona, "question": question})
+    body = {"persona": persona, "question": question, "state": state}
+    response = TestClient(app).post("/turn", json=body)
     assert response.status_code == 200, response.text
     result: dict[str, Any] = response.json()
     return result
@@ -500,6 +502,115 @@ def test_a_type_the_persona_cannot_see_is_not_near_anything() -> None:
     assert texts(technician) == [
         "Nearest Panelboard P1: 1 generated in 20.20 room 202, 0 seconds (modelled), 0 metres."
     ]
+
+
+# --- follow-ups -------------------------------------------------------------------------------
+
+
+def _from_there(place: str) -> str:
+    """A step-free route to ``place`` from "there": the place an earlier turn resolved."""
+    mentions = [
+        {"id": "m1", "text": "there", "kind": "place", "refers": {"to": "earlier-turn"}},
+        {"id": "m2", "text": place, "kind": "place"},
+    ]
+    steps = [
+        {"id": "s1", "tool": "resolve_place", "mention": "m1"},
+        {"id": "s2", "tool": "resolve_place", "mention": "m2"},
+        {
+            "id": "s3",
+            "tool": "route",
+            "origin": {"step": "s1"},
+            "destination": {"step": "s2"},
+            "step_free": True,
+        },
+    ]
+    return json.dumps({"shape": "route", "mentions": mentions, "steps": steps})
+
+
+def test_the_last_route_is_carried_and_the_next_route_can_start_where_it_ended() -> None:
+    first = ask("visitor", "Step-free to room 202?", route_to("20.20 room 202", step_free=True))
+
+    assert first["state"]["route"] == {
+        "kind": "route",
+        "turn": 1,
+        "space_ids": [rf.ROOM_202],
+        "asset_ids": [],
+        "asset_type_ids": [],
+        "args": {"step_free": True, "default_origin": True},
+    }
+
+    heard: list[dict[str, Any]] = []
+
+    def planner(payload: dict[str, Any]) -> str:
+        heard.append(payload)
+        return _from_there("Teeküche")
+
+    second = ask("visitor", "And from there to the Teeküche?", planner, state=first["state"])
+
+    # The planner hears the last route by name, and that it was step-free.
+    assert heard[0]["conversation"]["last_route"] == {"step_free": True, "to": "20.20 room 202"}
+    [route] = second["routes"]
+    assert route["origin"] == {**route["origin"], "space_id": rf.ROOM_202, "default": False}
+    # All on level 1: 3 + 4.24 + 10.5 along the corridor to the snap + 1.75 = 19.49 m.
+    assert (route["seconds"], route["metres"], route["step_free"]) == (15, 19, True)
+    assert second["state"]["route"]["space_ids"] == [rf.ROOM_202, rf.KITCHEN]
+    assert second["state"]["route"]["turn"] == 2
+
+
+def test_a_last_route_naming_a_place_the_persona_cannot_see_is_dropped() -> None:
+    # A state a visitor could not have been handed: a route through the staff corridor.
+    state = {
+        "snapshot": rf.SNAPSHOT,
+        "persona": "visitor",
+        "turns": 1,
+        "route": {
+            "kind": "route",
+            "turn": 1,
+            "space_ids": [rf.STAFF_CORRIDOR, rf.ROOM_210],
+            "args": {"step_free": False, "default_origin": False},
+        },
+    }
+    inputs: list[str] = []
+
+    turn = ask(
+        "visitor", "And to the Bibliothek?", route_to("Bibliothek"), state=state, inputs=inputs
+    )
+
+    assert turn["state"]["route"] is None
+    # The instructions mention the key. The payload must not carry one.
+    assert '"last_route": {' not in "".join(inputs)
+    assert rf.STAFF_CORRIDOR not in json.dumps(turn)
+
+
+def test_the_nearest_to_an_asset_from_an_earlier_turn_is_nearest_to_its_space() -> None:
+    # The panelboard an earlier turn was about sits in room 202.
+    state = {
+        "snapshot": rf.SNAPSHOT,
+        "persona": "maintenance",
+        "turns": 1,
+        "assets": ["seed:asset:P1"],
+        "since": {"assets": 1},
+    }
+    mentions = [
+        {"id": "m1", "text": "fire extinguisher", "kind": "asset-type"},
+        {"id": "m2", "text": "that one", "kind": "asset", "refers": {"to": "earlier-turn"}},
+    ]
+    steps = [
+        {"id": "s1", "tool": "resolve_asset_type", "mention": "m1"},
+        {"id": "s2", "tool": "assets_in_scope", "types": {"step": "s1"}},
+        {"id": "s3", "tool": "resolve_asset", "mention": "m2"},
+        {"id": "s4", "tool": "nearest", "assets": {"step": "s2"}, "to": {"step": "s3"}},
+    ]
+    plan = json.dumps({"shape": "proximity", "mentions": mentions, "steps": steps})
+
+    turn = ask(
+        "maintenance", "Where is the nearest extinguisher to that one?", plan, nearby, state=state
+    )
+
+    [route] = turn["routes"]
+    assert route["origin"]["space_id"] == rf.ROOM_202
+    assert route["destination"]["space_id"] == rf.STAFF_CORRIDOR
+    assert (route["seconds"], route["metres"]) == (19, 25)
 
 
 # --- over Postgres ----------------------------------------------------------------------------

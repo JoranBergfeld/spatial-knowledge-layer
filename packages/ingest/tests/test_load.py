@@ -9,11 +9,9 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
 
 import psycopg
 import pytest
@@ -25,30 +23,8 @@ from spatial_ingest.build import MANIFEST_FILE
 from spatial_ingest.cli import main
 from spatial_ingest.load import TABLES, load
 
-ADMIN_URL_ENV = "SPATIAL_TEST_DATABASE_URL"
 SERVICE_ROLE = "spatial_test_service"
 A, B, C, D, E = "2026-09-01", "2026-09-08", "2026-09-15", "2026-09-22", "2026-09-29"
-
-
-@pytest.fixture(scope="session")
-def admin_url() -> str:
-    url = os.environ.get(ADMIN_URL_ENV)
-    if not url:
-        message = f"set {ADMIN_URL_ENV} to a Postgres superuser URL to run the store tests"
-        if os.environ.get("CI"):
-            pytest.fail(message)
-        pytest.skip(message)
-    return url
-
-
-@pytest.fixture
-def database_url(admin_url: str) -> Iterator[str]:
-    name = f"spatial_test_{uuid4().hex[:12]}"
-    with psycopg.connect(admin_url, autocommit=True) as conn:
-        conn.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
-    yield make_conninfo(admin_url, dbname=name)
-    with psycopg.connect(admin_url, autocommit=True) as conn:
-        conn.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(name)))
 
 
 Bundle = Callable[[str], Path]

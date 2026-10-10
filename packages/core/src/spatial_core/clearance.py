@@ -20,6 +20,9 @@ misclassifies something is fixed by changing the rule.
     visible-assets@1               an asset is visible when its type is cleared and
                                    its space is visible; a type only through a
                                    visible asset
+    document-clearance@1           a document takes its strictest anchor's clearance;
+                                   a manual shared by several types takes the
+                                   least restrictive of those types first
 
 The rules interpret whom the venue admits the public to. They never claim to know
 who really holds a key.
@@ -30,7 +33,17 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable, Mapping
 
-from spatial_core.records import PERSONAS, Asset, AssetType, Clearance, Edge, Persona, Space
+from spatial_core.records import (
+    PERSONAS,
+    AnchorKind,
+    Asset,
+    AssetType,
+    Clearance,
+    DocumentKind,
+    Edge,
+    Persona,
+    Space,
+)
 
 ACCESS_RULE = "clearance-from-access@1"
 DEFAULT_RULE = "clearance-authored-default@1"
@@ -38,6 +51,7 @@ EDGE_RULE = "edge-clearance@1"
 VISIBLE_RULE = "visible-by-edges@1"
 TYPE_RULE = "clearance-from-omniclass@1"
 ASSET_VISIBLE_RULE = "visible-assets@1"
+DOCUMENT_RULE = "document-clearance@1"
 
 # The published mapping. Any value not listed fails closed to maintenance.
 ACCESS: Mapping[str, Persona] = {
@@ -266,3 +280,36 @@ def visible_assets(
         asset_sets[persona] = frozenset(asset.id for asset in seen)
         type_sets[persona] = frozenset(asset.type_id for asset in seen)
     return asset_sets, type_sets
+
+
+def document_clearance(
+    kind: DocumentKind, anchors: Iterable[tuple[AnchorKind, Persona | None]]
+) -> Persona:
+    """A document's clearance class from its anchors' clearances.
+
+    Each anchor comes with its own clearance: a space's, an asset type's, or for
+    an asset its type's. The document takes the strictest. The one exception is
+    a manual shared by several types: its type anchors count as one, the least
+    restrictive of them, since whoever may see any of those types may read the
+    manual. An anchor with no clearance of its own (a building nobody tagged)
+    limits nothing, and a document with only such anchors is visitor. Whether a
+    persona sees the document at all still needs one of its anchors visible.
+    """
+    listed = list(anchors)
+    if not listed:
+        raise ValueError("a document has at least one anchor")
+    ranks = [
+        persona.rank
+        for anchor, persona in listed
+        if persona is not None
+        and not (kind is DocumentKind.MANUAL and anchor is AnchorKind.ASSET_TYPE)
+    ]
+    if kind is DocumentKind.MANUAL:
+        types = [
+            persona.rank
+            for anchor, persona in listed
+            if anchor is AnchorKind.ASSET_TYPE and persona is not None
+        ]
+        if types:
+            ranks.append(min(types))
+    return PERSONAS[max(ranks, default=0)]

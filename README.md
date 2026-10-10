@@ -4,11 +4,12 @@ A retrieval system that answers questions about a physical place: its structure,
 assets installed in it, and the documents anchored to both. The demo venue is KIT
 Campus Süd, from OpenStreetMap.
 
-Ingestion runs here: `ingest build` turns a pinned OpenStreetMap pull into a snapshot
-bundle holding the venue's structure and its equipment, `ingest load` writes a bundle
-into Postgres and checks it, and `ingest promote` makes a loaded snapshot current. The
-service answers three kinds of question so far: where a place is, what is installed in
-one, and which floor or building has the most of something. Documents are a later issue.
+Ingestion runs here: `ingest build` turns a pinned OpenStreetMap pull and a document
+corpus into a snapshot bundle holding the venue's structure, its equipment and its
+prose, `ingest load` writes a bundle into Postgres and a search index and checks both,
+and `ingest promote` makes a loaded snapshot current. The service answers three kinds
+of question so far: where a place is, what is installed in one, and which floor or
+building has the most of something. Nothing retrieves the documents yet.
 
 The spec and the glossary live in the site's repository
 ([spec](https://github.com/JoranBergfeld/personal-website/issues/73), `CONTEXT.md`).
@@ -51,14 +52,24 @@ seed/assets.jsonl       the generated assets
 seed/maintenance_tasks.jsonl  planned jobs per type, after COBie 2.4 Job
 seed/service_events.jsonl     the latest service per asset, after COBie v3 Event
 seed/visible_assets.jsonl, seed/visible_asset_types.jsonl
+documents/originals/    the pages and manuals as fetched. Private, like the pull
+documents/fetched.json  where each original came from, its sha256 and its link check
+documents/documents.jsonl     one line per document: anchors, clearance class, date, link
+documents/chunks.jsonl        the English passages the index will hold
+documents/translations.jsonl  each translated passage beside its original, and what made it
+documents/summaries.jsonl     one summary per document, what it was made from and what made it
+documents/vectors.jsonl       each chunk's and each summary's embedding
 manifest.json           input hashes, what produced each part, counts, the sourced-clearance
                         share, the inventory's seed, fill rates and attribute catalogue,
-                        and the default origin if the venue definition names one
+                        and for the documents: links, translations, summaries and
+                        ingestion spend. And the default origin, if the venue
+                        definition names one
 ```
 
-Run it again and it reuses the stored pull and writes the same bytes. `--refetch`
-replaces the pull. If the stored pull no longer matches the hash it was pinned with,
-the build stops.
+Run it again and it reuses the stored pull, originals, translations, summaries and
+vectors, calls nobody and writes the same bytes. `--refetch` replaces the pull, `--refetch-documents`
+fetches the originals again. If the stored pull or an original no longer matches the
+hash it was pinned with, the build stops.
 
 Overpass rate limits after a few heavy queries. The fallback is a dated regional extract
 (Geofabrik has them), which the build cuts down to the same box and pins the same way:
@@ -121,6 +132,89 @@ the way `clearance.unrecognised_access` does for spaces. It never blocks a load.
 attribute catalogue (per asset type, which attributes at least one asset carries) is in
 the manifest and in the `attribute_catalogue` view.
 
+## Documents
+
+The snapshot's prose comes from a corpus: a published JSON file listing sources, each
+with a URL, a language and what it is about. Text is never in the corpus. Build fetches
+it. KIT's is `packages/ingest/src/spatial_ingest/corpora/kit-campus-sued.json`: the 36
+lecture hall pages of KIT's Studium und Behinderung office, each keyed by the building
+number the page itself starts with. `--documents <file>` builds from another corpus. A
+venue with no corpus gets no documents and needs no model.
+
+It lists no manuals yet. I have not found manual links for the generated types that I
+would trust, so that half is built and tested but the real corpus is pages only. Add a
+manual as a `"kind": "manual"` entry anchored to its `asset_type` ids.
+
+A document has one or more anchors, each a space, an asset type or one asset. Build
+resolves them against the snapshot and drops what it cannot find, so a manual is only
+ingested for a type that is actually placed, and its file is not even fetched otherwise.
+A source with no anchor left is skipped, and the manifest says which and why.
+
+Originals stay in `documents/originals/` and nothing ever serves them. A chunk carries
+the original's URL, its language and the sha256 of the passage's original text, and
+that is all that leaves the bundle. The German is in `translations.jsonl`, also private.
+
+Build needs these for a corpus with anything in it:
+
+```
+AZURE_OPENAI_ENDPOINT            the Azure OpenAI resource
+AZURE_OPENAI_API_KEY             its key
+AZURE_OPENAI_API_VERSION         optional, 2024-10-21 by default
+SPATIAL_COMPOSITION_DEPLOYMENT   translates and summarises. The same deployment that
+                                 composes answers
+SPATIAL_EMBEDDING_DEPLOYMENT     embeds the chunks. The RAG pipeline's, for now
+```
+
+| Rule | What it does |
+| --- | --- |
+| `anchor-building-by-ref@1` | A building number in the corpus is the building space whose sourced `ref` is that number. The anchor is flagged derived. No such building, no anchor. |
+| `text-from-source@1` | The text of an HTML page, a PDF or a plain text file. HTML keeps what a reader sees, one line per block element. Where the corpus names two markers, only what lies between them is read, which keeps navigation and footers out. |
+| `chunk-by-paragraph@1` | Whole paragraphs packed into passages of at most 1200 characters. A longer paragraph is cut at line ends, then sentence ends. |
+| `translate-to-english@1` | A passage that is not English is translated by the composition deployment. This is the prompt's version, not a rule: the words are in `models.py`, and the manifest records the deployment, the model and this version for every translated document. |
+| `numbers-in-words@1` | In the English text, a clock time ("16:30" is "sixteen thirty"), a floor ordinal ("2nd floor" is "second floor", "floor 2" is "floor two") and a small standalone count up to twenty ("2 steps" is "two steps") are written out. A measured value with its unit stays as digits ("90 cm", "37.1 MHz", "5 minutes"), and so does a number that names something ("room 7", "channel 2", "10.11"). |
+| `date-from-last-change@1` | A page's document date is the day its own "letzte Änderung:" line says. No line, no date: the document is undated. Manuals are never dated. The day it was fetched is never its date. |
+| `document-clearance@1` | A document's clearance class is its strictest anchor's. A manual shared by several types takes the least restrictive of those types first. An anchor with no clearance of its own (an untagged building) limits nothing. It lives in `packages/core`, with the other clearance rules. |
+
+Fetching an original is also its link check: the source answered or it did not, and
+the manifest and every chunk record `online` or `offline` with the day build asked. A
+source that goes offline later keeps the original the bundle already has, so it is
+still quoted. One that never answered has nothing to quote and is skipped.
+
+Spend is tokens per deployment times a dated rate from
+`packages/ingest/src/spatial_ingest/rates.json`, the same rows as the site's budget
+table. A deployment with no row is recorded with its tokens and no cost, and the build
+says so. Right now that is the translation deployment: I have no price for it yet.
+Summaries run on the same deployment, so they are tokens without a cost too.
+
+### Summaries
+
+Every document gets one summary of at most 60 words, written by the composition
+deployment from the document's own English passages and its title. This is SAC,
+summary-augmented chunking, from the retrieval research (decision ticket 43 on the
+map). A summary does two things:
+
+- It goes in front of each of its document's passages when the passage is embedded:
+  title, summary, passage. The passage's text does not change. Only the vector knows.
+- It goes in the index as a chunk of its own with `role: summary`, carrying its
+  document's anchors and clearance class. Passages have `role: passage`.
+
+A summary is never evidence. It is there to find passages with. It is not quoted, not
+cited, not checked for entailment and not shown. Retrieval hands back passages only.
+
+Summaries are built one clearance class at a time, lowest first, and a summary only
+ever reads passages of one document, which all share a class. The summariser refuses
+anything else, and load checks the bundle's record again: every summary's sources must
+be passages of its own document and its own class, or the snapshot fails. So what a
+visitor's search can match never came from a staff or maintenance document.
+
+A document longer than about 20,000 characters is summarised window by window, then
+the part summaries are summarised into one. Parts stay in the bundle.
+
+`documents/summaries.jsonl` keeps each summary with its sources, the hash of what the
+model read, the deployment, the model, the prompt version (`summarise-document@1`, the
+words are in `summaries.py`) and the tokens. A rebuild reads them from there. Load
+never makes one. A summary made under another prompt version is made again.
+
 ## Load and promote
 
 The layer has a Postgres database of its own on the site's instance. Ingestion owns its
@@ -140,6 +234,22 @@ uv run ingest load --date 2026-09-15      # write bundles/2026-09-15 and check i
 uv run ingest promote --date 2026-09-15   # make it current
 uv run ingest promote --date 2026-09-08   # roll back: the same command, the previous date
 ```
+
+Load also writes the document chunks and summaries to a search index, one per snapshot,
+named after the venue and the date (`spatial-kit-campus-sued-20260915`). It finds the search
+service in the environment:
+
+```
+AZURE_SEARCH_ENDPOINT   the Azure AI Search service
+AZURE_SEARCH_API_KEY    an admin key, since load creates and drops indexes
+SPATIAL_SEARCH_DIR      instead of those two: a directory, one JSON file per index
+```
+
+The directory is a stand-in for tests and laptops. It stores chunks and vectors and
+ranks nothing. The Azure index is hybrid: text and title searchable for BM25, a vector
+field for the embedding, and the anchor ids by kind, the flattened ancestor ids, the
+clearance class and the role (passage or summary) all filterable. Load makes no model
+call. The summaries and the vectors are the bundle's.
 
 Load writes a snapshot as three schemas (ADR 0001 in the site's repository):
 
@@ -169,16 +279,29 @@ then writes, then checks what it wrote:
   through a visible asset
 - the visible assets and the visible asset types nest, like the spaces
 - each table holds as many rows as the manifest says
+- every chunk is anchored to spaces, types and assets of the snapshot
+- every chunk's clearance class is its strictest anchor's, by `document-clearance@1`
+- every chunk's ancestor ids are its space and asset anchors' paths
+- every summary was built from passages of its own document and its own clearance class
+- every document in the index has exactly one summary, and it is one the bundle recorded
+- the index holds as many chunks as the manifest says in all, and as many passages and
+  as many summaries per clearance class
+
+The chunk checks run over what the index gives back, not over the bundle. The link
+check is reported in the log and never blocks.
 
 A snapshot that fails any of them is recorded as failed in `control.snapshots` and
-`promote` refuses it. Its schemas stay, for looking at. Loading the same bundle again
-rebuilds the schemas from scratch, so it yields the same stores.
+`promote` refuses it. Its schemas and its index stay, for looking at. Loading the same
+bundle again rebuilds the schemas and the index from scratch, so it yields the same stores.
 
 Load never moves the current-snapshot pointer (`control.current_snapshot`, one row), and
 it refuses to reload the current or the previous snapshot, since conversations may be
 held on either. Promote is one update of that row: the snapshot it names becomes current
-and the one it replaces becomes previous. The next load drops every snapshot older than
-both; snapshots loaded but not yet promoted stay until they are older than both too.
+and the one it replaces becomes previous. The row names the search index too, in
+`search_index` and `previous_search_index`, beside the snapshot whose row in
+`control.snapshots` names the schema pair. The next load drops every snapshot older than
+both, index included; snapshots loaded but not yet promoted stay until they are older
+than both too.
 
 The service gets a login that is a member of `spatial_reader`. That role can read
 `control` and the views schemas and nothing else; it cannot write anywhere. Ingestion's
@@ -229,6 +352,25 @@ Things that are rough or just not done yet:
   Entrances on a building outline make edges only where a room's outline holds them too.
 - A door node shared by spaces on different levels joins them. The door's `level` is not
   checked against theirs.
+- KIT's pages anchor to buildings only. The hall inside the building is not matched to
+  a room: only about a third of the hall names match an OSM room name.
+- A document's title is the corpus's and stays in the original language.
+- `numbers-in-words` works off lists of units and label words. A unit that is missing
+  gets its number written out. It also leaves a count alone when the sentence before
+  it ended in a full stop ("Mind the stairs. 2 of them are loose"), since that looks
+  like an abbreviation.
+- If a model call fails midway, the build stops and the translations and summaries it
+  already paid for are not kept. The corpus is 36 short pages, so I have not bothered.
+- The summary prompt is mine, adapted from the prototype's. The +8 points of recall were
+  measured with a local 7B model on another building's handover, not with this prompt,
+  this model or this corpus. Nothing here measures it again.
+- The 60 words are asked for, not enforced. The long-document window is counted in
+  characters because build has no tokenizer.
+- Changing the summary prompt version re-embeds every passage, since the summary is in
+  front of it.
+- An index loaded before summaries existed has no `role` field. Load the snapshot again.
+- The real Azure AI Search client is only tested against a stand-in on localhost.
+  Nobody has pointed it at a real service yet.
 - An edge carries where its door is and the level it is on: the door's own `level` tag,
   else the one level its spaces share, else nothing. A door with no level changes no
   level in a route, so a stair door mapped without one makes the climb free.
@@ -288,8 +430,8 @@ the set to those four.
 - `shape` is `unknown` when no plan got as far as running, which covers a model that
   could not be reached.
 - `turn_kind` is the turn's kind, except that a coverage-gap abstention is
-  `coverage-gap` here and not `abstention`. A scope with no recorded installations is
-  the one thing that produces it so far.
+  `coverage-gap` here and not `abstention`. Two things produce it: a building or
+  bigger with no recorded installations, and an attribute no asset in scope carries.
 - A request the service refuses (409, 503 with no snapshot) is not a turn and is not
   counted.
 - Headers, timeout and the export interval come from the usual `OTEL_` variables, 60
@@ -344,16 +486,21 @@ different question.
 
 ### Assets
 
-Three question shapes run on four tools. `place-location` is "where is room X".
+Five question shapes run on five tools. `place-location` is "where is room X".
 `asset-containment` is "what is installed in room X" and "where are the lights on floor
-2". `asset-aggregation` is "which floor has the most lights".
+2". `asset-aggregation` is "which floor has the most lights". `attribute-filter` is
+"which lights have no serial number" and "what falls due for service before June".
 
 | Tool | What it does |
 | --- | --- |
 | `resolve_place` | One place a mention names. As above. |
 | `resolve_asset_type` | The visible asset types a mention names: an exact name, else every word of the mention in a type's name ("lights" is every type of light). A set, so nobody is asked which. |
-| `assets_in_scope` | Every visible asset under one scope node, or under the whole venue, of the given types if any. One step and one pass over ancestor paths, however many spaces lie under the scope. No call per space. |
+| `assets_in_scope` | Every visible asset under one scope node, or under the whole venue, of the given types if any, passing the given attribute filters if any. One step and one pass over ancestor paths, however many spaces lie under the scope. No call per space. |
 | `aggregate` | Those assets counted per space of one tier under the scope. |
+| `resolve_asset` | The one asset a follow-up reference points back at. See Follow-ups. It does not find an asset by name. |
+
+That fifth tool came with the fifth shape: `asset-location` is "where is that one", and
+ends in `resolve_asset`.
 
 A scale level named in the question sets two things. The place it names is the scope
 ("the Informatik building"), and the tier it compares across is the grouping ("which
@@ -374,11 +521,16 @@ print it from. A generated count fills in as "3 generated" and a sourced one bes
 as "1 sourced". The host writes those words, not the model. An answer that names one
 half of a split count without the other is rejected.
 
-No recorded installations is not zero. A scope with nothing visible installed in it at
-all is a `coverage-gap` abstention, worded by the host, with no composition call. In a count
-across floors, a floor with nothing recorded is listed apart and never ranked, and the
-answer has to name it. A floor with other things installed and none of the type asked
-for is a zero, and is ranked.
+No recorded installations is not zero. A building, or anything bigger, with nothing
+visible installed in it at all is a `coverage-gap` abstention, worded by the host, with
+no composition call. That gap is only ever stated at building level or above. Ask about
+a room or a floor with nothing in it and the layer looks at its building: if the whole
+building is empty the gap is stated for the building, and if not the turn is a plain
+`nothing-recorded` abstention that gives no reason. A room is too small a place to call
+a gap in the venue's data, and it still is not a zero. In a count across floors, a
+floor with nothing recorded is listed apart and never ranked, and the answer has to
+name it. A floor with other things installed and none of the type asked for is a zero,
+and is ranked.
 
 An asset without a placement reads as `position not recorded` in the trace, and the
 answer can say how many of the assets it found have none. A placement is never printed
@@ -388,6 +540,59 @@ A question that needs one step's result to choose the next ("what is in the room
 the most lights") is its own shape, `step-dependent`, and gets an abstention. The plan
 schema could not run it anyway: nothing reads what `aggregate` produces.
 
+### Attribute filters and service due
+
+`assets_in_scope` takes up to three filters. A filter is an attribute and one of four
+tests, and that is the whole vocabulary:
+
+| Test | Passes when |
+| --- | --- |
+| `recorded` | the asset carries the attribute |
+| `not-recorded` | it does not |
+| `before`, `after` | the attribute is a date and falls before or after the `date` given |
+
+There is no free predicate. A filter has three fields and the step has no other place
+to put one, an attribute's name has to look like a name, and anything else does not
+parse. That is a `plan-invalid` trigger.
+
+Which attributes exist is the attribute catalogue's to say: per asset type, the
+attributes at least one asset carries. Nothing declares it. The service reads it off
+the assets, cut to what the persona can see, and the planner is shown the names under
+`venue.attributes`. A filter on anything else is a `malformed-arguments` trigger that
+lists the names, checked before any step runs. An attribute only hidden assets carry is
+not in a visitor's catalogue, so it is rejected in the same words as one that does not
+exist. `before` and `after` on an attribute that is not a date are rejected the same way.
+
+Two attributes are not stored on any asset and are in the catalogue anyway:
+
+- `service_event` is the start of the asset's latest service event.
+- `service_due` is that, or the installation date where there is no event, plus one
+  year. It is worked out when a question asks and stored nowhere. The year is a default
+  interval, the same for every asset type. It is nobody's standard, and the trace
+  flags it: `default_interval`, `interval_years` and the rule `service-due@1`, with each
+  asset's due date and the date it was counted from.
+
+An asset that does not carry an attribute is not recorded for it, and that is all the
+layer says. It does not pass or fail `before` or `after`. It is counted apart, and the
+answer has to name that count, so "one is due" cannot pass for "the rest are not". The
+host writes the words: the condition fills in as "service due before 2026-01-01" and
+the gap as "no serial number recorded", and the model only places them. An answer that
+says "never" is thrown out, which is a blunt check and the only one on the model's own
+words.
+
+The trace carries the fill rate of every attribute filtered on, under `assets.filters`:
+how many of the assets asked about carry it, out of how many, counting only what the
+persona can see. "Asked about" is the scope and the types in the question, so the rate
+for "lights in the Audimax" is over the lights and not over everything in the room.
+
+A fill rate of zero is a `coverage-gap` abstention with `gap` set to
+`attribute-not-recorded`. The host names the attribute and no model is called. This one
+is stated at any tier, since it is about an attribute and not a place. If there are no
+assets of the type in scope at all there is no rate, and the answer is a count of zero
+as before. The gap turn still leaves its filter in the state.
+
+A filter also works under `aggregate` ("which building has the most lights with no
+service event"), in an `asset-aggregation` plan.
 ### Routes and proximity
 
 The two lowest-priority shapes. `route` is "how do I get to the Audimax", `proximity`
@@ -470,6 +675,14 @@ answer carries that route. When none does, it is by shared containment: the asse
 the smallest space that also holds the anchor (same room, then floor, then building).
 The trace says which, and the answer does not call the second one a distance.
 
+**Follow-ups.** A route answer leaves the last route in the state (below). "And from
+there to the library?" is a route whose origin is a follow-up reference to the place
+the last one ended at. A route or a nearest step can also read the one asset a
+follow-up points at ("the nearest extinguisher to that one"), which stands for its
+space. The planner is told whether the last route was step-free and asked to keep it
+when the question carries on. That is the one way step-free outlives its question, and
+it still never comes from the persona.
+
 Rough, all of it. Not measured against anything, and the spec lists both shapes as
 unmeasured. A space with no outline cannot be routed to. Type and description matching
 are word lists.
@@ -494,8 +707,8 @@ A turn is one of four kinds:
 | Kind | When |
 | --- | --- |
 | `answer` | Every step found what it needed and the composition passed its checks. |
-| `clarification` | A step matched several places, or the mention was a bare room number, which is never a label. The candidates are all visible to the persona, at most six. The state carries them, and the next turn's planner sees their labels. |
-| `abstention` | `no-such-place` when nothing the persona can see matches. A place beyond clearance and a place that does not exist give the same abstention, and the same trace but for the words asked. `no-such-asset-type` is the same for a type. Also `nothing-at-scale-level`, `step-dependent-question`, `unsupported-question`, `plan-rejected` and `composition-rejected`. And `coverage-gap`, with the turn's `gap` saying which: so far only `no-recorded-installations`, when nothing the persona can see is installed in the scope asked about. A gap in the data, not a count of zero. `no-route` for any route that cannot be found, whatever stopped it, and `nothing-near` when a proximity question has nothing to be near. |
+| `clarification` | A step matched several places, or the mention was a bare room number, which is never a label. Or a follow-up reference pointed at more than one asset. The candidates are all visible to the persona, at most six. The state carries them, and the next turn's planner sees their labels. |
+| `abstention` | `no-such-place` when nothing the persona can see matches. A place beyond clearance and a place that does not exist give the same abstention, and the same trace but for the words asked. `no-such-asset-type` is the same for a type. Also `nothing-at-scale-level`, `step-dependent-question`, `unsupported-question`, `plan-rejected` and `composition-rejected`. `nothing-referred-to` when a follow-up reference has nothing to point at. `nothing-recorded` is a room or floor with nothing in it, inside a building that has installations: no reason given. And `coverage-gap`, with the turn's `gap` saying which: `no-recorded-installations`, when nothing the persona can see is installed in a building or anything bigger, or `attribute-not-recorded`, when no asset asked about carries the attribute filtered on. A gap in the data, not a count of zero. Nothing else gives a reason. `no-route` is any route that cannot be found, whatever stopped it, and `nothing-near` a proximity question with nothing to be near. |
 | `unavailable` | A model could not be reached. HTTP 503, no answer, and the prior state back unchanged. |
 
 Every turn carries its trace, the new conversation state, each model call's token usage
@@ -516,9 +729,9 @@ first as JSON Pointer paths. Steps and mentions are matched by id, so one added 
 dropped at the front shows as one change.
 
 A conversation keeps the persona and snapshot it began with, and is refused once its
-snapshot is neither current nor previous. State a client sends back is cut down to what
-the persona can see before anything reads it. It holds the place and the asset types the
-last answer was about.
+snapshot is neither current nor previous. That refusal is a 409 with
+`"code": "snapshot-dropped"`, and a snapshot id that never existed gets the very same
+one. The caller ends the conversation on that code, it does not parse the message.
 
 Rough or not done yet on the asset side:
 
@@ -530,9 +743,73 @@ Rough or not done yet on the asset side:
 - An answer spells out twelve rows and counts the rest.
 - A campus-wide question puts every asset id in the trace's step. That is a lot of ids.
 - Nothing uses an asset's placement yet beyond saying whether it is recorded.
+- A filter compares against a date the plan carries. The planner is not told today's
+  date, so "what is overdue" only works if the question names a day.
+- A filtered answer counts assets by type or by space. It does not list them one by one
+  with their due dates. Those are in the trace.
+- The catalogue is kept per type but checked flat: a filter on an attribute that some
+  other visible type carries passes the check and comes out as a fill rate of zero.
+- The filters in force are told to the planner, which has to repeat them in its plan
+  for a follow-up to stay filtered. Code does not apply them by itself, and no real
+  model has been asked to yet.
+- There is no test for a value ("made by X"), only for presence and for dates.
 - Clarifications, abstentions and coverage gaps are worded by the host, not composed.
 - The plan schema is a plain union of step types, because strict structured output
   refuses `oneOf`. Whether the real deployment takes it has not been tried.
+
+### Follow-ups
+
+The service keeps nothing between turns. The state comes in with the request and the
+new one goes back out. It holds:
+
+| Field | What |
+| --- | --- |
+| `questions` | The text of earlier questions, oldest first, the last three. Composed answers are not carried. |
+| `place` | The last place a turn resolved: the one located, the scope looked under, or the one space that came out on top of a count. |
+| `asset_types` | The asset types the last asset question asked for. |
+| `assets` | The assets the last containment answer rested on, if there were six or fewer. An answer over more leaves none: nobody can point at one of forty. |
+| `since` | For each of those three, the turn that set it. |
+| `constraints` | The constraints in force: one per attribute filter of the last asset question, kind `attribute-filter`. Scope and types as ids, the filter (attribute, test, date) in `args`. An asset question replaces them, with none if it had no filter. Any other turn leaves them. The next planner hears them as `conversation.filters`, minus any whose attribute is not in the persona's catalogue. |
+| `route` | The last route, kind `route`: its ends as space ids, origin first, and `step_free` in `args`. A default origin is not an id, so then only the destination is there and `args.default_origin` is true. Seconds and metres are not carried, a follow-up routes again. The next planner hears it as `conversation.last_route`, by name. A route answer replaces it, any other turn leaves it. |
+| `pending` | The candidates a clarification offered, their kind (place or asset) and the turn that offered them. |
+
+A turn that resolves nothing for a slot leaves it alone. So a third question can reach
+back past the second, and the trace says which turn it reached.
+
+A follow-up reference is a mention the planner marks with `refers`. The model says
+where it points and what kind of thing is meant. Code finds what:
+
+| The words | In the plan | Resolves to |
+| --- | --- | --- |
+| "that one" | kind `asset`, `{"to": "earlier-turn"}` | The asset in state. Several is a clarification. |
+| "like it" | kind `asset-type`, `{"to": "earlier-turn"}` | The type of the asset in state. Assets of several types is a clarification over the assets. No asset held, then the types in state. |
+| "there" | kind `place`, `{"to": "earlier-turn"}` | The place in state. |
+| "the second one" | any kind, `{"to": "candidate", "ordinal": 2}` | The second candidate the pending clarification offered. Read as an asset type, that asset's type. |
+
+A step over such a mention reads state and looks nothing up. The trace lists each one
+under `references`: the words, the kind, where it pointed, the outcome, the ids and
+names it came to, the turn those are from, and for "like it" the asset it went through.
+
+Nothing to point at is a `nothing-referred-to` abstention, and buys no recovery call.
+An ordinal past the last candidate offers the same candidates again. An asset candidate
+carries its id, the room it is in and whether its position is recorded, since two
+lights of one type in one room share everything else.
+
+None of the incoming state is trusted. Before anything reads it, every id is checked
+against what the persona can see in this snapshot, and whatever fails is dropped. A
+tampered id, a stale one and one a persona was handed but cannot see all go the same
+way, and the turn that follows is identical to one where the id was never there. A
+constraint or a route is dropped whole if any id in it fails. Dropped candidates go
+before ordinals are counted.
+
+Rough here:
+
+- An asset can only be reached by pointing back at it. "Where is Light Fixture B1 10"
+  is a rejected plan.
+- The planner has to work out the ordinal for "the one in 30.10" from the candidate
+  labels. The old way, copying the label into a mention, still runs for places.
+- "Those", meaning several assets at once, has no tool to feed. It asks which one.
+- Whether the planning model writes `refers` reliably is untested. Every test stubs it.
 
 ## Develop
 
@@ -547,8 +824,17 @@ in `SPATIAL_TEST_DATABASE_URL` and make databases of their own. Without it they 
 except in CI. The turn tests run against a fixture snapshot in memory and a scripted
 model, and need neither.
 
+No test makes a paid call. The venue's pages, the manuals, Azure OpenAI and Azure AI
+Search are all stand-ins on localhost (`packages/ingest/tests/stubs.py`), and the root
+`conftest.py` points every test's search index at a temporary directory.
+
 ## Data
 
 Venue structure is © OpenStreetMap contributors, under the
 [ODbL](https://opendatacommons.org/licenses/odbl/). The `osm/` half of a bundle is the
 derived database, and the rules above are the method.
+
+The accessibility pages are KIT's (Studium und Behinderung), which allows reuse for
+educational, scientific or private purposes with the source named. They are translated,
+quoted and linked. They are not OSM's and never go in the `osm` schema: chunks live in
+the search index only.

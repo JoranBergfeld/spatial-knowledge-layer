@@ -19,7 +19,15 @@ import psycopg
 from psycopg import sql
 from psycopg.rows import dict_row
 
-from spatial_core.records import Asset, AssetType, Edge, Persona, Space, VisibleSpace
+from spatial_core.records import (
+    Asset,
+    AssetType,
+    Edge,
+    Persona,
+    ServiceEvent,
+    Space,
+    VisibleSpace,
+)
 from spatial_core.stores import CONTROL_SCHEMA, READER_ROLE, snapshot_schemas
 from spatial_service.places import Venue
 from spatial_service.routes import door_counts, subgraph
@@ -53,6 +61,7 @@ class MemoryStore:
         asset_types: Iterable[AssetType] = (),
         visible_assets: Mapping[Persona, Collection[str]] | None = None,
         visible_asset_types: Mapping[Persona, Collection[str]] | None = None,
+        service_events: Iterable[ServiceEvent] = (),
         edges: Iterable[Edge] = (),
         default_origin: str | None = None,
     ) -> None:
@@ -66,6 +75,7 @@ class MemoryStore:
         self._types = {kind.id: kind for kind in asset_types}
         self._visible_assets = visible_assets or {}
         self._visible_types = visible_asset_types or {}
+        self._events = list(service_events)
         self._edges = tuple(edges)
         self._default_origin = default_origin
 
@@ -83,8 +93,16 @@ class MemoryStore:
             assets={i: a for i, a in self._assets.items() if i in assets},
             asset_types={i: t for i, t in self._types.items() if i in types},
             tiers=tiers_of(self._spaces.values()),
+            service_events=by_asset(e for e in self._events if e.asset_id in assets),
             **circulation(self._edges, ids, persona, self._default_origin),
         )
+
+
+def by_asset(events: Iterable[ServiceEvent]) -> dict[str, tuple[ServiceEvent, ...]]:
+    grouped: dict[str, list[ServiceEvent]] = {}
+    for event in events:
+        grouped.setdefault(event.asset_id, []).append(event)
+    return {asset_id: tuple(found) for asset_id, found in grouped.items()}
 
 
 def circulation(
@@ -170,6 +188,12 @@ class PostgresStore:
             " JOIN {views}.visible_asset_types visible ON visible.type_id = kind.id"
             " WHERE visible.persona = %s"
         ).format(**names)
+        # An event is read only through a visible asset, so it is hidden with it.
+        events_query = sql.SQL(
+            "SELECT event.* FROM {views}.service_events event"
+            " JOIN {views}.visible_assets visible ON visible.asset_id = event.asset_id"
+            " WHERE visible.persona = %s"
+        ).format(**names)
         # Tier words only, over every space: see Venue.tiers.
         tiers_query = sql.SQL(
             "SELECT tier->>'value' AS tier, min(jsonb_array_length(ancestor_path)) AS depth"
@@ -187,6 +211,7 @@ class PostgresStore:
             rows = conn.execute(query, (persona.value,)).fetchall()
             asset_rows = conn.execute(assets_query, (persona.value,)).fetchall()
             type_rows = conn.execute(types_query, (persona.value,)).fetchall()
+            event_rows = conn.execute(events_query, (persona.value,)).fetchall()
             tier_rows = conn.execute(tiers_query).fetchall()
             edge_rows = conn.execute(edges_query).fetchall()
         spaces = [Space.model_validate(row) for row in rows]
@@ -202,5 +227,6 @@ class PostgresStore:
             assets={asset.id: asset for asset in assets},
             asset_types={kind.id: kind for kind in types},
             tiers=tuple(row["tier"] for row in tier_rows),
+            service_events=by_asset(ServiceEvent.model_validate(row) for row in event_rows),
             **circulation(edges, visible, persona, loaded["default_origin"]),
         )

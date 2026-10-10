@@ -11,13 +11,14 @@ from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 
 import fixture
-from fixture import installed, located, where
+from fixture import having, installed, located, where
 from spatial_service import metrics
 from spatial_service.app import create_app
 from spatial_service.metrics import Metrics
-from spatial_service.turn import Turn
 
 Labels = dict[str, str]
+# No light a visitor sees in 50.34 room 107 carries a serial number: a fill rate of zero.
+SERIALS = having("serial_number", "recorded", place="50.34 room 107", kind="lights")
 
 
 class Service:
@@ -129,29 +130,31 @@ def test_a_turn_that_made_a_repair_call_is_counted_repaired_or_not() -> None:
 
 
 def test_a_coverage_gap_is_a_turn_kind_of_its_own_and_is_counted() -> None:
-    # An abstention relabelled, so the count does not lean on any one cause of a gap.
     service = Service()
-    abstention = service.ask("visitor", "Where is the Bibliothek?", where("Bibliothek"))
-    gap = Turn.model_validate({**abstention, "cause": "coverage-gap"})
-
-    service.metrics.record(gap)
+    # One of each gap, and an abstention that is neither.
+    service.ask("staff", "What is in the Mensa?", installed("Mensa"))
+    service.ask("visitor", "Which lights in 50.34 room 107 have a serial number?", SERIALS)
+    service.ask("visitor", "Where is the Bibliothek?", where("Bibliothek"))
 
     series = service.series()
-    assert series["spatial.coverage_gaps"] == [
-        (labels("visitor", "place-location", "coverage-gap"), 1)
+    gaps = [
+        (labels("staff", "asset-containment", "coverage-gap"), 1),
+        (labels("visitor", "attribute-filter", "coverage-gap"), 1),
     ]
-    assert (labels("visitor", "place-location", "coverage-gap"), 1) in series["spatial.turns"]
+    assert sorted(series["spatial.coverage_gaps"], key=str) == sorted(gaps, key=str)
+    for gap in gaps:
+        assert gap in series["spatial.turns"]
     assert (labels("visitor", "place-location", "abstention"), 1) in series["spatial.turns"]
 
 
-def test_a_scope_with_nothing_installed_is_counted_as_a_coverage_gap() -> None:
+def test_an_empty_room_is_an_abstention_and_not_counted_as_a_coverage_gap() -> None:
     service = Service()
 
     service.ask("visitor", "What is in 30.10 room 107?", installed("30.10 room 107"))
 
-    assert service.series()["spatial.coverage_gaps"] == [
-        (labels("visitor", "asset-containment", "coverage-gap"), 1)
-    ]
+    series = service.series()
+    assert "spatial.coverage_gaps" not in series
+    assert series["spatial.turns"] == [(labels("visitor", "asset-containment", "abstention"), 1)]
 
 
 def test_the_labels_are_shape_persona_turn_kind_and_snapshot_and_nothing_else() -> None:
@@ -160,8 +163,8 @@ def test_the_labels_are_shape_persona_turn_kind_and_snapshot_and_nothing_else() 
     service.ask("staff", "Where is 107?", where("107"))
     service.ask("visitor", "Where is the Audimax?", broken)
     service.ask("maintenance", "Where is the Audimax?", None)
-    abstention = service.ask("visitor", "Where is the Bibliothek?", where("Bibliothek"))
-    service.metrics.record(Turn.model_validate({**abstention, "cause": "coverage-gap"}))
+    service.ask("visitor", "Where is the Bibliothek?", where("Bibliothek"))
+    service.ask("visitor", "Which lights in 50.34 room 107 have a serial number?", SERIALS)
 
     series = service.series()
 
@@ -178,6 +181,7 @@ def test_the_labels_are_shape_persona_turn_kind_and_snapshot_and_nothing_else() 
         "staff",
         "maintenance",
         "place-location",
+        "attribute-filter",
         "unknown",
         "answer",
         "clarification",

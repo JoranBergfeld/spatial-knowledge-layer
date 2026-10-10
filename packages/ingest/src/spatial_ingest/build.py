@@ -6,17 +6,21 @@ The bundle for a snapshot date:
       pull/            the pinned pull, private
       osm/             everything sourced from OSM or derived from it by a rule
       seed/            the generated seed inventory
+      documents/       the corpus: originals as fetched (private), their English
+                       chunks, and the translations, summaries and vectors behind them
       manifest.json    input hashes and what produced each part
 
-Nothing in the bundle depends on when the build ran, so building twice from the
-same stored pull gives the same bytes.
+The pull, the fetched originals, the translations, the summaries and the vectors are kept in the
+bundle the first time they are made, and a link check keeps the day it ran. So
+building twice from the same bundle gives the same bytes.
 """
 
 from __future__ import annotations
 
+import datetime
 import hashlib
 import json
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import asdict
 from importlib.metadata import version
 from pathlib import Path
@@ -36,7 +40,9 @@ from spatial_core.records import (
     VisibleAssetType,
     VisibleSpace,
 )
-from spatial_ingest import pull
+from spatial_core.stores import index_name
+from spatial_ingest import documents, models, pull, summaries
+from spatial_ingest.corpus import default_corpus, read_corpus
 from spatial_ingest.rules import fire, tiers
 from spatial_ingest.seed import generate as inventory
 from spatial_ingest.structure import EDGE_RULES, RULES, TREE_RULES, build_structure
@@ -137,6 +143,9 @@ def build(
     extract: Path | None = None,
     refetch: bool = False,
     inventory_file: Path | None = None,
+    corpus_file: Path | None = None,
+    refetch_documents: bool = False,
+    model_client: Callable[[], models.Models] = models.from_env,
 ) -> Path:
     bundle = out / date
     pull_dir = bundle / "pull"
@@ -153,6 +162,8 @@ def build(
         )
 
     inputs = inventory.read_inputs(inventory_file or inventory.default_inventory())
+    corpus_path = corpus_file or default_corpus(venue.id)
+    corpus = read_corpus(corpus_path) if corpus_path is not None else None
     stored = pull.load_pull(pull_dir, venue, date)
     structure = build_structure(stored.data, venue)
     sets = clearance.visible_sets(structure.spaces, structure.edges)
@@ -196,6 +207,19 @@ def build(
     asset_visible_rules = (*visible_rules, clearance.TYPE_RULE, clearance.ASSET_VISIBLE_RULE)
     seed_rules = (*inventory.RULES, *fire_rules)
 
+    prose = documents.ingest(
+        corpus=corpus,
+        bundle=bundle,
+        spaces=structure.spaces,
+        types=all_types,
+        assets=all_assets,
+        models=model_client,
+        today=datetime.datetime.now(datetime.UTC).date().isoformat(),
+        refetch=refetch_documents,
+    )
+    translation_rules = (models.PROMPT_VERSION,) if prose.translations else ()
+    summary_rules = (summaries.PROMPT_VERSION,) if prose.summaries else ()
+
     tool = f"spatial-ingest@{version('spatial-ingest')}"
     parts: dict[str, Any] = {}
     for name, records, rules in (
@@ -229,6 +253,11 @@ def build(
             [v for v in visible_types if v.type_id not in sourced_types],
             asset_visible_rules,
         ),
+        (documents.DOCUMENTS_PART, prose.documents, (*documents.RULES, *translation_rules)),
+        (documents.CHUNKS_PART, prose.chunks, (*documents.RULES, *translation_rules)),
+        (documents.TRANSLATIONS_PART, prose.translations, translation_rules),
+        (summaries.PART, prose.summaries, summary_rules),
+        (documents.VECTORS_PART, prose.vectors, ()),
     ):
         content = _jsonl(records)
         path = bundle / name
@@ -248,6 +277,8 @@ def build(
             "pull": stored.pin,
             "venue": _venue_input(venue),
             "inventory": inputs.pin(),
+            # None for a venue with no corpus. Its document parts are then empty.
+            "documents": corpus.pin() if corpus is not None else None,
         },
         "parts": parts,
         "counts": structure.counts,
@@ -271,6 +302,8 @@ def build(
             },
             "attribute_catalogue": _catalogue(all_assets),
         },
+        # The index load writes the chunks to, and what promote points at.
+        "documents": {"index": index_name(venue.id, date), **prose.summary},
     }
     manifest_path.write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"

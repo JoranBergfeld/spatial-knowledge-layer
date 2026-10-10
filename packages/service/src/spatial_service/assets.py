@@ -8,8 +8,9 @@ not listed and not noticed missing.
                          type of light, and nobody is asked which. No match is
                          nothing found, whether the type is hidden or made up.
     assets_in_scope      every visible asset under one scope node, or under the
-                         whole venue, of the given types if any. One pass over
-                         ancestor paths, no call per space.
+                         whole venue, of the given types if any, that passes the
+                         given attribute filters if any (attributes.py). One pass
+                         over ancestor paths, no call per space.
     aggregate            those assets counted per space of one tier under the scope
 
 Aggregation walks containment only. An asset is counted under the spaces on its
@@ -27,11 +28,13 @@ ranks it.
 from __future__ import annotations
 
 import re
-from collections.abc import Collection, Iterable
+from collections.abc import Collection, Iterable, Sequence
 from dataclasses import dataclass
 
 from spatial_core.records import Asset, AssetType, RecordProvenance, Space
+from spatial_service.attributes import FillRate, apply
 from spatial_service.places import Outcome, Venue, normalise, tier
+from spatial_service.plan import Filter
 
 
 def _stem(word: str) -> str:
@@ -105,24 +108,31 @@ class ScopeResult:
     scope: str | None
     # The types asked for, or None for any.
     types: tuple[str, ...] | None
-    # The visible assets under the scope, of those types.
+    # The visible assets under the scope, of those types, that pass every filter.
     ids: tuple[str, ...]
     # How many visible assets the scope holds of any type. Zero means the scope
     # has no recorded installations, which is not the same as none of a type.
     installed: int
+    # Each filter, with how many of the assets asked about carry its attribute.
+    filters: tuple[FillRate, ...] = ()
 
 
 def assets_in_scope(
-    venue: Venue, scope: str | None, types: Collection[str] | None = None
+    venue: Venue,
+    scope: str | None,
+    types: Collection[str] | None = None,
+    filters: Sequence[Filter] = (),
 ) -> ScopeResult:
-    """Every visible asset under ``scope`` (or the venue), of ``types`` if given."""
+    """Every visible asset under ``scope`` (or the venue), of ``types``, passing ``filters``."""
     pool = venue.assets.values() if scope is None else venue.assets_under.get(scope, [])
-    ids = sorted(a.id for a in pool if types is None or a.type_id in types)
+    asked = sorted((a for a in pool if types is None or a.type_id in types), key=lambda a: a.id)
+    kept, rates = apply(venue, asked, filters)
     return ScopeResult(
         scope=scope,
         types=None if types is None else tuple(sorted(types)),
-        ids=tuple(ids),
+        ids=tuple(a.id for a in kept),
         installed=len(pool),
+        filters=rates,
     )
 
 

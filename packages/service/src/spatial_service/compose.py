@@ -10,7 +10,8 @@ checked.
 A route's modelled duration and its distance are facts too. They fill in as
 "41 seconds (modelled)" and "39 metres", so the word modelled is the host's as well.
 
-A fact is a place (filled with its label), an asset type (its name) or a count. A
+A fact is a place (filled with its label), an asset type (its name), one asset (its
+name, followed by "(generated)" when it is) or a count. A
 count is always of one record provenance. Where sourced and generated assets mix,
 there are two count facts and no fact for their sum, so the model has no way to
 print one number over both. A generated count fills in as "3 generated", and its
@@ -66,7 +67,10 @@ class Draft(_Model):
 class FactKind(StrEnum):
     PLACE = "place"
     ASSET_TYPE = "asset-type"
+    ASSET = "asset"
     COUNT = "count"
+    # What a filter tested, in the host's words: "no serial number recorded".
+    CONDITION = "condition"
     # A modelled duration in seconds and a distance in metres, of one route.
     DURATION = "modelled-duration"
     DISTANCE = "distance"
@@ -76,6 +80,7 @@ class Citation(_Model):
     kind: FactKind = FactKind.PLACE
     space_id: str | None = None
     type_id: str | None = None
+    asset_id: str | None = None
     # What the placeholder was filled with.
     label: str
     # Value provenance of a label or a type's name, and the rule or basis behind it.
@@ -86,9 +91,31 @@ class Citation(_Model):
     record_provenance: str | None = None
     # The number a count stands for.
     count: int | None = None
+    # The attribute a condition tests.
+    attribute: str | None = None
     # What a modelled duration or a distance stands for.
     seconds: int | None = None
     metres: int | None = None
+
+
+POSITION_RECORDED = "recorded"
+POSITION_NOT_RECORDED = "position not recorded"
+
+
+def asset_citation(asset: Asset) -> Citation:
+    """One asset, as a citation. A generated one says so in its label."""
+    generated = asset.record_provenance is not RecordProvenance.SOURCED
+    return Citation(
+        kind=FactKind.ASSET,
+        space_id=asset.space_id,
+        type_id=asset.type_id,
+        asset_id=asset.id,
+        label=f"{asset.name.value} ({GENERATED})" if generated else asset.name.value,
+        provenance=asset.name.provenance.value,
+        rule=asset.name.rule,
+        basis=asset.name.basis,
+        record_provenance=asset.record_provenance.value,
+    )
 
 
 @dataclass(frozen=True)
@@ -106,8 +133,9 @@ class Fact:
 class Facts:
     """The facts of one answer, numbered as they are added. A place or type is added once."""
 
-    def __init__(self) -> None:
-        self.items: list[Fact] = []
+    def __init__(self, items: Iterable[Fact] = ()) -> None:
+        # Given an answer's facts, more are numbered on from them.
+        self.items: list[Fact] = list(items)
         self._seen: dict[tuple[str, str], str] = {}
 
     def _add(self, kind: FactKind, text: str, citation: Citation, **more: Any) -> str:
@@ -153,6 +181,11 @@ class Facts:
             )
         return self._seen[key]
 
+    def asset(self, asset: Asset) -> str:
+        citation = asset_citation(asset)
+        position = POSITION_RECORDED if asset.position else POSITION_NOT_RECORDED
+        return self._add(FactKind.ASSET, citation.label, citation, told={"position": position})
+
     def number(self, count: int, *, about: str, space_id: str | None = None) -> str:
         """A plain number that counts something other than assets of one provenance."""
         return self._add(
@@ -194,6 +227,10 @@ class Facts:
                 )
             )
         return refs
+
+    def condition(self, text: str, citation: Citation, **told: str) -> str:
+        """What a filter tested, worded by the host so the model cannot reword it."""
+        return self._add(FactKind.CONDITION, text, citation, told=told)
 
     def duration(self, seconds: int, *, space_id: str) -> str:
         """A route's modelled duration. Says it is modelled, so nobody has to remember to."""
@@ -242,6 +279,8 @@ class Answer:
     # Count facts that are two halves of one tally: named together or not at all.
     together: list[list[str]] = field(default_factory=list)
     rows: list[Row] = field(default_factory=list)
+    # Words the answer may not use, whole and whatever their case.
+    banned: tuple[str, ...] = ()
 
 
 def location(venue: Venue, question: str, subject: Space) -> Answer:
@@ -256,6 +295,24 @@ def location(venue: Venue, question: str, subject: Space) -> Answer:
         "facts": [{"ref": f.ref, "tier": f.told["tier"]} for f in facts.items],
     }
     return Answer(facts.items, payload, required=[facts.items[0].ref])
+
+
+def asset_location(venue: Venue, question: str, asset: Asset) -> Answer:
+    """One asset, then the space it is in and each labelled place enclosing that."""
+    facts = Facts()
+    subject = facts.asset(asset)
+    home = venue.spaces[asset.space_id]
+    for space in [home, *venue.ancestors(home)]:
+        if space.label:
+            facts.place(space)
+    payload = {
+        "question": question,
+        "shape": "asset-location",
+        "subject": subject,
+        "required": [subject],
+        "facts": facts.told(),
+    }
+    return Answer(facts.items, payload, required=[subject])
 
 
 def containment(venue: Venue, question: str, found: ScopeResult) -> Answer:
@@ -521,6 +578,7 @@ def fill(
     facts: list[Fact],
     required: Iterable[str] = (),
     together: Iterable[list[str]] = (),
+    banned: Iterable[str] = (),
 ) -> list[Segment]:
     """Turn a model's raw output into segments, or raise CompositionRejected."""
     try:
@@ -545,6 +603,9 @@ def fill(
             reasons.append(f"segment {number} names {ref}, which is not a fact")
         if not segment.cites and not used:
             reasons.append(f"segment {number} cites nothing")
+        for word in banned:
+            if re.search(rf"\b{re.escape(word)}\b", segment.text, re.IGNORECASE):
+                reasons.append(f"segment {number} says {word!r}")
         if "{" in _PLACEHOLDER.sub("", segment.text) or "}" in _PLACEHOLDER.sub("", segment.text):
             reasons.append(f"segment {number} has a malformed placeholder")
     for ref in required:

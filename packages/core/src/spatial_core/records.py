@@ -287,3 +287,138 @@ class VisibleAsset(_Record):
 class VisibleAssetType(_Record):
     persona: Persona
     type_id: str
+
+
+class DocumentKind(StrEnum):
+    # A page the venue publishes about one of its places.
+    ACCESSIBILITY_PAGE = "accessibility-page"
+    # A maker's manual for an asset type. Quoted and linked, never hosted.
+    MANUAL = "manual"
+
+
+class AnchorKind(StrEnum):
+    SPACE = "space"
+    ASSET_TYPE = "asset_type"
+    ASSET = "asset"
+
+
+class Anchor(_Record):
+    """What ties a document to the venue: a space, an asset type or one asset."""
+
+    kind: AnchorKind
+    id: str
+    # Sourced when the corpus names the id, derived when a rule found it.
+    provenance: ValueProvenance
+    rule: str | None = None
+
+    @model_validator(mode="after")
+    def _names_its_rule(self) -> Self:
+        if self.provenance is ValueProvenance.DERIVED and not self.rule:
+            raise ValueError("a derived anchor names its rule")
+        return self
+
+
+class LinkStatus(StrEnum):
+    ONLINE = "online"
+    OFFLINE = "offline"
+
+
+class LinkCheck(_Record):
+    """Whether a document's source answered, and the day build asked."""
+
+    status: LinkStatus
+    checked_on: str
+
+
+class TranslationSource(_Record):
+    """What turned a document's text into English."""
+
+    deployment: str
+    # The model the deployment said it ran.
+    model: str
+    prompt_version: str
+
+
+class Document(_Record):
+    """A piece of prose anchored to the venue. Its chunks are what gets retrieved."""
+
+    id: str
+    record_provenance: RecordProvenance
+    kind: DocumentKind
+    title: str
+    # Where the original lives. The layer links to it and never hosts it.
+    url: str
+    # The original's language, as a BCP 47 tag ("de").
+    language: str
+    # The sha256 of the original as fetched, which stays in the private bundle.
+    original_sha256: str
+    anchors: tuple[Anchor, ...]
+    # The lowest persona that may read it, by document-clearance.
+    clearance_class: Persona
+    # The day the source says it last changed, read by a published rule. None is undated.
+    date: Value | None = None
+    link: LinkCheck
+    # None for a document that was English already.
+    translation: TranslationSource | None = None
+    chunks: int
+
+    @model_validator(mode="after")
+    def _is_anchored(self) -> Self:
+        if not self.anchors:
+            raise ValueError("a document has at least one anchor")
+        return self
+
+
+class ChunkRole(StrEnum):
+    # A passage of the document itself. The only thing that is ever evidence.
+    PASSAGE = "passage"
+    # A model's summary of the document. It helps find the document's passages and
+    # is never quoted, cited, checked for entailment or shown to anyone.
+    SUMMARY = "summary"
+
+
+# What a summary chunk says for an ordinal: it has no place in the document.
+SUMMARY_ORDINAL = -1
+
+
+class Chunk(_Record):
+    """One passage of a document, as the search index holds it.
+
+    The text is English with numbers-in-words applied. The original text is not
+    here: it stays in the private bundle, and the chunk keeps its hash.
+
+    A summary chunk is the one exception: its text is a model's summary of the
+    document, and its hash is of what the model read. Everything else on it is
+    its document's, so the filter that admits a passage admits its summary too.
+    """
+
+    id: str
+    document_id: str
+    role: ChunkRole = ChunkRole.PASSAGE
+    # Its place in the document, from 0. SUMMARY_ORDINAL for a summary.
+    ordinal: int
+    kind: DocumentKind
+    title: str
+    text: str
+    # The original's language, URL and the sha256 of this passage's original text.
+    language: str
+    url: str
+    original_text_sha256: str
+    translated: bool
+    # Its document's anchors, by kind.
+    space_ids: tuple[str, ...]
+    asset_type_ids: tuple[str, ...]
+    asset_ids: tuple[str, ...]
+    # Every space on the ancestor path of a space or asset anchor, and the anchored
+    # spaces themselves, flattened to one set so scope is a filter.
+    ancestor_ids: tuple[str, ...]
+    clearance_class: Persona
+    # ISO date, or None for undated. Trace only: it never reaches a model.
+    document_date: str | None = None
+    link_status: LinkStatus
+    link_checked_on: str
+
+    @property
+    def is_evidence(self) -> bool:
+        """Whether it may be quoted and cited. A summary never is."""
+        return self.role is ChunkRole.PASSAGE
