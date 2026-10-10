@@ -144,8 +144,10 @@ def _parse(bundle: Path, name: str, listed: dict[str, Any], model: type[BaseMode
     return records
 
 
-def _read_entries(bundle: Path, manifest: dict[str, Any]) -> tuple[list[IndexEntry], list[Summary]]:
-    """The bundle's chunks and summary chunks, each with its vector, and its summaries.
+def _read_entries(
+    bundle: Path, manifest: dict[str, Any]
+) -> tuple[list[IndexEntry], list[Summary], list[Document]]:
+    """The bundle's chunks and summary chunks, each with its vector, its summaries and documents.
 
     Every document part is checked on the way.
     """
@@ -169,7 +171,7 @@ def _read_entries(bundle: Path, manifest: dict[str, Any]) -> tuple[list[IndexEnt
         if chunk.id not in vectors:
             raise BundleError(f"chunk {chunk.id} has no vector in {VECTORS_PART}")
         entries.append(IndexEntry(chunk=chunk, vector=vectors[chunk.id].vector))
-    return entries, read[summaries.PART]
+    return entries, read[summaries.PART], read[DOCUMENTS_PART]
 
 
 def _read_parts(bundle: Path, manifest: dict[str, Any]) -> list[_Part]:
@@ -354,7 +356,7 @@ def load(*, bundle: Path, database_url: str, index: SearchIndex | None = None) -
         rows: dict[str, int] = {}
         try:
             parts = _read_parts(bundle, manifest)
-            entries, made = _read_entries(bundle, manifest)
+            entries, made, documents = _read_entries(bundle, manifest)
             embedding = manifest.get("documents", {}).get("embedding") or {}
             with conn.transaction():
                 db.drop_snapshot(conn, schemas)
@@ -370,7 +372,7 @@ def load(*, bundle: Path, database_url: str, index: SearchIndex | None = None) -
                 failures = invariants.check(conn, schemas, _expected_rows(manifest))
                 # Read back from the index, so this checks what the service will search.
                 failures += invariants.check_chunks(
-                    conn, schemas, index.chunks(name), manifest, made
+                    conn, schemas, index.chunks(name), manifest, made, documents
                 )
                 _record(conn, manifest, failures, name)
         except (BundleError, psycopg.Error, search.SearchError) as error:

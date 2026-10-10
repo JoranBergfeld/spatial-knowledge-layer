@@ -215,6 +215,54 @@ def test_load_fails_when_a_shared_manual_is_filed_stricter_than_its_least_restri
     )
 
 
+def test_load_fails_when_a_chunk_drops_an_anchor_its_document_has(
+    bundle: Bundle, database_url: str
+) -> None:
+    built = bundle(C)
+    # The page of room 107 is anchored to the building and to the private room. A chunk
+    # that forgets the room and files itself as visitor agrees with itself and leaks.
+    edit_chunk(
+        built,
+        "room:107#0",
+        space_ids=["osm:way/100"],
+        ancestor_ids=["osm:way/100", "site:mini-campus"],
+        clearance_class="visitor",
+    )
+    summaries = read_jsonl(built / "documents/summaries.jsonl")
+    for summary in summaries:
+        if summary["document_id"] == "room:107":
+            summary["clearance_class"] = "visitor"
+    rewrite(built, "documents/summaries.jsonl", summaries)
+
+    def recount(manifest: dict[str, Any]) -> None:
+        said = manifest["documents"]
+        said["chunks_by_clearance_class"] = {"visitor": 7, "staff": 0, "maintenance": 1}
+        by_class = said["summaries"]["by_clearance_class"]
+        by_class["visitor"], by_class["staff"] = by_class["visitor"] + 1, by_class["staff"] - 1
+
+    edit_manifest(built, recount)
+
+    assert ingest("load", built, database_url) == 1
+    assert failures(database_url, C) == [
+        "a chunk carries its document's anchors: fails for room:107#0, room:107#summary",
+        "a chunk's clearance class is its strictest anchor's: "
+        "fails for room:107#0, room:107#summary",
+    ]
+
+
+def test_load_fails_when_a_chunk_belongs_to_no_document_of_the_bundle(
+    bundle: Bundle, database_url: str
+) -> None:
+    built = bundle(C)
+    documents = read_jsonl(built / "documents/documents.jsonl")
+    rewrite(built, "documents/documents.jsonl", [d for d in documents if d["id"] != "room:107"])
+
+    assert ingest("load", built, database_url) == 1
+    assert failures(database_url, C) == [
+        "a chunk belongs to a document of the bundle: fails for room:107#0, room:107#summary"
+    ]
+
+
 def test_load_fails_when_the_index_does_not_hold_the_chunks_the_manifest_counts(
     bundle: Bundle, database_url: str
 ) -> None:
