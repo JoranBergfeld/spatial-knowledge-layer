@@ -20,6 +20,7 @@ from psycopg import sql
 from psycopg.rows import dict_row
 
 from spatial_core.records import Asset, AssetType, Persona, ServiceEvent, Space, VisibleSpace
+from spatial_core.search import IndexRef
 from spatial_core.stores import CONTROL_SCHEMA, READER_ROLE, snapshot_schemas
 from spatial_service.places import Venue
 
@@ -52,8 +53,10 @@ class MemoryStore:
         asset_types: Iterable[AssetType] = (),
         visible_assets: Mapping[Persona, Collection[str]] | None = None,
         visible_asset_types: Mapping[Persona, Collection[str]] | None = None,
+        index: IndexRef | None = None,
         service_events: Iterable[ServiceEvent] = (),
     ) -> None:
+        self.index = index
         self.snapshot = snapshot
         self.previous = previous
         self._spaces = {space.id: space for space in spaces}
@@ -80,6 +83,7 @@ class MemoryStore:
             assets={i: a for i, a in self._assets.items() if i in assets},
             asset_types={i: t for i, t in self._types.items() if i in types},
             tiers=tiers_of(self._spaces.values()),
+            index=self.index,
             service_events=by_asset(e for e in self._events if e.asset_id in assets),
         )
 
@@ -174,7 +178,10 @@ class PostgresStore:
         ).format(**names)
         with self._connect() as conn:
             loaded = conn.execute(
-                "SELECT status FROM control.snapshots WHERE snapshot = %s", (snapshot,)
+                "SELECT status, search_index,"
+                " manifest #>> '{documents,embedding,deployment}' AS embedding_deployment"
+                " FROM control.snapshots WHERE snapshot = %s",
+                (snapshot,),
             ).fetchone()
             if loaded is None or loaded["status"] != "loaded":
                 raise StoreError(f"{snapshot} is not a loaded snapshot")
@@ -193,5 +200,9 @@ class PostgresStore:
             assets={asset.id: asset for asset in assets},
             asset_types={kind.id: kind for kind in types},
             tiers=tuple(row["tier"] for row in tier_rows),
+            # A snapshot loaded before documents were has no index, and retrieves nothing.
+            index=IndexRef(loaded["search_index"], loaded["embedding_deployment"])
+            if loaded["search_index"]
+            else None,
             service_events=by_asset(ServiceEvent.model_validate(row) for row in event_rows),
         )

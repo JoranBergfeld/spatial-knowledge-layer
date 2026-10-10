@@ -10,8 +10,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from collections import Counter
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 import psycopg
@@ -22,12 +24,17 @@ from psycopg.conninfo import make_conninfo
 from pydantic import BaseModel
 
 import fixture
+import papers
 from fixture import counted, filtered, having, located, most, where
 from spatial_core.records import PERSONAS, Persona, VisibleAsset, VisibleAssetType
+from spatial_core.search import SEARCH_DIR_ENV, IndexRef, LocalIndex
 from spatial_core.stores import READER_ROLE
+from spatial_ingest.documents import Vector
 from spatial_ingest.load import load
 from spatial_ingest.promote import promote
+from spatial_ingest.summaries import Prompt, Summary
 from spatial_service.app import create_app
+from spatial_service.retrieval import Retriever
 from spatial_service.store import PostgresStore, StoreError
 
 ADMIN_URL_ENV = "SPATIAL_TEST_DATABASE_URL"
@@ -42,6 +49,44 @@ def admin_url() -> str:
             pytest.fail(message)
         pytest.skip(message)
     return url
+
+
+def _documents() -> dict[str, list[BaseModel]]:
+    """The fixture's documents as bundle parts: passages, a summary each, and their vectors."""
+    passages = papers.passages()
+    summarised = [
+        Summary(
+            id=f"{passage.document_id}#summary",
+            document_id=passage.document_id,
+            prompt=Prompt.DOCUMENT,
+            clearance_class=passage.clearance_class,
+            source_chunk_ids=(passage.id,),
+            source_sha256=hashlib.sha256(passage.text.encode()).hexdigest(),
+            text=papers.SUMMARIES[passage.document_id],
+            deployment="summary-deployment",
+            model="summary-model",
+            prompt_version="summarise-document@1",
+            input_tokens=1,
+            output_tokens=1,
+        )
+        for passage in passages
+    ]
+    vectors = [
+        Vector(
+            chunk_id=entry.chunk.id,
+            text_sha256=hashlib.sha256(entry.chunk.text.encode()).hexdigest(),
+            deployment=papers.EMBEDDING,
+            model="embed-model",
+            input_tokens=1,
+            vector=entry.vector,
+        )
+        for entry in papers.entries()
+    ]
+    return {
+        "documents/chunks.jsonl": list(passages),
+        "documents/summaries.jsonl": list(summarised),
+        "documents/vectors.jsonl": list(vectors),
+    }
 
 
 def _bundle(root: Path) -> Path:
@@ -79,12 +124,27 @@ def _bundle(root: Path) -> Path:
                 v for v in visible_types if v.type_id.startswith(half)
             ],
         }
+    records |= _documents()
     for name, rows in records.items():
         content = "".join(row.model_dump_json() + "\n" for row in rows).encode()
         (bundle / name).parent.mkdir(parents=True, exist_ok=True)
         (bundle / name).write_bytes(content)
         parts[name] = {"sha256": hashlib.sha256(content).hexdigest(), "records": len(rows)}
-    manifest = {"snapshot": fixture.SNAPSHOT, "venue": "mini", "parts": parts}
+
+    def by_class(rows: list[Any]) -> dict[str, int]:
+        return dict(Counter(row.clearance_class.value for row in rows))
+
+    passages, summarised = records["documents/chunks.jsonl"], records["documents/summaries.jsonl"]
+    manifest = {
+        "snapshot": fixture.SNAPSHOT,
+        "venue": "mini",
+        "parts": parts,
+        "documents": {
+            "chunks_by_clearance_class": by_class(passages),
+            "embedding": {"deployment": papers.EMBEDDING, "dimensions": papers.DIMENSIONS},
+            "summaries": {"documents": len(summarised), "by_clearance_class": by_class(summarised)},
+        },
+    }
     (bundle / "manifest.json").write_text(json.dumps(manifest))
     return bundle
 
@@ -123,6 +183,34 @@ def test_the_service_reads_through_the_reader_role(stores: tuple[str, str]) -> N
     assert turn["kind"] == "clarification"
     assert turn["state"]["snapshot"] == fixture.SNAPSHOT
     assert [c["space_id"] for c in turn["candidates"]] == ["osm:way/2001", "osm:way/1003"]
+
+
+@pytest.mark.parametrize(
+    ("persona", "expected"),
+    [("visitor", ["manual:b1#0"]), ("maintenance", ["manual:p1#0", "manual:b1#0"])],
+)
+def test_a_manual_is_retrieved_from_the_index_the_snapshot_names(
+    stores: tuple[str, str], persona: str, expected: list[str]
+) -> None:
+    _, reader_url = stores
+    store = PostgresStore(reader_url)
+    # The index load wrote, found by the name and the deployment the control table holds.
+    assert store.venue(fixture.SNAPSHOT, Persona(persona)).index == IndexRef(
+        "spatial-mini-20260915", papers.EMBEDDING
+    )
+    loaded = LocalIndex(Path(os.environ[SEARCH_DIR_ENV]))
+    plan = papers.manual("isolate the supply before servicing", "Audimax")
+    app = create_app(
+        store,
+        fixture.llm(lambda _p: plan, papers.quoting, []),
+        documents=Retriever(loaded, papers.Embedder()),
+    )
+
+    turn = TestClient(app).post("/turn", json={"persona": persona, "question": "?"}).json()
+
+    assert turn["kind"] == "answer"
+    assert papers.retrieved(turn) == expected
+    assert "Precis" not in json.dumps(turn)
 
 
 def test_a_persona_reads_its_visible_set_and_nothing_else(stores: tuple[str, str]) -> None:
