@@ -11,7 +11,8 @@ the manifest's ingestion spend comes from.
 from __future__ import annotations
 
 import os
-from collections.abc import Mapping
+import time
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -37,8 +38,27 @@ PROMPT = (
 )
 
 
+# Tries per call, and the longest wait between two. Guessed, not measured.
+ATTEMPTS = 5
+MAX_WAIT_SECONDS = 60.0
+
+
 class ModelError(Exception):
     pass
+
+
+def _retryable(response: httpx.Response) -> bool:
+    return response.status_code == 429 or response.status_code >= 500
+
+
+def _wait(response: httpx.Response | None, attempt: int) -> float:
+    """Retry-After when the service says, else 2, 4, 8, 16 seconds. Never over the cap."""
+    said = response.headers.get("retry-after") if response is not None else None
+    try:
+        wait = float(said) if said is not None else 2.0**attempt
+    except ValueError:
+        wait = 2.0**attempt
+    return min(max(wait, 0.0), MAX_WAIT_SECONDS)
 
 
 @dataclass(frozen=True)
@@ -83,28 +103,45 @@ class AzureOpenAI:
         api_version: str,
         translation_deployment: str,
         embedding_deployment: str,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self.translation_deployment = translation_deployment
         self.embedding_deployment = embedding_deployment
         self._endpoint = endpoint.rstrip("/")
         self._api_key = api_key
         self._api_version = api_version
+        self._sleep = sleep
 
     def _post(self, deployment: str, operation: str, body: dict[str, Any]) -> dict[str, Any]:
+        """One call, tried again on a rate limit, a server error or a timeout.
+
+        A build makes hundreds of these in a row, and one 429 used to throw the
+        whole build away. Anything else (a 400, a content filter) fails at once.
+        """
         url = f"{self._endpoint}/openai/deployments/{deployment}/{operation}"
-        try:
-            response = httpx.post(
-                url,
-                params={"api-version": self._api_version},
-                headers={"api-key": self._api_key},
-                json=body,
-                timeout=120,
-            )
-            response.raise_for_status()
-            answer: dict[str, Any] = response.json()
-        except (httpx.HTTPError, ValueError) as error:
-            raise ModelError(f"{operation} on {deployment} failed: {error}") from error
-        return answer
+        for attempt in range(1, ATTEMPTS + 1):
+            try:
+                response = httpx.post(
+                    url,
+                    params={"api-version": self._api_version},
+                    headers={"api-key": self._api_key},
+                    json=body,
+                    timeout=120,
+                )
+                if _retryable(response) and attempt < ATTEMPTS:
+                    self._sleep(_wait(response, attempt))
+                    continue
+                response.raise_for_status()
+                answer: dict[str, Any] = response.json()
+            except httpx.TransportError as error:
+                if attempt < ATTEMPTS:
+                    self._sleep(_wait(None, attempt))
+                    continue
+                raise ModelError(f"{operation} on {deployment} failed: {error}") from error
+            except (httpx.HTTPError, ValueError) as error:
+                raise ModelError(f"{operation} on {deployment} failed: {error}") from error
+            return answer
+        raise AssertionError("unreachable: the last attempt returns or raises")
 
     def _chat(self, system: str, user: str, what: str) -> Translated:
         deployment = self.translation_deployment
