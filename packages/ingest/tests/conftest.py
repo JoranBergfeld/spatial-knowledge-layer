@@ -18,6 +18,12 @@ from spatial_ingest import models
 from stubs import OpenAI, Overpass, Site, serve_openai, serve_overpass, serve_site
 
 
+@pytest.fixture(autouse=True)
+def no_model_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A model call still retries in tests, it just does not wait in between."""
+    monkeypatch.setattr(models, "MAX_WAIT_SECONDS", 0.0)
+
+
 @pytest.fixture
 def overpass() -> Iterator[Overpass]:
     with serve_overpass() as state:
