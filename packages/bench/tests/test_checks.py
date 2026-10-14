@@ -202,6 +202,9 @@ class Leaky:
         everything = self.behind.venue(snapshot, Persona.MAINTENANCE)
         return dataclasses.replace(everything, persona=persona)
 
+    def sourced_clearance_share(self, snapshot: str) -> float | None:
+        return self.behind.sourced_clearance_share(snapshot)
+
 
 @pytest.fixture(scope="module")
 def leaked(

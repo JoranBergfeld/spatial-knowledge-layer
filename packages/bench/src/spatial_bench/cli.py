@@ -40,6 +40,7 @@ from spatial_bench.run import BenchError
 from spatial_bench.spend import CATEGORY, Assumed, Rates, SpendError
 from spatial_core.search import LocalIndex
 from spatial_service.evaluation import Figure, Section
+from spatial_service.store import StoreError
 
 # A Postgres this may create databases on. Never the layer's own login.
 ADMIN_URL_ENV = "SPATIAL_BENCH_ADMIN_URL"
@@ -382,6 +383,7 @@ def main(
         SpendError,
         NliError,
         psycopg.Error,
+        StoreError,
         OSError,
         ValueError,
     ) as error:

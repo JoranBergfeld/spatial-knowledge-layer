@@ -2,6 +2,8 @@
 
     POST /turn   a persona, a snapshot (or none, for the current one), prior state
                  and a question; returns the turn with its trace
+    GET /venue   the snapshot served now and the one before, the sourced clearance
+                 share, the personas and the route constants (venue_facts.py)
     GET /eval    the eval snapshot the last evaluation run wrote, or the one empty
                  answer when there has been no run (evaluation.py)
 
@@ -41,13 +43,14 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
 from spatial_service import evaluation as eval_contract
-from spatial_service import metrics, search
+from spatial_service import metrics, search, venue_facts
 from spatial_service.llm import Deployment, Llm
 from spatial_service.metrics import Metrics
 from spatial_service.retrieval import Documents, Retriever
 from spatial_service.store import PostgresStore, Store
 from spatial_service.tree import NODE_CAP
 from spatial_service.turn import Turn, TurnKind, TurnRefused, TurnRequest, TurnService
+from spatial_service.venue_facts import VenueFacts
 
 SEMANTIC_RANKER_ENV = "SPATIAL_SEMANTIC_RANKER"
 _ON = ("on", "true", "1", "yes")
@@ -164,6 +167,14 @@ def create_app(
         if taken.kind is TurnKind.UNAVAILABLE:
             return JSONResponse(status_code=503, content=taken.model_dump(mode="json"))
         return taken
+
+    @app.get("/venue", response_model=VenueFacts)
+    def venue() -> VenueFacts | JSONResponse:
+        try:
+            return venue_facts.read(store)
+        except venue_facts.VenueUnavailable as unavailable:
+            content = {"detail": str(unavailable), "code": unavailable.code}
+            return JSONResponse(status_code=503, content=content)
 
     @app.get("/eval")
     def eval_snapshot() -> Any:

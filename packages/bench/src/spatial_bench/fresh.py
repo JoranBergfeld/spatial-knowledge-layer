@@ -43,6 +43,9 @@ class _AsIfCurrent:
     def venue(self, snapshot: str, persona: Persona) -> Venue:
         return self.behind.venue(snapshot, persona)
 
+    def sourced_clearance_share(self, snapshot: str) -> float | None:
+        return self.behind.sourced_clearance_share(snapshot)
+
 
 def ask(
     gold: questions.QuestionSet, store: Store, snapshot: str, index: SearchQueries | None
