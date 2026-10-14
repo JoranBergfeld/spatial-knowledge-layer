@@ -2,18 +2,31 @@
 
 Each runs over what was written, not over the bundle, so it checks the stores the
 service will read. Each query returns the ids that break it; none means it holds.
+The chunk checks do the same over the chunks read back from the search index.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 import psycopg
 from psycopg import sql
 
-from spatial_core.records import RecordProvenance
+from spatial_core import clearance
+from spatial_core.records import (
+    PERSONAS,
+    Anchor,
+    AnchorKind,
+    Chunk,
+    ChunkRole,
+    Document,
+    Persona,
+    RecordProvenance,
+)
 from spatial_core.stores import SnapshotSchemas
+from spatial_ingest.summaries import Summary
 
 # How many offending ids a failure names. The count is always complete.
 EXAMPLES = 5
@@ -272,4 +285,178 @@ def check(
         stored = row[0] if row else 0
         if stored != expected:
             failures.append(f"{table} holds {stored} rows, the manifest says {expected}")
+    return failures
+
+
+def _failure(name: str, offending: Sequence[str]) -> list[str]:
+    if not offending:
+        return []
+    listed = sorted(offending)
+    shown = ", ".join(listed[:EXAMPLES])
+    more = f" and {len(listed) - EXAMPLES} more" if len(listed) > EXAMPLES else ""
+    return [f"{name}: fails for {shown}{more}"]
+
+
+def _class_of(
+    chunk: Chunk,
+    anchored: Mapping[str, Sequence[Anchor]],
+    spaces: Mapping[str, tuple[Persona | None, list[str]]],
+    types: Mapping[str, Persona | None],
+    assets: Mapping[str, tuple[str, list[str]]],
+) -> Persona | None:
+    """The class a chunk's document's anchors give it. None when one is not in the snapshot."""
+    found: list[tuple[AnchorKind, Persona | None]] = []
+    for anchor in anchored[chunk.document_id]:
+        if anchor.kind is AnchorKind.SPACE and anchor.id in spaces:
+            found.append((anchor.kind, spaces[anchor.id][0]))
+        elif anchor.kind is AnchorKind.ASSET_TYPE and anchor.id in types:
+            found.append((anchor.kind, types[anchor.id]))
+        elif (
+            anchor.kind is AnchorKind.ASSET
+            and anchor.id in assets
+            and assets[anchor.id][0] in types
+        ):
+            found.append((anchor.kind, types[assets[anchor.id][0]]))
+        else:
+            return None
+    return clearance.document_clearance(chunk.kind, found) if found else None
+
+
+def check_chunks(
+    conn: psycopg.Connection[Any],
+    schemas: SnapshotSchemas,
+    chunks: Sequence[Chunk],
+    manifest: dict[str, Any],
+    summaries: Sequence[Summary] = (),
+    documents: Sequence[Document] = (),
+) -> list[str]:
+    """What does not hold of the chunks the index holds, against the stores and the manifest.
+
+    ``summaries`` is the bundle's record of what each summary was made from, and
+    ``documents`` its record of what each document is anchored to. A chunk's own id
+    lists are held to its document's anchors, and its clearance class is worked out
+    from those. Worked out from the chunk's own lists, a chunk that dropped its
+    strictest anchor and filed itself lower would agree with itself.
+    """
+
+    def rows(query: str) -> list[tuple[Any, ...]]:
+        return conn.execute(sql.SQL(query).format(views=sql.Identifier(schemas.views))).fetchall()
+
+    def persona(value: str | None) -> Persona | None:
+        return Persona(value) if value else None
+
+    def path(steps: list[dict[str, str]]) -> list[str]:
+        return [step["id"] for step in steps]
+
+    spaces = {
+        space_id: (persona(cleared), path(steps))
+        for space_id, cleared, steps in rows(
+            "SELECT id, clearance ->> 'persona', ancestor_path FROM {views}.spaces"
+        )
+    }
+    types = {
+        type_id: persona(cleared)
+        for type_id, cleared in rows("SELECT id, clearance ->> 'persona' FROM {views}.asset_types")
+    }
+    assets = {
+        asset_id: (type_id, path(steps))
+        for asset_id, type_id, steps in rows(
+            "SELECT id, type_id, ancestor_path FROM {views}.assets"
+        )
+    }
+
+    anchored = {document.id: document.anchors for document in documents}
+
+    def ids_of(chunk: Chunk, kind: AnchorKind) -> list[str]:
+        return sorted(a.id for a in anchored[chunk.document_id] if a.kind is kind)
+
+    orphaned, strayed, unanchored, misfiled, mispathed = [], [], [], [], []
+    for chunk in chunks:
+        if chunk.document_id not in anchored:
+            orphaned.append(chunk.id)
+            continue
+        if (
+            sorted(chunk.space_ids) != ids_of(chunk, AnchorKind.SPACE)
+            or sorted(chunk.asset_type_ids) != ids_of(chunk, AnchorKind.ASSET_TYPE)
+            or sorted(chunk.asset_ids) != ids_of(chunk, AnchorKind.ASSET)
+        ):
+            strayed.append(chunk.id)
+        known = (
+            all(space_id in spaces for space_id in chunk.space_ids)
+            and all(type_id in types for type_id in chunk.asset_type_ids)
+            and all(
+                asset_id in assets and assets[asset_id][0] in types for asset_id in chunk.asset_ids
+            )
+        )
+        if not known or not (chunk.space_ids or chunk.asset_type_ids or chunk.asset_ids):
+            unanchored.append(chunk.id)
+            continue
+        if chunk.clearance_class is not _class_of(chunk, anchored, spaces, types, assets):
+            misfiled.append(chunk.id)
+        above: set[str] = set()
+        for space_id in chunk.space_ids:
+            above.update([space_id, *spaces[space_id][1]])
+        for asset_id in chunk.asset_ids:
+            above.update(assets[asset_id][1])
+        if sorted(above) != sorted(chunk.ancestor_ids):
+            mispathed.append(chunk.id)
+
+    failures = [
+        *_failure("a chunk belongs to a document of the bundle", orphaned),
+        *_failure("a chunk carries its document's anchors", strayed),
+        *_failure("a chunk's anchors are spaces, types and assets of the snapshot", unanchored),
+        *_failure("a chunk's clearance class is its strictest anchor's", misfiled),
+        *_failure("a chunk's ancestor paths agree with the tree", mispathed),
+    ]
+
+    passages = {chunk.id: chunk for chunk in chunks if chunk.role is ChunkRole.PASSAGE}
+    summarised = [chunk for chunk in chunks if chunk.role is ChunkRole.SUMMARY]
+    # A summary may only have read passages of its own document, which are all of
+    # its own class. This is the check that no summary crosses a clearance class.
+    crossed = [
+        made.id
+        for made in summaries
+        if not made.source_chunk_ids
+        or any(
+            source not in passages
+            or passages[source].document_id != made.document_id
+            or passages[source].clearance_class is not made.clearance_class
+            for source in made.source_chunk_ids
+        )
+    ]
+    recorded = {made.id for made in summaries if made.indexed}
+    unrecorded = [chunk.id for chunk in summarised if chunk.id not in recorded]
+    counted: dict[str, int] = {}
+    for chunk in summarised:
+        counted[chunk.document_id] = counted.get(chunk.document_id, 0) + 1
+    indexed = {chunk.document_id for chunk in passages.values()} | set(counted)
+    failures += [
+        *_failure(
+            "a summary is built from passages of its own document and clearance class", crossed
+        ),
+        *_failure("a summary chunk is a summary the bundle recorded", unrecorded),
+        *_failure(
+            "every document in the index has one summary",
+            [document for document in indexed if counted.get(document, 0) != 1],
+        ),
+    ]
+
+    said = manifest.get("documents", {})
+    parts = manifest.get("parts", {})
+    told = said.get("summaries", {})
+    expected = int(parts.get("documents/chunks.jsonl", {}).get("records", 0))
+    expected += int(told.get("documents", 0))
+    if len(chunks) != expected:
+        failures.append(f"the index holds {len(chunks)} chunks, the manifest says {expected}")
+    for what, held, by_class in (
+        ("passages", list(passages.values()), said.get("chunks_by_clearance_class", {})),
+        ("summaries", summarised, told.get("by_clearance_class", {})),
+    ):
+        for cleared in PERSONAS:
+            found = sum(1 for chunk in held if chunk.clearance_class is cleared)
+            listed = int(by_class.get(cleared.value, 0))
+            if found != listed:
+                failures.append(
+                    f"the index holds {found} {cleared.value} {what}, the manifest says {listed}"
+                )
     return failures

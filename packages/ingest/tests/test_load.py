@@ -9,11 +9,9 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
 
 import psycopg
 import pytest
@@ -25,30 +23,8 @@ from spatial_ingest.build import MANIFEST_FILE
 from spatial_ingest.cli import main
 from spatial_ingest.load import TABLES, load
 
-ADMIN_URL_ENV = "SPATIAL_TEST_DATABASE_URL"
 SERVICE_ROLE = "spatial_test_service"
 A, B, C, D, E = "2026-09-01", "2026-09-08", "2026-09-15", "2026-09-22", "2026-09-29"
-
-
-@pytest.fixture(scope="session")
-def admin_url() -> str:
-    url = os.environ.get(ADMIN_URL_ENV)
-    if not url:
-        message = f"set {ADMIN_URL_ENV} to a Postgres superuser URL to run the store tests"
-        if os.environ.get("CI"):
-            pytest.fail(message)
-        pytest.skip(message)
-    return url
-
-
-@pytest.fixture
-def database_url(admin_url: str) -> Iterator[str]:
-    name = f"spatial_test_{uuid4().hex[:12]}"
-    with psycopg.connect(admin_url, autocommit=True) as conn:
-        conn.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
-    yield make_conninfo(admin_url, dbname=name)
-    with psycopg.connect(admin_url, autocommit=True) as conn:
-        conn.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(name)))
 
 
 Bundle = Callable[[str], Path]
@@ -160,7 +136,7 @@ def test_a_clean_load_writes_the_schema_pair_and_does_not_promote(
     assert pointer(database_url) == (None, None)
     assert schemas(database_url) == ["snap_20260915", "snap_20260915_osm", "snap_20260915_seed"]
     stored = stores(database_url, C)
-    assert len(stored["snap_20260915_osm.spaces"]) == 29
+    assert len(stored["snap_20260915_osm.spaces"]) == 30
     assert len(stored["snap_20260915_osm.spans"]) == 2
     assert stored["snap_20260915_seed.spaces"] == []
     # The views join the pair, and every record comes back as the bundle has it.
@@ -173,8 +149,8 @@ def test_a_clean_load_writes_the_schema_pair_and_does_not_promote(
     personas = [entry["persona"] for entry in stored["snap_20260915.visible_spaces"]]
     assert {persona: personas.count(persona) for persona in set(personas)} == {
         "visitor": 8,
-        "staff": 26,
-        "maintenance": 28,
+        "staff": 27,
+        "maintenance": 29,
     }
     # The inventory: generated records in the seed schema, the sourced fire assets
     # in the OSM one, and the views joining them.
@@ -201,7 +177,7 @@ def test_each_run_leaves_its_log_beside_the_bundle(bundle: Bundle, database_url:
 
     (load_log,) = (built / "runs").glob("*-load.log")
     (promote_log,) = (built / "runs").glob("*-promote.log")
-    assert "wrote 29 rows to osm.spaces" in load_log.read_text()
+    assert "wrote 30 rows to osm.spaces" in load_log.read_text()
     assert f"current snapshot None -> {C}" in promote_log.read_text()
     # A run's log is not part of the bundle, so the manifest is untouched.
     assert "runs" not in json.loads((built / MANIFEST_FILE).read_text())["parts"]
@@ -573,7 +549,7 @@ def test_the_service_role_reads_the_views_and_writes_nothing(
         ).fetchone()
         assert row == ("snap_20260915",)
         count = conn.execute("SELECT count(*) FROM snap_20260915.spaces").fetchone()
-        assert count == (29,)
+        assert count == (30,)
         catalogue = conn.execute(
             "SELECT attribute, assets FROM snap_20260915.attribute_catalogue"
             " WHERE type_id = 'osm:type:fire_extinguisher'"

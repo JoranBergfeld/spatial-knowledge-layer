@@ -1,0 +1,3 @@
+Air handling unit startup report.
+
+The roof air handler was started and balanced. Supply fan rotation was checked and the vibration isolators were released.

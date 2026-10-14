@@ -355,6 +355,9 @@ class _Generator:
     def _door_assets(self) -> list[Asset]:
         joined: dict[str, set[str]] = defaultdict(set)
         for edge in self.edges:
+            # A snap is no door, so nothing hangs on it.
+            if edge.door is None:
+                continue
             joined[edge.door].add(edge.to_id)
             if edge.from_id is not None:
                 joined[edge.door].add(edge.from_id)

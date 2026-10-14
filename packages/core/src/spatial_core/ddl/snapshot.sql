@@ -49,15 +49,20 @@ CREATE TABLE {osm}.spans (
 
 -- The circulation edges: one row per way through a door. An edge is sourced or
 -- derived, never seed, but the seed half has the table so the views stay uniform.
+-- A row with no door is a doorless room snapped to circulation, for routes only.
 CREATE TABLE {osm}.edges (
     id              text PRIMARY KEY,
-    door            text NOT NULL,
+    door            text,
     from_id         text,
     to_id           text NOT NULL,
     door_clearance  jsonb,
     clearance       jsonb NOT NULL,
     provenance      text NOT NULL CHECK (provenance IN ('sourced', 'derived')),
-    rule            text NOT NULL
+    rule            text NOT NULL,
+    -- Where the door is, and the level it is on.
+    lon             double precision,
+    lat             double precision,
+    level           text
 );
 CREATE INDEX ON {osm}.edges (to_id);
 

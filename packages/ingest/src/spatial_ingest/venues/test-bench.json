@@ -1,0 +1,53 @@
+{
+  "id": "test-bench",
+  "source": "handover",
+  "handover": {
+    "name": "buildingSMART Medical-Dental Clinic sample: COBie handover, IFC models and O&M documents",
+    "credit": "BSI (2020) \"Medical-Dental Test Files,\" buildingSMART International",
+    "licence": "CC BY 4.0",
+    "repository": "https://github.com/buildingsmart-community/Community-Sample-Test-Files",
+    "commit": "7ddf57a201f88a0c213d5322b02ed15e94a60a40",
+    "changes": "Read into the layer's records by the published rules. The documents are OCR'd, cut into passages and summarised. Nothing is redistributed."
+  },
+  "cobie": {
+    "file": "2013-10-09-Clinic-Handover-v14.xlsx",
+    "sha256": "cc539fe27e3a8df5c80bc6710c17f96f329c3d5d1b023b4246536333bcd77b7a",
+    "size": 1547559,
+    "url": "https://raw.githubusercontent.com/buildingsmart-community/Community-Sample-Test-Files/7ddf57a201f88a0c213d5322b02ed15e94a60a40/IFC%202.3.0.1%20(IFC%202x3)/Medical-Dental%20Clinic/2013-10-09-Clinic-Handover-v14.xlsx"
+  },
+  "ifc": [
+    {
+      "file": "Clinic_Architectural.ifc",
+      "sha256": "2ac970ce065ecac4e0c9e5f453a257169e90d0067f419b7e33533a64ef837880",
+      "size": 13003205,
+      "url": "https://media.githubusercontent.com/media/buildingsmart-community/Community-Sample-Test-Files/7ddf57a201f88a0c213d5322b02ed15e94a60a40/IFC%202.3.0.1%20(IFC%202x3)/Medical-Dental%20Clinic/Clinic_Architectural.ifc"
+    },
+    {
+      "file": "Clinic_Electrical.ifc",
+      "sha256": "70c436de1f1e8a860acfba61b68da1c9243d18dcbbddb98b88b550a642d95d32",
+      "size": 6800204,
+      "url": "https://media.githubusercontent.com/media/buildingsmart-community/Community-Sample-Test-Files/7ddf57a201f88a0c213d5322b02ed15e94a60a40/IFC%202.3.0.1%20(IFC%202x3)/Medical-Dental%20Clinic/Clinic_Electrical.ifc"
+    },
+    {
+      "file": "Clinic_HVAC.ifc",
+      "sha256": "39c88a79f48fbe56da86afb0fb3ebd188f8930df3df7dbfbd9ecaa535aaeab9b",
+      "size": 26914597,
+      "url": "https://media.githubusercontent.com/media/buildingsmart-community/Community-Sample-Test-Files/7ddf57a201f88a0c213d5322b02ed15e94a60a40/IFC%202.3.0.1%20(IFC%202x3)/Medical-Dental%20Clinic/Clinic_HVAC.ifc"
+    },
+    {
+      "file": "Clinic_Plumbing.ifc",
+      "sha256": "e662a8d0273694b745a313fc18ee8d4916db03453caa8f9d00d4d80b62bb6e23",
+      "size": 55834520,
+      "url": "https://media.githubusercontent.com/media/buildingsmart-community/Community-Sample-Test-Files/7ddf57a201f88a0c213d5322b02ed15e94a60a40/IFC%202.3.0.1%20(IFC%202x3)/Medical-Dental%20Clinic/Clinic_Plumbing.ifc"
+    }
+  ],
+  "documents": {
+    "file": "2013-10-09-ClinicOM.zip",
+    "sha256": "b11d6fe844bc7120968ff7831f420819ad6d9bdbfd0e2f345e7f30c7f6a72cb1",
+    "size": 146599757,
+    "url": "https://media.githubusercontent.com/media/buildingsmart-community/Community-Sample-Test-Files/7ddf57a201f88a0c213d5322b02ed15e94a60a40/IFC%202.3.0.1%20(IFC%202x3)/Medical-Dental%20Clinic/2013-10-09-ClinicOM.zip"
+  },
+  "ocr_dir": "ocr",
+  "origin": {"lon": 0.0, "lat": 0.0},
+  "placeholder_manufacturers": ["supplycompany@usace.army.mil"]
+}

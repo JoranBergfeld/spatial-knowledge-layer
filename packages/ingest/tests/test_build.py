@@ -9,9 +9,11 @@ from typing import Any
 
 import pytest
 
-from mini_campus import PERSON, VENUE, overpass_response, write_pbf
+from mini_campus import PERSON, VENUE, mini_campus, overpass_response, write_pbf
 from spatial_ingest.cli import main
-from spatial_ingest.osm import from_osm_file
+from spatial_ingest.osm import from_osm_file, from_overpass_json
+from spatial_ingest.structure import build_structure
+from spatial_ingest.venue import load_venue
 from stubs import Overpass
 
 DATE = "2026-09-15"
@@ -91,7 +93,7 @@ def test_the_pull_becomes_one_strict_tree(bundle: Path) -> None:
     roots = [s for s in tree.values() if s["parent_id"] is None]
 
     assert [root["id"] for root in roots] == ["site:mini-campus"]
-    assert len(tree) == 29
+    assert len(tree) == 30
     for space in tree.values():
         assert space["tier"]["value"] in {"site", "building", "floor", "room"}
         walked = []
@@ -195,6 +197,7 @@ def test_rooms_no_rule_can_address_are_kept_and_marked(bundle: Path) -> None:
         "floor:way/400:0",  # its building has neither number nor name
         "osm:way/1005",  # no name, no number
         "osm:way/1006",  # a corridor with neither
+        "osm:way/1010",  # no name, no number, no door
         "osm:way/3002",  # in the courtyard, so in no building
         "osm:way/400",
         "osm:way/4001",  # numbered, but its building is not
@@ -264,6 +267,11 @@ def test_the_manifest_records_input_hashes_and_what_produced_each_part(bundle: P
     assert len(recorded["inputs"]["venue"]["sha256"]) == 64
     assert "strip-person-names@1" not in recorded["parts"]["osm/spans.jsonl"]["produced_by"]
     assert sorted(recorded["parts"]) == [
+        "documents/chunks.jsonl",
+        "documents/documents.jsonl",
+        "documents/summaries.jsonl",
+        "documents/translations.jsonl",
+        "documents/vectors.jsonl",
         "osm/asset_types.jsonl",
         "osm/assets.jsonl",
         "osm/edges.jsonl",
@@ -284,7 +292,7 @@ def test_the_manifest_records_input_hashes_and_what_produced_each_part(bundle: P
         assert part["records"] == len(read_jsonl(bundle / name))
         assert part["produced_by"]
     assert "strip-person-names@1" in recorded["parts"]["osm/spaces.jsonl"]["produced_by"]
-    assert recorded["counts"]["spaces"] == {"site": 1, "building": 6, "floor": 7, "room": 15}
+    assert recorded["counts"]["spaces"] == {"site": 1, "building": 6, "floor": 7, "room": 16}
     assert recorded["counts"]["rooms_addressable"] == 11
     assert recorded["counts"]["names_filtered"] == 3
 
@@ -381,13 +389,16 @@ def test_the_circulation_edges_are_built_from_the_doors_in_the_pull(bundle: Path
         "node/1102:osm:way/1006>osm:way/1005",
         "node/1103:outside>osm:way/1002",
         "node/1104:outside>osm:way/1001",
+        "snap:osm:way/1006>osm:way/1010",
+        "snap:osm:way/1010>osm:way/1006",
     ]
     inward = built["node/1102:osm:way/1006>osm:way/1005"]
     assert inward["door"] == "node/1102"
     assert (inward["from_id"], inward["to_id"]) == ("osm:way/1006", "osm:way/1005")
     assert (inward["provenance"], inward["rule"]) == ("derived", "edges-from-doors@1")
     assert built["node/1101:outside>osm:way/1006"]["from_id"] is None
-    assert manifest(bundle)["counts"]["edges"] == 5
+    # Five through doors, and the two of a snap.
+    assert manifest(bundle)["counts"]["edges"] == 7
     # A door on no outline joins nothing.
     assert manifest(bundle)["counts"]["doors_on_no_space"] == 1
 
@@ -470,12 +481,93 @@ def test_the_manifest_records_the_share_of_rooms_whose_clearance_is_sourced(
     recorded = manifest(bundle)
 
     assert recorded["clearance"] == {
-        "rooms": 14,
+        "rooms": 15,
         "rooms_sourced": 3,
-        "sourced_share": 0.2143,
+        "sourced_share": 0.2,
         "unrecognised_access": 1,
-        "visible_spaces": {"visitor": 8, "staff": 26, "maintenance": 28},
+        "visible_spaces": {"visitor": 8, "staff": 27, "maintenance": 29},
     }
     produced_by = recorded["parts"]["osm/visible_spaces.jsonl"]["produced_by"]
     assert "visible-by-edges@1" in produced_by
     assert "edge-clearance@1" in recorded["parts"]["osm/edges.jsonl"]["produced_by"]
+
+
+# --- what routes need -----------------------------------------------------------------------
+
+
+def test_an_edge_says_where_its_door_is_and_on_which_level(bundle: Path) -> None:
+    built = edges(bundle)
+
+    entrance = built["node/1101:outside>osm:way/1006"]
+    assert (entrance["lon"], entrance["lat"], entrance["level"]) == (8.4103, 49.01115, "0")
+    # Both ways through a door are at the same door.
+    there, back = (
+        built["node/1102:osm:way/1005>osm:way/1006"],
+        built["node/1102:osm:way/1006>osm:way/1005"],
+    )
+    assert (there["lon"], there["lat"], there["level"]) == (back["lon"], back["lat"], "0")
+
+
+def test_a_doorless_room_is_snapped_to_circulation_within_two_metres(bundle: Path) -> None:
+    built = edges(bundle)
+    snaps = {id: edge for id, edge in built.items() if edge["door"] is None}
+
+    assert sorted(snaps) == ["snap:osm:way/1006>osm:way/1010", "snap:osm:way/1010>osm:way/1006"]
+    into_room = snaps["snap:osm:way/1006>osm:way/1010"]
+    assert (into_room["provenance"], into_room["rule"]) == ("derived", "snap-doorless-room@1")
+    assert into_room["level"] == "0"
+    # On the corridor's outline, where the room is nearest.
+    assert into_room["lat"] == pytest.approx(49.0112)
+    # The room it enters decides the clearance, as through a door.
+    assert into_room["clearance"]["persona"] == "staff"
+    assert snaps["snap:osm:way/1010>osm:way/1006"]["clearance"]["persona"] == "visitor"
+    # 3001 has no door either, and no circulation anywhere near it.
+    assert not any("osm:way/3001" in id for id in built)
+    assert manifest(bundle)["counts"]["snapped_rooms"] == 1
+    produced_by = manifest(bundle)["parts"]["osm/edges.jsonl"]["produced_by"]
+    assert "snap-doorless-room@1" in produced_by
+
+
+def test_a_doorless_corridor_or_area_is_not_snapped_only_a_room_is(venue_file: Path) -> None:
+    # The mini campus, with an area and a second corridor that nobody mapped a door on.
+    # Both sit about a metre off corridor 1006, like room 1010 does.
+    osm = mini_campus()
+    osm.rect(1011, 7, 12.1, 10, 12.9, indoor="area", level="0")
+    osm.rect(1012, 3, 10, 6, 10.9, indoor="corridor", level="0")
+    body = {"version": 0.6, "elements": [*osm.nodes, *osm.ways, *osm.relations]}
+
+    built = build_structure(
+        from_overpass_json(json.dumps(body).encode()), load_venue(str(venue_file))
+    )
+
+    assert {"osm:way/1011", "osm:way/1012"} <= {space.id for space in built.spaces}
+    snapped = sorted(edge.id for edge in built.edges if edge.door is None)
+    assert snapped == ["snap:osm:way/1006>osm:way/1010", "snap:osm:way/1010>osm:way/1006"]
+    assert built.counts["snapped_rooms"] == 1
+
+
+def test_a_snap_shows_nobody_a_room(bundle: Path) -> None:
+    # 1010 is an untagged room, so staff. The snap from the visitor corridor does not
+    # open it, and no door asset is hung on a door that is not there.
+    assert "osm:way/1010" not in visible(bundle)["visitor"]
+    assert "osm:way/1010" in visible(bundle)["staff"]
+    assets = read_jsonl(bundle / "seed" / "assets.jsonl")
+    assert all(asset["door"] is None or asset["door"].startswith("node/") for asset in assets)
+
+
+def test_the_default_origin_is_an_entrance_from_the_venue_definition(bundle: Path) -> None:
+    assert manifest(bundle)["default_origin"] == {
+        "door": "node/1101",
+        "edge": "node/1101:outside>osm:way/1006",
+    }
+
+
+def test_a_default_origin_that_is_no_entrance_fails_the_build(
+    tmp_path: Path, venue_file: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # 1102 is a door between two rooms: nobody comes in from outside through it.
+    definition = json.loads(venue_file.read_text())
+    venue_file.write_text(json.dumps({**definition, "default_origin": "node/1102"}))
+
+    assert build(venue_file, tmp_path / "bundles") != 0
+    assert "node/1102" in capsys.readouterr().err

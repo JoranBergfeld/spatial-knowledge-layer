@@ -1,8 +1,9 @@
 """ingest promote: make a loaded snapshot current. Rollback is the same command.
 
-Promotion is one write to the current-snapshot pointer row. The snapshot it
-replaces becomes the previous one, which the next load keeps. Rolling back is
-promoting that previous snapshot again.
+Promotion is one write to the current-snapshot pointer row, which names the
+snapshot (and through it the schema pair) and its search index. The snapshot it
+replaces becomes the previous one, index and all, which the next load keeps.
+Rolling back is promoting that previous snapshot again.
 """
 
 from __future__ import annotations
@@ -24,6 +25,9 @@ class PromoteError(Exception):
 class Pointer:
     current: str | None
     previous: str | None
+    # The search indexes of those two.
+    index: str | None = None
+    previous_index: str | None = None
 
 
 def promote(*, snapshot: str, database_url: str) -> Pointer:
@@ -32,25 +36,44 @@ def promote(*, snapshot: str, database_url: str) -> Pointer:
         db.apply_control(conn)
         with conn.transaction():
             row = conn.execute(
-                "SELECT status, failures FROM control.snapshots WHERE snapshot = %s", (snapshot,)
+                "SELECT status, failures, search_index FROM control.snapshots WHERE snapshot = %s",
+                (snapshot,),
             ).fetchone()
             if row is None:
                 raise PromoteError(f"{snapshot} is not loaded")
-            status, failures = row
+            status, failures, index = row
             if status != "loaded":
                 raise PromoteError(
                     f"{snapshot} failed its checks and cannot be promoted: " + "; ".join(failures)
+                )
+            if not index:
+                raise PromoteError(
+                    f"{snapshot} was loaded before snapshots had a search index. Load it again."
                 )
             before = db.pointer(conn)
             conn.execute(
                 """
                 UPDATE control.current_snapshot SET
                     previous = CASE WHEN snapshot = %(s)s THEN previous ELSE snapshot END,
+                    previous_search_index = CASE
+                        WHEN snapshot = %(s)s THEN previous_search_index ELSE search_index
+                    END,
                     snapshot = %(s)s,
+                    search_index = %(index)s,
                     promoted_at = now()
                 """,
-                {"s": snapshot},
+                {"s": snapshot, "index": index},
             )
-            after = Pointer(*db.pointer(conn))
-    log.info("current snapshot %s -> %s, previous %s", before[0], after.current, after.previous)
+            indexes = conn.execute(
+                "SELECT search_index, previous_search_index FROM control.current_snapshot"
+            ).fetchone()
+            assert indexes is not None
+            after = Pointer(*db.pointer(conn), *indexes)
+    log.info(
+        "current snapshot %s -> %s (index %s), previous %s",
+        before[0],
+        after.current,
+        after.index,
+        after.previous,
+    )
     return after

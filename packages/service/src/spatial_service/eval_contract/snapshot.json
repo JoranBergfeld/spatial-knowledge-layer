@@ -1,0 +1,77 @@
+{
+  "format": "spatial-eval@1",
+  "label": "Measured on a test bench: a real building handover, not this campus",
+  "run": {
+    "id": "fixture-not-a-run",
+    "date": "2026-10-10",
+    "venue": "test-bench",
+    "snapshot": "2026-09-15",
+    "deployments": {
+      "planning": "gpt-5.4",
+      "composition": "gpt-5.4-mini",
+      "embedding": "text-embedding-3-large",
+      "nli": "MoritzLaurer/DeBERTa-v3-large-mnli-fever-anli-ling-wanli"
+    },
+    "semantic_ranker": false,
+    "gold_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "figures": {
+    "template": {
+      "n": 154,
+      "correct": {"value": 0.7532, "n": 154, "ci95": [0.6795, 0.8146]},
+      "stages": {
+        "tools": {"value": 0.9091, "n": 154, "ci95": [0.8532, 0.9451]},
+        "retrieval": {
+          "recall_at_5": {"value": 0.8182, "n": 22, "ci95": [0.6364, 0.9545]},
+          "mrr": {"value": 0.7045, "n": 22, "ci95": [0.5227, 0.8636]}
+        },
+        "composition": {
+          "holds": {"value": 0.9592, "n": 98, "ci95": [0.8997, 0.984]},
+          "numbers": {"value": 1.0, "n": 98, "ci95": [0.9623, 1.0]},
+          "entailment": {"value": 0.8182, "n": 22, "ci95": [0.6148, 0.9269]}
+        }
+      },
+      "turn_kinds": {
+        "matrix": {
+          "answer": {"answer": 96, "clarification": 2, "abstention": 4, "coverage-gap": 0, "unavailable": 0},
+          "clarification": {"answer": 1, "clarification": 11, "abstention": 0, "coverage-gap": 0, "unavailable": 0},
+          "abstention": {"answer": 0, "clarification": 0, "abstention": 26, "coverage-gap": 0, "unavailable": 0},
+          "coverage-gap": {"answer": 0, "clarification": 0, "abstention": 4, "coverage-gap": 10, "unavailable": 0}
+        },
+        "answered_when_it_should_have_declined": {"count": 0, "of": 40}
+      },
+      "clarification_candidates": {"value": 1.0, "n": 11, "ci95": [0.7412, 1.0]},
+      "by_persona": {
+        "visitor": {"value": 0.7792, "n": 77, "ci95": [0.6746, 0.8573]},
+        "maintenance": {"value": 0.7273, "n": 77, "ci95": [0.6188, 0.8142]}
+      }
+    },
+    "hand_written": {
+      "n": 0,
+      "correct": {"value": null, "n": 0, "ci95": null},
+      "stages": {
+        "tools": {"value": null, "n": 0, "ci95": null},
+        "retrieval": {
+          "recall_at_5": {"value": null, "n": 0, "ci95": null},
+          "mrr": {"value": null, "n": 0, "ci95": null}
+        },
+        "composition": {
+          "holds": {"value": null, "n": 0, "ci95": null},
+          "numbers": {"value": null, "n": 0, "ci95": null},
+          "entailment": {"value": null, "n": 0, "ci95": null}
+        }
+      },
+      "turn_kinds": {
+        "matrix": {},
+        "answered_when_it_should_have_declined": {"count": 0, "of": 0}
+      },
+      "clarification_candidates": {"value": null, "n": 0, "ci95": null},
+      "by_persona": {}
+    }
+  },
+  "leak_checks": {
+    "input": {"passed": true, "date": "2026-10-09"},
+    "counterfactual": {"passed": true, "date": "2026-10-09"}
+  },
+  "unmeasured": ["routes", "proximity", "timing-leaks", "follow-ups"]
+}
