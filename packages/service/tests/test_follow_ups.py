@@ -205,9 +205,9 @@ def test_like_it_is_the_type_of_that_asset() -> None:
 
     # Its type, Light Fixture B1, and not every kind of light: the Q4 in the stairs is left out.
     assert texts(second) == [
-        "Informatik holds 5 generated.",
-        "Audimax: 3 generated.",
-        "50.34 room 107: 2 generated.",
+        "Informatik holds 5 generated Light Fixture B1.",
+        "Audimax: 3 generated Light Fixture B1.",
+        "50.34 room 107: 2 generated Light Fixture B1.",
     ]
     assert second["trace"]["references"] == [
         {
@@ -235,7 +235,7 @@ def test_a_third_turn_reaches_back_past_the_second() -> None:
     plan = installed_in(pointing("place", "there"), pointing("asset-type", "it"))
     third = ask("visitor", "Any like it in there?", plan, counted, state=second["state"])
 
-    assert texts(third)[0] == "Audimax holds 3 generated."
+    assert texts(third)[0] == "Audimax holds 3 generated Light Fixture B1."
     assert [(r["text"], r["ids"], r["turn"]) for r in third["trace"]["references"]] == [
         ("there", [AUDIMAX], 2),
         ("it", [fixture.LIGHT_B1], 1),
@@ -374,7 +374,7 @@ def test_like_it_among_assets_of_several_types_asks_which_asset() -> None:
     [reference] = third["trace"]["references"]
     assert reference["ids"] == [fixture.EXTINGUISHER]
     assert reference["through"] == [EXTINGUISHER]
-    assert texts(third)[0] == "Informatik holds 1."
+    assert texts(third)[0] == "Informatik holds 1 Fire extinguisher."
 
 
 def test_the_candidates_of_an_ambiguous_reference_are_only_what_the_persona_sees() -> None:

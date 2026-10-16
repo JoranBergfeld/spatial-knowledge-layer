@@ -572,6 +572,16 @@ print it from. A generated count fills in as "3 generated" and a sourced one bes
 as "1 sourced". The host writes those words, not the model. An answer that names one
 half of a split count without the other is rejected.
 
+A count also says what it counts, and the host says that too. Where a segment does not
+name the type itself, the type's name goes in after the number, with its citation:
+"Medical-Dental Clinic has 28 Lighting and Appliance Panelboard". A count over several
+types, or any, gets "assets". The model used to have to supply the noun, and on the
+test bench it mostly didn't: the first real run came back with "has 1 1" and "has 2
+Medical-Dental Clinic". So a count placeholder run straight into another placeholder
+is rejected now, unless that one is the type it counts. No plurals for type names,
+since "Equip-A1155" has none, so it reads a bit stiff. And the noun is English whatever
+language the answer is in. Rough, but nothing a count says is the model's guess anymore.
+
 No recorded installations is not zero. A building, or anything bigger, with nothing
 visible installed in it at all is a `coverage-gap` abstention, worded by the host, with
 no composition call. That gap is only ever stated at building level or above. Ask about
@@ -874,8 +884,18 @@ note in the trace's `dropped_segments`:
 - it cites a passage that was not retrieved this turn
 - it quotes a span (in double quotes) that is not in a passage it cites, word for word.
   Whitespace is the only thing folded.
+- it names a fact and cites a passage too. A segment rests on facts or on passages,
+  never both. "MAIN MECHANICAL ROOM is within Second Floor" citing a floor plan is a
+  fact the plan can't back, and the NLI check rightly drops it. That was most of the
+  first run's failures. It's dropped here now, before anything scores it.
+- it says what the documents don't say ("the documents do not say anything about X").
+  Nothing entails an absence. That one is a short list of wordings, not a parser, so a
+  new way of saying it will get through until someone adds it.
 
-If no segment citing a passage is left, the turn is an abstention, `ungrounded`.
+If no segment citing a passage is left, the turn is an abstention, `ungrounded`. One
+gap: a fact the answer has to name counts as named even when the segment naming it
+was dropped, same as before. So an answer can lose its total that way. Hasn't bitten
+yet, and the prompt now tells the model to keep the facts in segments of their own.
 Whether the passage backs what a segment says is not checked here. That is entailment,
 the backend's half. Each segment therefore carries `passages`: every passage it cites
 with its full ingested English text, the spans it quoted, and how to cite it.

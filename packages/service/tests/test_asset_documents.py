@@ -37,7 +37,7 @@ def test_the_asset_and_the_cited_passage_come_in_one_answer() -> None:
     assert turn["kind"] == "answer"
     assert turn["trace"]["shape"] == "asset-document"
     assert texts(turn) == [
-        "Audimax holds 1 generated.",
+        "Audimax holds 1 generated Panelboard P1.",
         'It says "Before servicing, isolate the supply and remove the cover."',
     ]
     fact, said = turn["segments"]
@@ -101,7 +101,7 @@ def test_a_maintenance_only_manual_is_there_for_the_technician_and_not_for_a_vis
     assert retrieved(technician) == [P1, B1]
     assert retrieved(visitor) == [B1]
     assert texts(visitor) == [
-        "Audimax holds 3 generated and 1 sourced.",
+        "Audimax holds 3 generated assets and 1 sourced asset.",
         'It says "Lamp replacement."',
     ]
     assert texts(technician)[1:] == [
@@ -206,7 +206,7 @@ def test_a_quote_that_is_not_in_the_passage_drops_its_segment_and_the_trace_says
 
     assert turn["kind"] == "answer"
     assert texts(turn) == [
-        "Audimax holds 1 generated.",
+        "Audimax holds 1 generated Panelboard P1.",
         'It says "isolate the supply and remove the cover".',
     ]
     assert turn["trace"]["dropped_segments"] == [
@@ -230,7 +230,7 @@ def test_a_segment_citing_a_passage_not_retrieved_this_turn_is_dropped() -> None
         ),
     )
 
-    assert texts(turn) == ["Audimax holds 1 generated.", "Isolate the supply first."]
+    assert texts(turn) == ["Audimax holds 1 generated Panelboard P1.", "Isolate the supply first."]
     [dropped] = turn["trace"]["dropped_segments"]
     assert dropped["segment"] == 3
     assert dropped["reasons"] == ["cites p7, which is not a passage retrieved this turn"]
@@ -247,6 +247,65 @@ def test_an_answer_with_no_document_segment_left_is_an_abstention() -> None:
     assert (turn["kind"], turn["cause"]) == ("abstention", "ungrounded")
     assert len(turn["trace"]["dropped_segments"]) == 1
     assert turn["state"]["turns"] == 1
+
+
+@pytest.mark.parametrize(
+    "segment",
+    [
+        # What the first real run did: a fact said, and a passage cited for it.
+        {"text": "{f1} is shown in the manual.", "cites": ["f1", "p1"]},
+        {"text": "It is installed there.", "cites": ["f1", "p1"]},
+    ],
+)
+def test_a_segment_naming_a_fact_and_citing_a_passage_is_dropped(segment: dict[str, Any]) -> None:
+    turn = ask(
+        "maintenance",
+        "?",
+        manual("servicing", "Audimax", "panelboard"),
+        saying(segment, {"text": "Isolate the supply first.", "cites": ["p1"]}),
+    )
+
+    assert texts(turn) == ["Audimax holds 1 generated Panelboard P1.", "Isolate the supply first."]
+    [dropped] = turn["trace"]["dropped_segments"]
+    assert dropped["segment"] == 2
+    assert dropped["reasons"] == [
+        "names a fact and cites a passage, and a segment rests on one or the other"
+    ]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "The documents do not say anything about this.",
+        "The manual doesn't mention torque.",
+        "It says nothing about the cover.",
+        "There is no information on that.",
+        "None of the documents cover it.",
+    ],
+)
+def test_saying_the_documents_say_nothing_is_no_document_answer(text: str) -> None:
+    turn = ask(
+        "maintenance",
+        "?",
+        manual("servicing", "Audimax", "panelboard"),
+        saying({"text": text, "cites": ["p1"]}),
+    )
+
+    assert (turn["kind"], turn["cause"]) == ("abstention", "ungrounded")
+    [dropped] = turn["trace"]["dropped_segments"]
+    assert dropped["reasons"] == ["says what the documents do not say"]
+
+
+def test_a_passage_telling_you_not_to_do_something_is_not_saying_nothing() -> None:
+    turn = ask(
+        "maintenance",
+        "?",
+        manual("servicing", "Audimax", "panelboard"),
+        saying({"text": "The manual says do not open the cover alone.", "cites": ["p1"]}),
+    )
+
+    assert turn["kind"] == "answer"
+    assert turn["trace"]["dropped_segments"] == []
 
 
 def test_a_quote_may_run_across_a_line_break_of_the_passage() -> None:
@@ -411,7 +470,7 @@ def test_its_manual_is_retrieved_by_the_one_asset_an_earlier_turn_found() -> Non
     assert query.filter.asset_type_ids == {fixture.LIGHT_B1}
     assert query.filter.space_ids == frozenset()
     assert sorted(retrieved(turn)) == [B1, NOTE]
-    assert texts(turn)[0] == "50.34 room 108 holds 1 generated."
+    assert texts(turn)[0] == "50.34 room 108 holds 1 generated Light Fixture B1."
     assert 'It says "Service note."' in texts(turn)
     documents = turn["trace"]["documents"]
     assert (documents["anchored_by"], documents["scope"], documents["assets"]) == (
@@ -439,7 +498,7 @@ def test_a_visitor_gets_the_manual_of_their_own_asset_and_never_the_note_on_anot
 
     assert turn["kind"] == "answer"
     assert retrieved(turn) == [B1]
-    assert texts(turn)[0] == "Seminarraum Nord holds 1 generated."
+    assert texts(turn)[0] == "Seminarraum Nord holds 1 generated Light Fixture B1."
     for told in (json.dumps(turn), "".join(inputs)):
         assert "Service note" not in told
         assert papers.LIGHT_IN_108 not in told

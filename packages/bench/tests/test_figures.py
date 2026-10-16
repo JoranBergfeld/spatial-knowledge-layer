@@ -124,6 +124,16 @@ def test_a_number_is_held_to_the_fact_it_cites_and_not_to_how_the_fact_is_worded
     assert not numbers_are_facts(elsewhere)
 
 
+def test_a_type_name_after_a_count_has_digits_that_count_nothing() -> None:
+    # The host puts the type's name after a count, and cites the type with it.
+    vav = {"label": "VAV 200 mm", "count": None}
+    told = {"segments": [segment("It holds 25 VAV 200 mm.", vav, {"label": "25", "count": 25})]}
+    uncited = {"segments": [segment("It holds 25 VAV 200 mm.", {"label": "25", "count": 25})]}
+
+    assert numbers_are_facts(told)
+    assert not numbers_are_facts(uncited)
+
+
 def test_the_committed_hand_written_file_is_readable_and_empty() -> None:
     committed = Path(__file__).resolve().parents[3] / questions.HAND_WRITTEN_FILE
 

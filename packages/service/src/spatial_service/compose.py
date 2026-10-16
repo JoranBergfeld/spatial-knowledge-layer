@@ -18,6 +18,15 @@ print one number over both. A generated count fills in as "3 generated", and its
 sourced partner as "1 sourced", so the flag is the host's and cannot be left out.
 The two go together: an answer naming one without the other is rejected.
 
+A count of assets says what it counts, and the host says it, not the model. Where
+a segment does not name the type a count is of, the type's name goes in after the
+number, and the type's citation with it: "2 Expansion Tank". A count over several
+types, or any, gets "assets". So "{f1} has {f2}." reads as a whole sentence and
+the model never has to find a noun. A count placeholder straight before another
+placeholder is rejected, unless that one is the type it counts: that is how the
+first real run got "has 1 1" and "has 2 Medical-Dental Clinic". No plural for a
+type's name, since "Equip-A1155" has none. Reads a bit stiff. It is right, though.
+
 Each answer builder also says which facts the answer has to name. An answer that
 leaves one out is rejected too.
 
@@ -31,6 +40,12 @@ a note for the trace, where anything wrong with a fact still rejects the lot:
 
     it cites a passage that was not retrieved this turn
     it quotes a span ("...") that is not, word for word, in a passage it cites
+    it names a fact and cites a passage too. A segment rests on facts or on
+        passages, never both: a passage cannot back a count or "X is within Y",
+        and the entailment check rightly drops it when asked to
+    it says what the documents do not say ("the documents say nothing about X").
+        Nothing can entail an absence. With no passage that answers, there is
+        no document answer, and the turn abstains (turn.py)
 
 Whether the passage backs what the segment says is not checked here. That is
 entailment, the backend's half, which is why each segment carries the full text
@@ -57,6 +72,20 @@ from spatial_service.retrieval import DroppedSegment, Passage, Retrieval, link
 from spatial_service.routes import Found, Nearest, Routed
 
 _PLACEHOLDER = re.compile(r"\{(f[0-9]+)\}")
+# What a count of assets of several types, or of any, is a count of.
+ANY_ASSETS = "assets"
+# The model writing the noun anyway, right after the count: not said twice.
+_NOUN_WRITTEN = re.compile(r"\s+(?:assets?|items?)\b", re.IGNORECASE)
+# A segment about what the documents leave out. Short on purpose: the wordings seen,
+# and their near neighbours. "The manual says do not open it" is not one.
+_SAYS_NOTHING = re.compile(
+    r"\b(?:do|does|did)(?:\s+not|n['’]t)\s+(?:say|mention|cover|contain|describe|include|"
+    r"give|provide|address|discuss|specify|state)\b"
+    r"|\bsays?\s+nothing\b|\bnothing\s+(?:about|on|regarding)\b|\bnot\s+mentioned\b"
+    r"|\bno\s+(?:information|mention|details?)\b"
+    r"|\b(?:no|none\s+of\s+the)\s+(?:documents?|passages?|manuals?)\b",
+    re.IGNORECASE,
+)
 _PASSAGE_REF = re.compile(r"p[0-9]+")
 # A quoted span: straight or curly double quotes.
 _QUOTED = re.compile(r"\"([^\"]+)\"|“([^”]+)”")
@@ -147,6 +176,9 @@ class Fact:
     # What the composer is told about it, besides its ref and kind.
     told: dict[str, str] = field(default_factory=dict)
     space: Space | None = None
+    # A count of assets: the ref of the type fact it counts, or ANY_ASSETS. What
+    # follows its number where the segment does not name that type itself.
+    noun: str | None = None
 
 
 class Facts:
@@ -215,9 +247,17 @@ class Facts:
         )
 
     def counts(
-        self, tally: Tally, *, space_id: str | None = None, type_id: str | None = None
+        self,
+        tally: Tally,
+        *,
+        space_id: str | None = None,
+        type_id: str | None = None,
+        noun: str | None = None,
     ) -> list[str]:
-        """A tally as count facts: one per provenance present, generated first. Zero is one fact."""
+        """A tally as count facts: one per provenance present, generated first. Zero is one fact.
+
+        ``noun`` is what the assets are: a type fact's ref, or ANY_ASSETS.
+        """
         parts: list[tuple[int, RecordProvenance | None, str]] = []
         if tally.generated:
             parts.append((tally.generated, RecordProvenance.SEED, f"{tally.generated} {GENERATED}"))
@@ -243,9 +283,15 @@ class Facts:
                         count=count,
                     ),
                     told=told,
+                    noun=noun,
                 )
             )
         return refs
+
+    def noun(self, venue: Venue, types: Iterable[str] | None) -> str:
+        """What a count over ``types`` is of: the type, where there is one, else ANY_ASSETS."""
+        kinds = sorted(set(types or ()))
+        return self.asset_type(venue.asset_types[kinds[0]]) if len(kinds) == 1 else ANY_ASSETS
 
     def condition(self, text: str, citation: Citation, **told: str) -> str:
         """What a filter tested, worded by the host so the model cannot reword it."""
@@ -341,7 +387,8 @@ def containment(venue: Venue, question: str, found: ScopeResult) -> Answer:
     facts = Facts()
     assets = [venue.assets[i] for i in found.ids]
     scope = _scope(venue, facts, found)
-    total = facts.counts(Tally.of(assets), space_id=found.scope)
+    noun = facts.noun(venue, found.types)
+    total = facts.counts(Tally.of(assets), space_id=found.scope, noun=noun)
 
     by_space = found.types is not None
     grouped: dict[str, list[Asset]] = {}
@@ -376,7 +423,12 @@ def containment(venue: Venue, question: str, found: ScopeResult) -> Answer:
         else:
             assert row.type_id is not None
             of = facts.asset_type(venue.asset_types[row.type_id])
-        counts = facts.counts(row.tally, space_id=row.space_id or found.scope, type_id=row.type_id)
+        counts = facts.counts(
+            row.tally,
+            space_id=row.space_id or found.scope,
+            type_id=row.type_id,
+            noun=noun if row.space_id is not None else of,
+        )
         told_rows.append({"of": of, "counts": counts})
         together.append(counts)
     payload["rows"] = told_rows
@@ -384,7 +436,7 @@ def containment(venue: Venue, question: str, found: ScopeResult) -> Answer:
         payload["more_rows"] = facts.number(len(nameable) - ROW_CAP, about="rows left out")
     unlabelled = Tally.of(a for r in rows if r.label is None for a in grouped[r.space_id or ""])
     if unlabelled.total:
-        payload["in_spaces_with_no_label"] = facts.counts(unlabelled)
+        payload["in_spaces_with_no_label"] = facts.counts(unlabelled, noun=noun)
         together.append(payload["in_spaces_with_no_label"])
     unplaced = sum(1 for asset in assets if asset.position is None)
     if unplaced:
@@ -402,7 +454,10 @@ def aggregation(venue: Venue, question: str, found: ScopeResult, counted: Aggreg
     """Counts per space of a scale level: ranked, leaders named, gaps apart from zeros."""
     facts = Facts()
     scope = _scope(venue, facts, found)
-    total = facts.counts(Tally.of(venue.assets[i] for i in found.ids), space_id=found.scope)
+    noun = facts.noun(venue, found.types)
+    total = facts.counts(
+        Tally.of(venue.assets[i] for i in found.ids), space_id=found.scope, noun=noun
+    )
 
     rows = []
     for group in counted.ranked:
@@ -428,7 +483,7 @@ def aggregation(venue: Venue, question: str, found: ScopeResult, counted: Aggreg
     for row in nameable[:ROW_CAP]:
         assert row.space_id is not None
         of = facts.place(venue.spaces[row.space_id])
-        counts = facts.counts(row.tally, space_id=row.space_id)
+        counts = facts.counts(row.tally, space_id=row.space_id, noun=noun)
         by_space[row.space_id] = {"of": of, "counts": counts}
         told_rows.append(by_space[row.space_id])
         together.append(counts)
@@ -467,7 +522,7 @@ def aggregation(venue: Venue, question: str, found: ScopeResult, counted: Aggreg
         sum(r.tally.generated for r in rows if r.label is None),
     )
     if unlabelled.total:
-        payload["in_spaces_with_no_label"] = facts.counts(unlabelled)
+        payload["in_spaces_with_no_label"] = facts.counts(unlabelled, noun=noun)
         together.append(payload["in_spaces_with_no_label"])
 
     payload["required"] = required
@@ -578,11 +633,12 @@ def proximity(venue: Venue, question: str, near: Nearest) -> Answer:
             for type_id in sorted({asset.type_id for asset in assets})
         ],
     }
+    noun = payload["types"][0] if len(payload["types"]) == 1 else ANY_ASSETS
     together = []
     told_rows: list[dict[str, Any]] = []
     for row in rows[:ROW_CAP]:
         assert row.space_id is not None
-        counts = facts.counts(row.tally, space_id=row.space_id)
+        counts = facts.counts(row.tally, space_id=row.space_id, noun=noun)
         told_rows.append({"in": _place(venue, facts, row.space_id), "counts": counts})
         together.append(counts)
     payload["nearest"] = told_rows
@@ -671,6 +727,56 @@ def _ungrounded(
     return reasons, quotes
 
 
+def _off_the_passages(segment: DraftSegment, by_ref: dict[str, Fact]) -> list[str]:
+    """Why a segment of a document answer is not about what the passages say."""
+    reasons = []
+    names = set(_PLACEHOLDER.findall(segment.text)) | (set(segment.cites) & by_ref.keys())
+    if names and any(_PASSAGE_REF.fullmatch(ref) for ref in segment.cites):
+        reasons.append("names a fact and cites a passage, and a segment rests on one or the other")
+    if _SAYS_NOTHING.search(_PLACEHOLDER.sub("", segment.text)):
+        reasons.append("says what the documents do not say")
+    return reasons
+
+
+def _jammed(text: str, by_ref: dict[str, Fact]) -> list[str]:
+    """Count placeholders run straight into another placeholder that is not what they count."""
+    reasons = []
+    found = list(_PLACEHOLDER.finditer(text))
+    for one, after in zip(found, found[1:], strict=False):
+        fact = by_ref.get(one[1])
+        if (
+            fact is None
+            or fact.kind is not FactKind.COUNT
+            or text[one.end() : after.start()].strip()
+        ):
+            continue
+        if after[1] != fact.noun:
+            reasons.append(f"runs {{{one[1]}}} into {{{after[1]}}}: a count is followed by words")
+    return reasons
+
+
+def _filled(text: str, by_ref: dict[str, Fact]) -> tuple[str, list[str]]:
+    """The segment with its placeholders filled, and the type facts a count put in for itself."""
+    used = set(_PLACEHOLDER.findall(text))
+    out: list[str] = []
+    nouns: list[str] = []
+    position = 0
+    for match in _PLACEHOLDER.finditer(text):
+        fact = by_ref[match[1]]
+        out += [text[position : match.start()], fact.text]
+        position = match.end()
+        if fact.noun is None or fact.noun in used:
+            continue
+        if fact.noun == ANY_ASSETS:
+            if not _NOUN_WRITTEN.match(text, position):
+                out.append(" asset" if fact.citation.count == 1 else " assets")
+        else:
+            out.append(f" {by_ref[fact.noun].text}")
+            nouns.append(fact.noun)
+    out.append(text[position:])
+    return "".join(out), nouns
+
+
 def ground(
     text: str,
     facts: list[Fact],
@@ -702,8 +808,10 @@ def ground(
     for number, segment in enumerate(draft.segments, start=1):
         if by_passage:
             failures, quoted[number] = _ungrounded(segment, by_passage)
+            failures += _off_the_passages(segment, by_ref)
             if failures:
                 dropped[number] = failures
+        reasons += [f"segment {number} {why}" for why in _jammed(segment.text, by_ref)]
         # Placeholders carry digits of their own ({f1}); everything around them may not.
         if any(character.isdigit() for character in _PLACEHOLDER.sub("", segment.text)):
             reasons.append(f"segment {number} contains a digit")
@@ -737,10 +845,11 @@ def ground(
     for number, segment in enumerate(draft.segments, start=1):
         if number in dropped:
             continue
-        refs = dict.fromkeys([*_PLACEHOLDER.findall(segment.text), *segment.cites])
+        text, nouns = _filled(segment.text, by_ref)
+        refs = dict.fromkeys([*_PLACEHOLDER.findall(segment.text), *segment.cites, *nouns])
         segments.append(
             Segment(
-                text=_PLACEHOLDER.sub(lambda m: by_ref[m[1]].text, segment.text),
+                text=text,
                 citations=[by_ref[ref].citation for ref in refs if ref in by_ref],
                 passages=[
                     _passage_citation(by_passage[ref], quotes)
