@@ -124,10 +124,13 @@ def test_a_number_is_held_to_the_fact_it_cites_and_not_to_how_the_fact_is_worded
     assert not numbers_are_facts(elsewhere)
 
 
-def test_the_committed_hand_written_file_is_readable_and_empty() -> None:
+def test_the_committed_hand_written_file_is_readable() -> None:
     committed = Path(__file__).resolve().parents[3] / questions.HAND_WRITTEN_FILE
 
-    assert questions.load_hand_written(committed) == []
+    found = questions.load_hand_written(committed)
+
+    assert found
+    assert all(question.id.startswith(f"{questions.HAND_WRITTEN}/") for question in found)
 
 
 def test_a_hand_written_question_becomes_a_question_with_no_slots(tmp_path: Path) -> None:

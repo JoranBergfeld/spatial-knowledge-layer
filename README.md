@@ -25,7 +25,7 @@ packages/service  the turn service: FastAPI on Microsoft Agent Framework, readin
 packages/bench    the evaluation harness: question sets, a scripted model, the leak checks,
                   evaluation runs
 gold/             gold answers from a handover, by scripts that import none of the above
-questions/        the hand-written questions. None yet
+questions/        the hand-written questions. 25 so far, drafted by a model
 ```
 
 The service holds no pipeline code and imports nothing from `packages/ingest`.
@@ -1107,8 +1107,7 @@ Rough here:
   documents included, so a restricted document can move a visitor's ranking there
   without ever being returned. Not measured, and this check cannot see it.
 - Gold only asks with words that name one thing: a label nothing else shares, a building
-  and room number, a type's full name. Loose wording is for the hand-written questions,
-  which do not exist yet.
+  and room number, a type's full name. Loose wording is for the hand-written questions.
 - An attribute named like an OSM tag (`fire_extinguisher:type`) can be filtered on now:
   the filter's pattern takes the colon. Gold still skips those names, so only a service
   test covers it.
@@ -1224,7 +1223,10 @@ Decided here, since the spec does not say:
 
 #### Hand-written questions
 
-They live in `questions/hand-written.json` and there are none yet. A person writes them:
+They live in `questions/hand-written.json`. There are 25 for now, and a model wrote them,
+not a person. They aim at words no template uses ("loo", "elec room", "VAV boxes"), and
+their gold was worked out from the bench bundle, not from the gold scripts. So they're a
+start, not what #17 asks for. The rest should come from a person. The format:
 
 ```
 {"format": "spatial-hand-written@1", "venue": "test-bench", "questions": [

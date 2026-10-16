@@ -1,5 +1,409 @@
 {
   "format": "spatial-hand-written@1",
   "venue": "test-bench",
-  "questions": []
+  "questions": [
+    {
+      "id": "toilets-ground-floor",
+      "persona": "visitor",
+      "shape": "place-location",
+      "question": "I need the loo, is there one on the ground floor?",
+      "expected": {
+        "kind": "answer",
+        "ids": [
+          "space:1a09",
+          "space:1a12",
+          "space:1a13",
+          "space:1b02",
+          "space:1b05",
+          "space:1b11",
+          "space:1c12",
+          "space:1d04",
+          "space:1d14",
+          "space:1d18",
+          "space:1d26",
+          "space:1e09",
+          "space:1e10",
+          "space:1e12"
+        ]
+      }
+    },
+    {
+      "id": "wait-upstairs",
+      "persona": "visitor",
+      "shape": "place-location",
+      "question": "Is there somewhere to sit and wait upstairs?",
+      "expected": {
+        "kind": "answer",
+        "ids": [
+          "space:2a10",
+          "space:2a11",
+          "space:2b11",
+          "space:2b15",
+          "space:2d10"
+        ]
+      }
+    },
+    {
+      "id": "kids-waiting",
+      "persona": "visitor",
+      "shape": "place-location",
+      "question": "where's the waiting area for kids",
+      "expected": {
+        "kind": "answer",
+        "ids": [
+          "space:1d33"
+        ],
+        "within": [
+          "building:pn-0001",
+          "floor:first-floor"
+        ]
+      }
+    },
+    {
+      "id": "elec-room/m",
+      "persona": "maintenance",
+      "shape": "place-location",
+      "question": "where's the elec room?",
+      "expected": {
+        "kind": "clarification",
+        "candidates": [
+          "space:1b23",
+          "space:1e19"
+        ],
+        "matched": 2
+      },
+      "pair": "elec-room"
+    },
+    {
+      "id": "elec-room/v",
+      "persona": "visitor",
+      "shape": "place-location",
+      "question": "where's the elec room?",
+      "expected": {
+        "kind": "abstention",
+        "reason": "no-such-place"
+      },
+      "pair": "elec-room"
+    },
+    {
+      "id": "main-mech-floor",
+      "persona": "maintenance",
+      "shape": "place-location",
+      "question": "Which floor is the main mechanical room on?",
+      "expected": {
+        "kind": "answer",
+        "ids": [
+          "space:2d05"
+        ],
+        "within": [
+          "building:pn-0001",
+          "floor:second-floor"
+        ]
+      }
+    },
+    {
+      "id": "gas-cylinders",
+      "persona": "maintenance",
+      "shape": "place-location",
+      "question": "Where do we keep the gas cylinders?",
+      "expected": {
+        "kind": "answer",
+        "ids": [
+          "space:1e15a"
+        ],
+        "within": [
+          "building:pn-0001",
+          "floor:first-floor"
+        ]
+      }
+    },
+    {
+      "id": "lift",
+      "persona": "visitor",
+      "shape": "place-location",
+      "question": "Is there a lift I can take? I can't do stairs.",
+      "expected": {
+        "kind": "abstention",
+        "reason": "no-such-place"
+      }
+    },
+    {
+      "id": "prescription",
+      "persona": "visitor",
+      "shape": "place-location",
+      "question": "Where do I pick up my prescription?",
+      "expected": {
+        "kind": "abstention",
+        "reason": "no-such-place"
+      }
+    },
+    {
+      "id": "dutch-toilets",
+      "persona": "visitor",
+      "shape": "place-location",
+      "question": "Waar zijn de toiletten op de eerste verdieping?",
+      "expected": {
+        "kind": "answer",
+        "ids": [
+          "space:2b05",
+          "space:2b06",
+          "space:2b22",
+          "space:2c07",
+          "space:2c08",
+          "space:2c23",
+          "space:2c24",
+          "space:2d13"
+        ]
+      }
+    },
+    {
+      "id": "water-fountains",
+      "persona": "visitor",
+      "shape": "asset-containment",
+      "question": "Are there any water fountains in the building?",
+      "expected": {
+        "kind": "answer",
+        "ids": [
+          "asset:drinkingfountain-01",
+          "asset:drinkingfountain-02",
+          "asset:drinkingfountain-03",
+          "asset:drinkingfountain-04"
+        ],
+        "total": 4
+      }
+    },
+    {
+      "id": "extinguisher-2f/v",
+      "persona": "visitor",
+      "shape": "asset-containment",
+      "question": "Is there a fire extinguisher somewhere on the second floor?",
+      "expected": {
+        "kind": "answer",
+        "ids": [
+          "asset:fire-extinguisher-cabinet-305-x-215-x-813mm-305-x-215-x-813mm-387916"
+        ],
+        "total": 1
+      },
+      "pair": "extinguisher-2f"
+    },
+    {
+      "id": "extinguisher-2f/m",
+      "persona": "maintenance",
+      "shape": "asset-containment",
+      "question": "Is there a fire extinguisher somewhere on the second floor?",
+      "expected": {
+        "kind": "answer",
+        "ids": [
+          "asset:fire-extinguisher-cabinet-305-x-215-x-813mm-305-x-215-x-813mm-387916",
+          "asset:fire-extinguisher-cabinet-305-x-215-x-813mm-305-x-215-x-813mm-390697",
+          "asset:fire-extinguisher-cabinet-305-x-215-x-813mm-305-x-215-x-813mm-425968"
+        ],
+        "total": 3
+      },
+      "pair": "extinguisher-2f"
+    },
+    {
+      "id": "ped-waiting-contents",
+      "persona": "visitor",
+      "shape": "asset-containment",
+      "question": "What's actually in the pediatric waiting room?",
+      "expected": {
+        "kind": "answer",
+        "counts": {
+          "type:door-type-a": 2,
+          "type:duplex-receptacle": 4,
+          "type:fire-sprinkler": 1,
+          "type:light-fixture-b1": 2,
+          "type:light-switch": 1,
+          "type:return-diffuser-200-face": 1,
+          "type:supply-diffuser-600-face": 1
+        },
+        "total": 12
+      }
+    },
+    {
+      "id": "vav-boxes-2f",
+      "persona": "maintenance",
+      "shape": "asset-containment",
+      "question": "How many VAV boxes are there on the second floor?",
+      "expected": {
+        "kind": "answer",
+        "counts": {
+          "type:vav-100-mm": 1,
+          "type:vav-125-mm": 4,
+          "type:vav-150-mm": 3,
+          "type:vav-175-mm": 8,
+          "type:vav-200-mm": 25,
+          "type:vav-225-mm": 10,
+          "type:vav-250-mm": 5,
+          "type:vav-350-mm": 2
+        },
+        "total": 58
+      }
+    },
+    {
+      "id": "more-lights/m",
+      "persona": "maintenance",
+      "shape": "asset-aggregation",
+      "question": "Which floor has more light fixtures, the first or the second?",
+      "expected": {
+        "kind": "answer",
+        "most": [
+          "floor:first-floor"
+        ],
+        "total": 837
+      },
+      "pair": "more-lights"
+    },
+    {
+      "id": "more-lights/v",
+      "persona": "visitor",
+      "shape": "asset-aggregation",
+      "question": "Which floor has more light fixtures, the first or the second?",
+      "expected": {
+        "kind": "answer",
+        "most": [
+          "floor:first-floor"
+        ],
+        "total": 296
+      },
+      "pair": "more-lights"
+    },
+    {
+      "id": "switch-serials",
+      "persona": "maintenance",
+      "shape": "attribute-filter",
+      "question": "Do we have serial numbers for any of the light switches?",
+      "expected": {
+        "kind": "answer",
+        "ids": [
+          "asset:light-switch-three-way-01",
+          "asset:light-switch-three-way-02",
+          "asset:light-switch-three-way-03",
+          "asset:light-switch-three-way-04"
+        ],
+        "total": 4,
+        "fill": {
+          "attribute": "serial_number",
+          "carried": 4,
+          "of": 236,
+          "not_recorded": 232
+        }
+      }
+    },
+    {
+      "id": "old-panels",
+      "persona": "maintenance",
+      "shape": "attribute-filter",
+      "question": "Were any of the electrical panels put in before 2011?",
+      "expected": {
+        "kind": "answer",
+        "ids": [
+          "asset:lighting-and-appliance-panelboard-01",
+          "asset:lighting-and-appliance-panelboard-02",
+          "asset:lighting-and-appliance-panelboard-03",
+          "asset:lighting-and-appliance-panelboard-04",
+          "asset:lighting-and-appliance-panelboard-05",
+          "asset:lighting-and-appliance-panelboard-06",
+          "asset:lighting-and-appliance-panelboard-07",
+          "asset:lighting-and-appliance-panelboard-08",
+          "asset:lighting-and-appliance-panelboard-09",
+          "asset:lighting-and-appliance-panelboard-10",
+          "asset:lighting-and-appliance-panelboard-11",
+          "asset:lighting-and-appliance-panelboard-12",
+          "asset:lighting-and-appliance-panelboard-13",
+          "asset:lighting-and-appliance-panelboard-14",
+          "asset:lighting-and-appliance-panelboard-15",
+          "asset:lighting-and-appliance-panelboard-16",
+          "asset:lighting-and-appliance-panelboard-17",
+          "asset:lighting-and-appliance-panelboard-18",
+          "asset:lighting-and-appliance-panelboard-19",
+          "asset:lighting-and-appliance-panelboard-20",
+          "asset:lighting-and-appliance-panelboard-21",
+          "asset:lighting-and-appliance-panelboard-22",
+          "asset:lighting-and-appliance-panelboard-23",
+          "asset:lighting-and-appliance-panelboard-24",
+          "asset:lighting-and-appliance-panelboard-25",
+          "asset:lighting-and-appliance-panelboard-26",
+          "asset:lighting-and-appliance-panelboard-27",
+          "asset:lighting-and-appliance-panelboard-28"
+        ],
+        "total": 28,
+        "fill": {
+          "attribute": "installation_date",
+          "carried": 28,
+          "of": 28,
+          "not_recorded": 0
+        }
+      }
+    },
+    {
+      "id": "tank-clearance/m",
+      "persona": "maintenance",
+      "shape": "asset-document",
+      "question": "How much space do I need to leave around the expansion tank?",
+      "expected": {
+        "kind": "answer",
+        "documents": [
+          "doc:expansiontank-productdata-pdf"
+        ]
+      },
+      "pair": "tank-clearance"
+    },
+    {
+      "id": "tank-clearance/v",
+      "persona": "visitor",
+      "shape": "asset-document",
+      "question": "How much space do I need to leave around the expansion tank?",
+      "expected": {
+        "kind": "abstention",
+        "reason": "no-such-asset-type"
+      },
+      "pair": "tank-clearance"
+    },
+    {
+      "id": "mech-room-safety",
+      "persona": "maintenance",
+      "shape": "place-document",
+      "question": "Anything I should know safety-wise before I go into the central mech room?",
+      "expected": {
+        "kind": "answer",
+        "documents": [
+          "doc:v2-sd-08-safetyinstructions-mechanicalrooms-pdf"
+        ]
+      }
+    },
+    {
+      "id": "upstairs-plan",
+      "persona": "visitor",
+      "shape": "place-document",
+      "question": "Do you have a floor plan for upstairs?",
+      "expected": {
+        "kind": "answer",
+        "documents": [
+          "doc:v1-sd-01-secondfloorplan-pdf"
+        ]
+      }
+    },
+    {
+      "id": "busiest-elec-room",
+      "persona": "maintenance",
+      "shape": "step-dependent",
+      "question": "What else is in whichever electrical room has the most panelboards?",
+      "expected": {
+        "kind": "abstention",
+        "reason": "step-dependent"
+      }
+    },
+    {
+      "id": "opening-hours",
+      "persona": "visitor",
+      "shape": "place-location",
+      "question": "What time does the clinic open on Saturdays?",
+      "expected": {
+        "kind": "abstention",
+        "reason": "out-of-scope"
+      }
+    }
+  ]
 }
