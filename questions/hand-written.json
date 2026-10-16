@@ -398,8 +398,382 @@
     {
       "id": "opening-hours",
       "persona": "visitor",
-      "shape": "place-location",
+      "shape": "unsupported",
       "question": "What time does the clinic open on Saturdays?",
+      "expected": {
+        "kind": "abstention",
+        "reason": "out-of-scope"
+      }
+    },
+    {
+      "id": "stairs",
+      "persona": "visitor",
+      "shape": "place-location",
+      "question": "where are the stairs?",
+      "expected": {
+        "kind": "answer",
+        "ids": [
+          "space:1as1",
+          "space:1bs2",
+          "space:1cs3",
+          "space:2as1",
+          "space:2bs2",
+          "space:2cs3"
+        ]
+      }
+    },
+    {
+      "id": "comms-room/m",
+      "persona": "maintenance",
+      "shape": "place-location",
+      "question": "Where's the comms room?",
+      "expected": {
+        "kind": "clarification",
+        "candidates": [
+          "space:1b21",
+          "space:1c13",
+          "space:2b12",
+          "space:2c15"
+        ],
+        "matched": 4
+      },
+      "pair": "comms-room"
+    },
+    {
+      "id": "comms-room/v",
+      "persona": "visitor",
+      "shape": "place-location",
+      "question": "Where's the comms room?",
+      "expected": {
+        "kind": "abstention",
+        "reason": "no-such-place"
+      },
+      "pair": "comms-room"
+    },
+    {
+      "id": "tricare/m",
+      "persona": "maintenance",
+      "shape": "place-location",
+      "question": "I've got a meeting at the Tricare office, where is it?",
+      "expected": {
+        "kind": "clarification",
+        "candidates": [
+          "space:1a03",
+          "space:1a04",
+          "space:1a05",
+          "space:1a06",
+          "space:1a07"
+        ],
+        "matched": 5
+      },
+      "pair": "tricare"
+    },
+    {
+      "id": "tricare/v",
+      "persona": "visitor",
+      "shape": "place-location",
+      "question": "I've got a meeting at the Tricare office, where is it?",
+      "expected": {
+        "kind": "abstention",
+        "reason": "no-such-place"
+      },
+      "pair": "tricare"
+    },
+    {
+      "id": "xray",
+      "persona": "maintenance",
+      "shape": "place-location",
+      "question": "where's x-ray",
+      "expected": {
+        "kind": "answer",
+        "ids": [
+          "space:2a12"
+        ],
+        "within": [
+          "building:pn-0001",
+          "floor:second-floor"
+        ]
+      }
+    },
+    {
+      "id": "loading-dock",
+      "persona": "maintenance",
+      "shape": "place-location",
+      "question": "Which floor's the loading dock on?",
+      "expected": {
+        "kind": "answer",
+        "ids": [
+          "space:1f02"
+        ],
+        "within": [
+          "building:pn-0001",
+          "floor:first-floor"
+        ]
+      }
+    },
+    {
+      "id": "gas-cylinders-visitor",
+      "persona": "visitor",
+      "shape": "place-location",
+      "question": "Where are the gas cylinders kept?",
+      "expected": {
+        "kind": "abstention",
+        "reason": "no-such-place"
+      }
+    },
+    {
+      "id": "penthouse",
+      "persona": "maintenance",
+      "shape": "asset-containment",
+      "question": "What kit is up in the mech penthouse?",
+      "expected": {
+        "kind": "abstention",
+        "reason": "nothing-recorded"
+      }
+    },
+    {
+      "id": "boiler/m",
+      "persona": "maintenance",
+      "shape": "asset-containment",
+      "question": "Where's the boiler?",
+      "expected": {
+        "kind": "answer",
+        "ids": [
+          "asset:boiler-b-1"
+        ],
+        "total": 1
+      },
+      "pair": "boiler"
+    },
+    {
+      "id": "boiler/v",
+      "persona": "visitor",
+      "shape": "asset-containment",
+      "question": "Where's the boiler?",
+      "expected": {
+        "kind": "abstention",
+        "reason": "no-such-asset-type"
+      },
+      "pair": "boiler"
+    },
+    {
+      "id": "pumps-total",
+      "persona": "maintenance",
+      "shape": "asset-containment",
+      "question": "How many pumps does the building have?",
+      "expected": {
+        "kind": "answer",
+        "counts": {
+          "type:pump-cold-water": 2,
+          "type:pump-hot-water": 2
+        },
+        "total": 4
+      }
+    },
+    {
+      "id": "waiting-windows",
+      "persona": "visitor",
+      "shape": "asset-containment",
+      "question": "How many windows are there in the central waiting room?",
+      "expected": {
+        "kind": "answer",
+        "ids": [
+          "asset:window-w5-01"
+        ],
+        "total": 1
+      }
+    },
+    {
+      "id": "most-panelboards",
+      "persona": "maintenance",
+      "shape": "asset-aggregation",
+      "question": "Which rooms have the most panelboards?",
+      "expected": {
+        "kind": "answer",
+        "most": [
+          "space:2b13",
+          "space:2c18"
+        ],
+        "total": 28
+      }
+    },
+    {
+      "id": "sprinklers-up-down/v",
+      "persona": "visitor",
+      "shape": "asset-aggregation",
+      "question": "Are there more sprinklers upstairs or downstairs?",
+      "expected": {
+        "kind": "answer",
+        "most": [
+          "floor:second-floor"
+        ],
+        "total": 166
+      },
+      "pair": "sprinklers-up-down"
+    },
+    {
+      "id": "sprinklers-up-down/m",
+      "persona": "maintenance",
+      "shape": "asset-aggregation",
+      "question": "Are there more sprinklers upstairs or downstairs?",
+      "expected": {
+        "kind": "answer",
+        "most": [
+          "floor:first-floor",
+          "floor:second-floor"
+        ],
+        "total": 418
+      },
+      "pair": "sprinklers-up-down"
+    },
+    {
+      "id": "outlets-f1",
+      "persona": "maintenance",
+      "shape": "asset-aggregation",
+      "question": "Which room on the first floor has the most power outlets?",
+      "expected": {
+        "kind": "answer",
+        "most": [
+          "space:1a16"
+        ],
+        "total": 533
+      }
+    },
+    {
+      "id": "pumps-after",
+      "persona": "maintenance",
+      "shape": "attribute-filter",
+      "question": "Which pumps went in after the 18th of February 2011?",
+      "expected": {
+        "kind": "answer",
+        "ids": [
+          "asset:pump-cwp-1",
+          "asset:pump-cwp-2"
+        ],
+        "total": 2,
+        "fill": {
+          "attribute": "installation_date",
+          "carried": 4,
+          "of": 4,
+          "not_recorded": 0
+        }
+      }
+    },
+    {
+      "id": "boiler-serial",
+      "persona": "maintenance",
+      "shape": "attribute-filter",
+      "question": "Is there a serial number on record for the boiler?",
+      "expected": {
+        "kind": "answer",
+        "ids": [
+          "asset:boiler-b-1"
+        ],
+        "total": 1,
+        "fill": {
+          "attribute": "serial_number",
+          "carried": 1,
+          "of": 1,
+          "not_recorded": 0
+        }
+      }
+    },
+    {
+      "id": "sprinkler-serials",
+      "persona": "maintenance",
+      "shape": "attribute-filter",
+      "question": "Which fire sprinklers have a serial number?",
+      "expected": {
+        "kind": "coverage-gap",
+        "reason": "attribute-not-recorded",
+        "fill": {
+          "attribute": "serial_number",
+          "carried": 0,
+          "of": 418,
+          "not_recorded": 418
+        }
+      }
+    },
+    {
+      "id": "ahu-warranty",
+      "persona": "maintenance",
+      "shape": "attribute-filter",
+      "question": "Are any of the air handling units missing a warranty start date?",
+      "expected": {
+        "kind": "answer",
+        "ids": [],
+        "total": 0,
+        "fill": {
+          "attribute": "warranty_start_date",
+          "carried": 2,
+          "of": 2,
+          "not_recorded": 0
+        }
+      }
+    },
+    {
+      "id": "ahu2-motor",
+      "persona": "maintenance",
+      "shape": "asset-document",
+      "question": "What horsepower is the motor on AHU-2's supply fan?",
+      "expected": {
+        "kind": "answer",
+        "documents": [
+          "doc:v2-sd-09-ahu2-pdf"
+        ]
+      }
+    },
+    {
+      "id": "chilled-water-start",
+      "persona": "maintenance",
+      "shape": "asset-document",
+      "question": "What has to happen before the chilled water system is started from empty?",
+      "expected": {
+        "kind": "answer",
+        "documents": [
+          "doc:v2-sd-10-startupandshutdownprocedures-pdf"
+        ]
+      }
+    },
+    {
+      "id": "compressor",
+      "persona": "maintenance",
+      "shape": "asset-document",
+      "question": "The dental air compressor won't start. What should I check?",
+      "expected": {
+        "kind": "answer",
+        "documents": [
+          "doc:v5-sd-10-dentalaircompressor-troubleshooting-pdf"
+        ]
+      }
+    },
+    {
+      "id": "fountain-schedule",
+      "persona": "visitor",
+      "shape": "place-document",
+      "question": "According to the plumbing schedule, where are the drinking fountains?",
+      "expected": {
+        "kind": "answer",
+        "documents": [
+          "doc:v1-sd-03-plumbingfixtures-pdf"
+        ]
+      }
+    },
+    {
+      "id": "sprinklers-in-busiest",
+      "persona": "maintenance",
+      "shape": "step-dependent",
+      "question": "How many sprinklers are in the room with the most power outlets?",
+      "expected": {
+        "kind": "abstention",
+        "reason": "step-dependent"
+      }
+    },
+    {
+      "id": "dog",
+      "persona": "visitor",
+      "shape": "unsupported",
+      "question": "Can I bring my dog in with me?",
       "expected": {
         "kind": "abstention",
         "reason": "out-of-scope"

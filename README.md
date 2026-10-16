@@ -25,7 +25,7 @@ packages/service  the turn service: FastAPI on Microsoft Agent Framework, readin
 packages/bench    the evaluation harness: question sets, a scripted model, the leak checks,
                   evaluation runs
 gold/             gold answers from a handover, by scripts that import none of the above
-questions/        the hand-written questions. 25 so far, drafted by a model
+questions/        the hand-written questions. 52, drafted by a model
 ```
 
 The service holds no pipeline code and imports nothing from `packages/ingest`.
@@ -1223,10 +1223,11 @@ Decided here, since the spec does not say:
 
 #### Hand-written questions
 
-They live in `questions/hand-written.json`. There are 25 for now, and a model wrote them,
-not a person. They aim at words no template uses ("loo", "elec room", "VAV boxes"), and
-their gold was worked out from the bench bundle, not from the gold scripts. So they're a
-start, not what #17 asks for. The rest should come from a person. The format:
+They live in `questions/hand-written.json`. There are 52, and a model wrote them, not a
+person. I read them and liked them better than what I'd have written. They aim at words
+no template uses ("loo", "elec room", "VAV boxes", "power outlets") and at clearance edges
+(a visitor asking for the lift or the gas cylinders). Gold was worked out from the bench
+bundle by script, not by the gold scripts, so a bundle bug would end up in both. The format:
 
 ```
 {"format": "spatial-hand-written@1", "venue": "test-bench", "questions": [
