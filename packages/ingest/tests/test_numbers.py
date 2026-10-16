@@ -118,6 +118,32 @@ def test_a_number_that_names_something_is_left_alone(text: str) -> None:
     assert in_words(text) == text
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "5/8",
+        "A 5/8 bolt",
+        "6-1/4",
+        "1⁄8",
+        "5⁄8",
+        "6-1⁄4",
+        "61⁄4",
+        "3⁄16˝ for hinges",
+        "1 3⁄4˝ standard",
+        "a hinge of 8 1/8 inch",
+        "four ½” frame width, 4 ½” and 4½”",
+        "1 ½ Hour Fire-Rated",
+        "2∕3 of the flow",
+    ],
+)
+def test_a_fraction_and_the_number_before_it_stay_as_written(text: str) -> None:
+    assert in_words(text) == text
+
+
+def test_a_count_next_to_a_fraction_is_still_a_count() -> None:
+    assert in_words("Use 2 bolts of 5/8 each") == "Use two bolts of 5/8 each"
+
+
 def test_every_kind_in_one_passage() -> None:
     text = (
         "Hall 9 is on the 2nd floor of building 30.22. There are 2 steps, each 15 cm high. "

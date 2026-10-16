@@ -6,8 +6,10 @@ For each source of the corpus, build
    left. A manual is only ingested for a type that is actually placed.
 2. fetches the original, which is also the link check, and keeps it under
    documents/originals/. Nothing ever serves that file again.
-3. reads its text, cuts it into passages, translates each passage that is not
-   English, and writes small numbers out in words.
+3. reads its text, cuts it into passages, drops the passages that are mostly OCR
+   junk, translates each passage that is not English, and writes small numbers
+   out in words. A document none of whose passages is readable is indexed by its
+   title alone, so it can still be found and named but nothing is quoted from it.
 4. reads a document date where the page states one and works out the clearance
    class from the anchors.
 
@@ -63,7 +65,7 @@ from spatial_core.records import (
 from spatial_ingest import summaries as sac
 from spatial_ingest.corpus import AnchorSpec, Corpus, Source
 from spatial_ingest.models import PROMPT_VERSION, Models
-from spatial_ingest.rules import numbers, passages, tiers
+from spatial_ingest.rules import numbers, passages, readable, tiers
 from spatial_ingest.summaries import Summary
 
 ANCHOR_RULE = "anchor-building-by-ref@1"
@@ -71,6 +73,7 @@ RULES = (
     ANCHOR_RULE,
     passages.TEXT_RULE,
     passages.CHUNK_RULE,
+    readable.RULE,
     passages.DATE_RULE,
     numbers.RULE,
     clearance.DOCUMENT_RULE,
@@ -369,6 +372,9 @@ def ingest(
     dropped: list[dict[str, str]] = []
     links: list[dict[str, str]] = []
     translated: list[dict[str, Any]] = []
+    # How many passages readable-passage dropped, per document that lost any.
+    unreadable: dict[str, int] = {}
+    by_title: list[str] = []
     kept: dict[str, dict[str, Any]] = {}
 
     for source in sorted(corpus.sources if corpus else (), key=lambda entry: entry.id):
@@ -412,12 +418,24 @@ def ingest(
             continue
 
         english = _is_english(source.language)
+        # A passage keeps the ordinal it had in the document, so dropping one
+        # changes no other chunk's id.
+        readable_passages = [
+            (ordinal, original)
+            for ordinal, original in enumerate(cut)
+            if readable.readable(original, english)
+        ]
+        if len(readable_passages) < len(cut):
+            unreadable[source.id] = len(cut) - len(readable_passages)
+        if not readable_passages:
+            readable_passages = [(0, source.title)]
+            by_title.append(source.id)
         cleared = clearance.document_clearance(
             source.kind, [(anchor.kind, snapshot.clearance_of(anchor)) for anchor in anchored]
         )
         dated = passages.last_change(content, entry["content_type"])
         served: TranslationSource | None = None
-        for ordinal, original in enumerate(cut):
+        for ordinal, original in readable_passages:
             chunk_id = f"{source.id}#{ordinal}"
             original_hash = sha256(original)
             body = original
@@ -469,7 +487,11 @@ def ingest(
             )
         if served is not None:
             translated.append(
-                {"document": source.id, "chunks": len(cut), **served.model_dump(mode="json")}
+                {
+                    "document": source.id,
+                    "chunks": len(readable_passages),
+                    **served.model_dump(mode="json"),
+                }
             )
         documents.append(
             Document(
@@ -485,7 +507,7 @@ def ingest(
                 date=Value.derived(dated, passages.DATE_RULE) if dated else None,
                 link=link,
                 translation=served,
-                chunks=len(cut),
+                chunks=len(readable_passages),
             )
         )
 
@@ -546,6 +568,13 @@ def ingest(
         # Sources the corpus lists and this snapshot does not hold, each with why.
         "skipped": skipped,
         "dropped_anchors": dropped,
+        # Passages readable-passage dropped as OCR junk, per document, and the
+        # documents left with none that are indexed by their title instead.
+        "unreadable_passages": {
+            "dropped": sum(unreadable.values()),
+            "by_document": dict(sorted(unreadable.items())),
+            "indexed_by_title": by_title,
+        },
         # Every source asked for, with whether it answered and the day build asked.
         "links": links,
         "offline": sum(1 for link_ in links if link_["status"] == LinkStatus.OFFLINE.value),

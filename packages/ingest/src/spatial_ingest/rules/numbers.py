@@ -19,6 +19,9 @@ Left as digits, always:
   "5 psi", "2 ft". Not "in" for inches: "2 in the lobby" is a count
 - anything over 20, and anything that is part of a longer token: "10.11",
   "608-42812", "31.05.2012", "1-3", "1/2", "B1"
+- a fraction and the whole number in front of it, with a slash or a fraction
+  slash: "5/8", "3⁄16", "6-1/4", "1 3⁄4", "8 1/8", "4 ½". A number beside a
+  fraction is a measurement, not a count
 - a number that names something: after a label word ("room 7", "channel 2",
   "page 3"), after an abbreviation ("Tel. 5", "Kaiserstr. 12") or after a street
   name ("Engesserstraße 5")
@@ -33,7 +36,7 @@ from __future__ import annotations
 
 import re
 
-RULE = "numbers-in-words@1"
+RULE = "numbers-in-words@2"
 
 # The largest count written out. Past this, a number is more figure than count.
 SMALL = 20
@@ -89,7 +92,14 @@ _ORDINAL = re.compile(
     rf"(?<![\w.,:/+-])(\d{{1,2}})(?:st|nd|rd|th)(?=(?:\s+[A-Za-z]+)?\s+{_FLOOR}\b)", re.IGNORECASE
 )
 _FLOOR_NUMBER = re.compile(rf"\b({_FLOOR}\s+)(\d{{1,2}})(?![\w]|[.,:/-]\d)", re.IGNORECASE)
-_COUNT = re.compile(r"(?<![\w.,:/+–-])(\d{1,2})(?![\w]|[.,:/–-]\d)")
+# A slash, a fraction slash and a division slash all make a fraction.
+_SLASHES = "/⁄∕"
+_VULGAR = "½⅓⅔¼¾⅕⅖⅗⅘⅙⅚⅛⅜⅝⅞"
+_COUNT = re.compile(
+    rf"(?<![\w.,:{_SLASHES}+–-])(\d{{1,2}})"
+    # Not the top of a fraction, and not the whole number in front of one.
+    rf"(?![\w]|[.,:{_SLASHES}–-]\d|\s?[{_VULGAR}]|\s\d+[{_SLASHES}]\d)"
+)
 _LAST_WORD = re.compile(r"([^\W\d_]+)(\.?)\s*$")
 
 

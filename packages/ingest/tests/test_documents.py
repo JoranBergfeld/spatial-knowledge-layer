@@ -383,7 +383,7 @@ def test_the_manifest_records_what_made_each_translation(bundle: Path) -> None:
         models.PROMPT_VERSION in manifest(bundle)["parts"]["documents/chunks.jsonl"]["produced_by"]
     )
     assert (
-        "numbers-in-words@1" in manifest(bundle)["parts"]["documents/chunks.jsonl"]["produced_by"]
+        "numbers-in-words@2" in manifest(bundle)["parts"]["documents/chunks.jsonl"]["produced_by"]
     )
 
 
@@ -509,6 +509,61 @@ def test_a_corpus_that_does_not_parse_stops_the_build(
 
     assert build(venue_file, corpus_file, out) == 1
     assert "exactly one of" in capsys.readouterr().err
+
+
+# A drawing as tesseract reads it: what readable-passage@1 is there to keep out.
+DRAWING = "l' ~-~~~~~~~I | r-----' I I _ ~ | C) ) ET-2/ . | _ Iw 100¢ HWP—2 | = ~~ \\ | "
+
+
+def test_ocr_junk_never_becomes_a_chunk(
+    out: Path, venue_file: Path, corpus_file: Path, site: Site
+) -> None:
+    # One manual with a page of prose and a page of drawing, one with drawings only.
+    prose_page = "Lamp replacement. " + "Switch off the breaker before opening the housing. " * 13
+    site.pages["/manuals/scanned.txt"] = (
+        f"{prose_page}\n\n{DRAWING * 10}".encode(),
+        "text/plain",
+    )
+    site.pages["/manuals/plan.txt"] = (f"{DRAWING * 10}\n\n{DRAWING * 10}".encode(), "text/plain")
+    corpus = json.loads(corpus_file.read_text())
+    for source_id, path, title in (
+        ("manual:scanned", "/manuals/scanned.txt", "B1 scanned manual"),
+        ("manual:plan", "/manuals/plan.txt", "B1 mounting plan"),
+    ):
+        corpus["documents"].append(
+            {
+                "id": source_id,
+                "kind": "manual",
+                "language": "en",
+                "title": title,
+                "url": site.url + path,
+                "anchors": [{"asset_type": prose.B1}],
+            }
+        )
+    corpus_file.write_text(json.dumps(corpus))
+
+    assert build(venue_file, corpus_file, out) == 0
+    bundle = out / DATE
+
+    # The drawing page is dropped, and the prose keeps its place and its id.
+    (kept,) = chunks(bundle, "manual:scanned")
+    assert kept["id"] == "manual:scanned#0"
+    assert kept["text"].startswith("Lamp replacement.")
+    assert documents(bundle)["manual:scanned"]["chunks"] == 1
+    # Nothing readable at all: found by its title, and nothing quoted from it.
+    (title,) = chunks(bundle, "manual:plan")
+    assert title["text"] == "B1 mounting plan"
+    assert not any("~~~" in chunk["text"] for chunk in chunks(bundle))
+
+    gated = manifest(bundle)["documents"]["unreadable_passages"]
+    assert gated == {
+        "dropped": 3,
+        "by_document": {"manual:plan": 2, "manual:scanned": 1},
+        "indexed_by_title": ["manual:plan"],
+    }
+    assert (
+        "readable-passage@1" in (manifest(bundle)["parts"]["documents/chunks.jsonl"]["produced_by"])
+    )
 
 
 def test_the_published_kit_corpus_is_its_lecture_hall_pages_keyed_by_building() -> None:
