@@ -176,7 +176,8 @@ SPATIAL_EMBEDDING_DEPLOYMENT     embeds the chunks. The RAG pipeline's, for now
 | `text-from-source@1` | The text of an HTML page, a PDF or a plain text file. HTML keeps what a reader sees, one line per block element. Where the corpus names two markers, only what lies between them is read, which keeps navigation and footers out. |
 | `chunk-by-paragraph@1` | Whole paragraphs packed into passages of at most 1200 characters. A longer paragraph is cut at line ends, then sentence ends. |
 | `translate-to-english@1` | A passage that is not English is translated by the composition deployment. This is the prompt's version, not a rule: the words are in `models.py`, and the manifest records the deployment, the model and this version for every translated document. |
-| `numbers-in-words@1` | In the English text, a clock time ("16:30" is "sixteen thirty", and both ends of "8:00-16:00"), a floor ordinal ("2nd floor" is "second floor", "floor 2" is "floor two") and a small standalone count up to twenty ("2 steps" is "two steps") are written out. A measured value with its unit stays as digits ("90 cm", "37.1 MHz", "5 minutes", "5 psi", "2 ft"), and so does a number that names something ("room 7", "channel 2", "10.11"). |
+| `readable-passage@1` | A passage where a quarter or more of the tokens are junk is dropped before it is translated, embedded or indexed. A token is fine as a word in one case pattern, a number with its unit or fraction, a code like "P-9050", an address or a dotted abbreviation. Stray symbols ("\|", "_", "~-~~~"), lone letters, mixed case ("weYD") and, in English only, a word with a letter pair English hardly has ("Ayenuuy", read off an upside-down page) are junk. Bullets and dashes count neither way, and a passage under eight tokens is always kept. A dropped passage leaves its neighbours' ids alone. A document left with no passage is indexed by its title alone, so it can still be found but nothing is quoted from it. |
+| `numbers-in-words@2` | In the English text, a clock time ("16:30" is "sixteen thirty", and both ends of "8:00-16:00"), a floor ordinal ("2nd floor" is "second floor", "floor 2" is "floor two") and a small standalone count up to twenty ("2 steps" is "two steps") are written out. A measured value with its unit stays as digits ("90 cm", "37.1 MHz", "5 minutes", "5 psi", "2 ft"), and so does a number that names something ("room 7", "channel 2", "10.11"). So does a fraction and the whole number in front of it ("5/8", "3⁄16", "6-1/4", "1 3⁄4", "4 ½"). |
 | `date-from-last-change@1` | A page's document date is the day its own "letzte Änderung:" line says. No line, no date: the document is undated. Manuals are never dated. The day it was fetched is never its date. |
 | `document-clearance@1` | A document's clearance class is its strictest anchor's. A manual shared by several types takes the least restrictive of those types first. An anchor with no clearance of its own (an untagged building) limits nothing. It lives in `packages/core`, with the other clearance rules. |
 
@@ -1051,6 +1052,14 @@ Rough, or just not done:
 - The IFC reader is mine and small: placements only, read line by line. Around a minute
   for the four models, at a guess.
 - A document with no OCR text reads as "offline" in the manifest. It is skipped either way.
+- Tesseract reads drawings, wiring diagrams and upside-down pages as junk.
+  `readable-passage@1` keeps most of it out: on the 2026-09-15 bench chunks it drops 388
+  of 6,943 passages (5.6%), and 35 of 492 documents are left with their title only, the
+  floor plans and two of the mechanical room plans among them. Its thresholds were tuned
+  by eye on those chunks, nothing more. Upside-down pages read with short tokens
+  ("SUON QUON Sc0") still get through, and a drawing heavy with part numbers passes as a
+  table. The manifest's `documents.unreadable_passages` says what was dropped, per
+  document.
 - The Attribute sheet (door widths, finishes) is not read. Assets carry the six
   Component columns and nothing else.
 - Job rows keep the sheet's own "n/a" where a frequency is blank, since the record
