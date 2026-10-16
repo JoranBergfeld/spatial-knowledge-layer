@@ -21,6 +21,7 @@ import pytest
 from fastapi.testclient import TestClient
 from psycopg import sql
 from psycopg.conninfo import make_conninfo
+from psycopg.types.json import Jsonb
 from pydantic import BaseModel
 
 import fixture
@@ -50,6 +51,8 @@ from spatial_service.retrieval import Retriever
 from spatial_service.store import PostgresStore, StoreError
 
 ADMIN_URL_ENV = "SPATIAL_TEST_DATABASE_URL"
+# What build writes to the manifest about clearance, cut down to what the service reads.
+CLEARANCE = {"rooms": 8, "rooms_sourced": 3, "sourced_share": 0.375}
 
 
 @pytest.fixture(scope="module")
@@ -187,6 +190,7 @@ def _bundle(root: Path) -> Path:
         "snapshot": fixture.SNAPSHOT,
         "venue": "mini",
         "parts": parts,
+        "clearance": CLEARANCE,
         "documents": {
             "chunks_by_clearance_class": by_class(passages),
             "embedding": {"deployment": papers.EMBEDDING, "dimensions": papers.DIMENSIONS},
@@ -349,6 +353,45 @@ def test_service_due_is_worked_out_from_what_postgres_holds(stores: tuple[str, s
         "seed:asset:L1": "service-event",
         "seed:asset:L2": "installation-date",
     }
+
+
+def test_the_venue_reads_the_served_snapshots_and_the_sourced_share_from_postgres(
+    stores: tuple[str, str],
+) -> None:
+    _, reader_url = stores
+    inputs: list[str] = []
+    app = create_app(PostgresStore(reader_url), fixture.llm(None, None, inputs))
+
+    response = TestClient(app).get("/venue")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert (body["snapshot"], body["previous_snapshot"]) == (fixture.SNAPSHOT, None)
+    assert body["sourced_clearance_share"] == 0.375
+    assert inputs == []
+
+
+def test_a_manifest_without_the_share_gives_none_rather_than_a_guess(
+    stores: tuple[str, str],
+) -> None:
+    owner_url, reader_url = stores
+    with psycopg.connect(owner_url, autocommit=True) as conn:
+        conn.execute(
+            "UPDATE control.snapshots SET manifest = manifest - 'clearance' WHERE snapshot = %s",
+            (fixture.SNAPSHOT,),
+        )
+    try:
+        app = create_app(PostgresStore(reader_url), fixture.llm(None, None, []))
+        response = TestClient(app).get("/venue")
+    finally:
+        with psycopg.connect(owner_url, autocommit=True) as conn:
+            conn.execute(
+                "UPDATE control.snapshots SET manifest = manifest || %s WHERE snapshot = %s",
+                (Jsonb({"clearance": CLEARANCE}), fixture.SNAPSHOT),
+            )
+
+    assert response.status_code == 200
+    assert response.json()["sourced_clearance_share"] is None
 
 
 def test_a_login_that_can_write_is_refused(stores: tuple[str, str]) -> None:

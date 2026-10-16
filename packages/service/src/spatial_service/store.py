@@ -38,6 +38,10 @@ class StoreError(Exception):
     pass
 
 
+class StoreUnreachable(StoreError):
+    """The database could not be connected to. Says so without the URL, which holds the login."""
+
+
 class Store(Protocol):
     def served(self) -> tuple[str | None, str | None]:
         """The current snapshot and the previous one. Only these are served."""
@@ -45,6 +49,10 @@ class Store(Protocol):
 
     def venue(self, snapshot: str, persona: Persona) -> Venue:
         """What ``persona`` can see in ``snapshot``, and nothing else."""
+        ...
+
+    def sourced_clearance_share(self, snapshot: str) -> float | None:
+        """The share of rooms whose clearance was sourced, as the build wrote it; None if not."""
         ...
 
 
@@ -66,8 +74,10 @@ class MemoryStore:
         service_events: Iterable[ServiceEvent] = (),
         edges: Iterable[Edge] = (),
         default_origin: str | None = None,
+        sourced_share: float | None = None,
     ) -> None:
         self.index = index
+        self.sourced_share = sourced_share
         self.snapshot = snapshot
         self.previous = previous
         self._spaces = {space.id: space for space in spaces}
@@ -84,6 +94,9 @@ class MemoryStore:
 
     def served(self) -> tuple[str | None, str | None]:
         return self.snapshot, self.previous
+
+    def sourced_clearance_share(self, snapshot: str) -> float | None:
+        return self.sourced_share if snapshot == self.snapshot else None
 
     def venue(self, snapshot: str, persona: Persona) -> Venue:
         ids = self._visible.get(persona, set())
@@ -137,9 +150,12 @@ class PostgresStore:
         self._venues: dict[tuple[str, Persona], Venue] = {}
 
     def _connect(self) -> psycopg.Connection[dict[str, Any]]:
-        return psycopg.connect(
-            self._url, row_factory=dict_row, options="-c default_transaction_read_only=on"
-        )
+        try:
+            return psycopg.connect(
+                self._url, row_factory=dict_row, options="-c default_transaction_read_only=on"
+            )
+        except psycopg.OperationalError as error:
+            raise StoreUnreachable("the database cannot be reached") from error
 
     def check_role(self) -> None:
         """Refuse a login that is not a reader, or that could write."""
@@ -163,6 +179,20 @@ class PostgresStore:
         if row is None:
             return None, None
         return row["snapshot"], row["previous"]
+
+    def sourced_clearance_share(self, snapshot: str) -> float | None:
+        # Read on every call, not kept: it is one row, and a manifest is all it takes.
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT manifest #> '{clearance,sourced_share}' AS share"
+                " FROM control.snapshots WHERE snapshot = %s",
+                (snapshot,),
+            ).fetchone()
+        share = None if row is None else row["share"]
+        # A manifest from before build wrote the share, or one with something else there.
+        if isinstance(share, bool) or not isinstance(share, int | float):
+            return None
+        return float(share)
 
     def venue(self, snapshot: str, persona: Persona) -> Venue:
         key = (snapshot, persona)

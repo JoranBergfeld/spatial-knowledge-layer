@@ -402,8 +402,9 @@ Things that are rough or just not done yet:
 
 ## The service
 
-One operation, `POST /turn`, plus `GET /eval` for the last evaluation run's figures
-(see "Evaluation runs and the eval snapshot"). `POST /turn` takes a persona, a snapshot
+One operation, `POST /turn`, plus `GET /venue` for what a caller needs before it asks
+anything (below) and `GET /eval` for the last evaluation run's figures (see "Evaluation
+runs and the eval snapshot"). `POST /turn` takes a persona, a snapshot
 (none means the current one), the conversation's prior state and a question, and returns
 a turn:
 
@@ -434,6 +435,31 @@ SPATIAL_EVAL_SNAPSHOT            optional: the file an evaluation run wrote its 
 ```
 
 With no search index named, the service still runs and no document is ever retrieved.
+
+### The venue
+
+`GET /venue` says which snapshot is served, so a caller can pin a conversation to it
+before the first turn, and what an answer is modelled on:
+
+```
+{"snapshot": "2026-09-15", "previous_snapshot": "2026-09-01",
+ "sourced_clearance_share": 0.12,
+ "personas": ["visitor", "staff", "maintenance"],
+ "route_constants": {"walking_speed_m_per_s": 1.34, "stairs_s_per_level": 12.0,
+                     "lift_wait_s": 40.0, "lift_s_per_level": 4.0, "storey_height_m": 4.0}}
+```
+
+`previous_snapshot` is null when nothing was served before the current one.
+`sourced_clearance_share` is the current snapshot's manifest `clearance.sourced_share`,
+and null when the manifest has none. It is not worked out again here. The route constants
+are the ones routes.py computes with, under longer names: change one there and it changes
+here. It never calls a model, so it costs nothing.
+
+When there is nothing to say it answers 503 with a refusal body, the same shape as
+`POST /turn`'s: `{"detail": "...", "code": "no-current-snapshot"}` when no snapshot is
+current, `{"detail": "...", "code": "store-unreachable"}` when the database cannot be
+connected to. The code is what to act on. The detail is for reading and never holds the
+database URL.
 
 ### Metrics
 
