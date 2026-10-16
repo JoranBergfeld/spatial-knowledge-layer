@@ -33,7 +33,7 @@ def test_what_is_installed_in_a_room_is_listed_by_type() -> None:
 
     assert turn["kind"] == "answer"
     assert texts(turn) == [
-        "Audimax holds 3 generated and 1 sourced.",
+        "Audimax holds 3 generated assets and 1 sourced asset.",
         "Light Fixture B1: 3 generated.",
         "Fire extinguisher: 1.",
     ]
@@ -46,9 +46,9 @@ def test_the_same_question_under_two_personas_counts_differently() -> None:
     visitor = ask("visitor", question, installed("Audimax"), counted)
     technician = ask("maintenance", question, installed("Audimax"), counted)
 
-    assert texts(visitor)[0] == "Audimax holds 3 generated and 1 sourced."
+    assert texts(visitor)[0] == "Audimax holds 3 generated assets and 1 sourced asset."
     assert texts(technician) == [
-        "Audimax holds 4 generated and 1 sourced.",
+        "Audimax holds 4 generated assets and 1 sourced asset.",
         "Light Fixture B1: 3 generated.",
         "Fire extinguisher: 1.",
         "Panelboard P1: 1 generated.",
@@ -73,9 +73,9 @@ def test_where_assets_of_a_type_are_is_listed_by_space() -> None:
     )
 
     assert texts(turn) == [
-        "50.34 level 0 holds 4 generated.",
-        "Audimax: 3 generated.",
-        "Treppenhaus: 1 generated.",
+        "50.34 level 0 holds 4 generated assets.",
+        "Audimax: 3 generated assets.",
+        "Treppenhaus: 1 generated asset.",
     ]
     # "lights" names every type of light the persona can see, and nobody is asked which.
     assert turn["trace"]["resolved_types"] == [
@@ -113,7 +113,7 @@ def test_none_of_a_type_where_other_things_are_installed_is_a_count_of_zero() ->
     )
 
     assert turn["kind"] == "answer"
-    assert texts(turn) == ["Seminarraum Nord holds 0."]
+    assert texts(turn) == ["Seminarraum Nord holds 0 Fire extinguisher."]
 
 
 # --- no recorded installations ------------------------------------------------------------
@@ -207,14 +207,14 @@ def test_which_building_has_the_most_differs_by_persona() -> None:
 
     assert visitor["kind"] == "answer"
     assert texts(visitor) == [
-        "Mini Campus holds 7 generated.",
-        "Informatik: 6 generated.",
-        "30.10: 1 generated.",
+        "Mini Campus holds 7 generated assets.",
+        "Informatik: 6 generated assets.",
+        "30.10: 1 generated asset.",
     ]
     assert texts(technician)[:3] == [
-        "Mini Campus holds 9 generated.",
-        "Informatik: 8 generated.",
-        "30.10: 1 generated.",
+        "Mini Campus holds 9 generated assets.",
+        "Informatik: 8 generated assets.",
+        "30.10: 1 generated asset.",
     ]
     assert visitor["trace"]["assets"]["grouped_by"] == "building"
     assert [(r["label"], r["rank"]) for r in visitor["trace"]["assets"]["rows"]] == [
@@ -239,9 +239,9 @@ def test_a_scale_level_in_the_question_sets_the_scope_and_the_grouping() -> None
 
     # Mixed provenance: every count that mixes is two numbers, and there is none for the sum.
     assert texts(turn) == [
-        "Informatik holds 6 generated and 1 sourced.",
-        "50.34 level 0: 4 generated and 1 sourced.",
-        "50.34 level 1: 2 generated.",
+        "Informatik holds 6 generated assets and 1 sourced asset.",
+        "50.34 level 0: 4 generated assets and 1 sourced asset.",
+        "50.34 level 1: 2 generated assets.",
     ]
     assert turn["trace"]["assets"]["scope"] == "osm:way/100"
     assert turn["trace"]["assets"]["grouped_by"] == "floor"
@@ -276,16 +276,20 @@ def test_a_space_with_no_recorded_installations_is_said_so_and_never_ranked() ->
     # 30.10 has things installed and no extinguisher: a zero, ranked. The Mensa has
     # nothing recorded at all: a gap, said apart.
     assert texts(staff) == [
-        "Mini Campus holds 1.",
-        "Informatik: 1.",
-        "30.10: 0.",
+        "Mini Campus holds 1 Fire extinguisher.",
+        "Informatik: 1 Fire extinguisher.",
+        "30.10: 0 Fire extinguisher.",
         "No recorded installations: Mensa.",
     ]
     rows = {r["label"]: (r["recorded"], r["rank"]) for r in staff["trace"]["assets"]["rows"]}
     assert rows == {"Informatik": (True, 1), "30.10": (True, 2), "Mensa": (False, None)}
     # A visitor does not see the Mensa at all, so for them it is not even a gap.
     assert "Mensa" not in json.dumps(visitor)
-    assert texts(visitor) == ["Mini Campus holds 1.", "Informatik: 1.", "30.10: 0."]
+    assert texts(visitor) == [
+        "Mini Campus holds 1 Fire extinguisher.",
+        "Informatik: 1 Fire extinguisher.",
+        "30.10: 0 Fire extinguisher.",
+    ]
 
 
 def test_an_answer_that_leaves_out_a_gap_or_half_a_split_count_is_rejected() -> None:
@@ -323,7 +327,7 @@ def test_a_type_beyond_clearance_and_one_that_does_not_exist_abstain_alike() -> 
     ]
     # Maintenance does see them.
     seen = ask("maintenance", "Where are they?", installed("Audimax", "panelboards"), counted)
-    assert texts(seen)[0] == "Audimax holds 1 generated."
+    assert texts(seen)[0] == "Audimax holds 1 generated Panelboard P1."
 
 
 def test_a_question_that_needs_one_result_to_choose_the_next_step_abstains() -> None:
@@ -534,7 +538,7 @@ def test_generated_assets_are_flagged_in_the_answer_and_its_citations() -> None:
     turn = ask("visitor", "What is installed in the Audimax?", installed("Audimax"), counted)
 
     total = turn["segments"][0]
-    assert total["text"] == "Audimax holds 3 generated and 1 sourced."
+    assert total["text"] == "Audimax holds 3 generated assets and 1 sourced asset."
     counts = [c for c in total["citations"] if c["kind"] == "count"]
     assert [(c["count"], c["record_provenance"], c["label"]) for c in counts] == [
         (3, "seed", "3 generated"),

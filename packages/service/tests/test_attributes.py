@@ -38,10 +38,10 @@ def test_assets_are_filtered_by_an_attribute_and_the_trace_carries_its_fill_rate
     assert turn["kind"] == "answer"
     assert turn["trace"]["shape"] == "attribute-filter"
     assert texts(turn) == [
-        "Audimax holds 1 generated.",
-        "Audimax: 1 generated.",
+        "Audimax holds 1 generated asset.",
+        "Audimax: 1 generated asset.",
         "Counted: serial number recorded.",
-        "2 generated with no serial number recorded.",
+        "2 generated assets with no serial number recorded.",
     ]
     assert turn["trace"]["plans"][0]["steps"][-1]["ids"] == ["seed:asset:L1"]
     # One of the three lights a visitor sees there carries one.
@@ -70,8 +70,8 @@ def test_assets_that_lack_an_attribute_are_counted_as_not_recorded() -> None:
     )
 
     assert texts(turn) == [
-        "Audimax holds 2 generated.",
-        "Audimax: 2 generated.",
+        "Audimax holds 2 generated assets.",
+        "Audimax: 2 generated assets.",
         "Counted: no serial number recorded.",
     ]
     assert turn["trace"]["plans"][0]["steps"][-1]["ids"] == ["seed:asset:L2", "seed:asset:L3"]
@@ -123,7 +123,10 @@ def test_none_of_a_type_in_scope_is_still_a_count_of_zero_with_no_rate_to_give()
     )
 
     assert turn["kind"] == "answer"
-    assert texts(turn) == ["Seminarraum Nord holds 0.", "Counted: serial number recorded."]
+    assert texts(turn) == [
+        "Seminarraum Nord holds 0 Fire extinguisher.",
+        "Counted: serial number recorded.",
+    ]
     fill = filter_trace(turn)
     assert (fill["carried"], fill["of"], fill["fill_rate"]) == (0, 0, None)
 
@@ -181,10 +184,10 @@ def test_service_due_is_a_year_on_from_the_latest_service_event_or_the_install_d
     # L1 was serviced in May 2025, so it is not due until May 2026. L2 has no event
     # on record and counts from its installation in March 2024. L3 has neither.
     assert texts(turn) == [
-        "Audimax holds 1 generated.",
-        "Audimax: 1 generated.",
+        "Audimax holds 1 generated asset.",
+        "Audimax: 1 generated asset.",
         "Counted: service due before 2026-01-01.",
-        "1 generated with no service event or installation date recorded.",
+        "1 generated asset with no service event or installation date recorded.",
     ]
     assert turn["trace"]["plans"][0]["steps"][-1]["ids"] == ["seed:asset:L2"]
     fill = filter_trace(turn)
@@ -268,9 +271,9 @@ def test_a_count_across_a_scale_level_can_be_filtered() -> None:
 
     assert turn["trace"]["shape"] == "asset-aggregation"
     assert texts(turn) == [
-        "Mini Campus holds 3 generated.",
-        "Informatik: 3 generated.",
-        "30.10: 0.",
+        "Mini Campus holds 3 generated assets.",
+        "Informatik: 3 generated assets.",
+        "30.10: 0 assets.",
         "Counted: no service event recorded.",
     ]
     fill = filter_trace(turn)

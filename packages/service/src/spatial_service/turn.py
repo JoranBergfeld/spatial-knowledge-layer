@@ -572,10 +572,12 @@ Cite every fact a segment rests on.
 """
 
 _COUNT_RULES = """\
-A count placeholder fills in as a number. Where the assets counted are generated it
-fills in as the number followed by the word "generated", and next to one of those a
-sourced count is followed by "sourced", so write the noun after the placeholder and
-do not add either word yourself. Counts listed together are one count split by
+A count placeholder fills in as a number and what it counts: "{f2}" may become
+"3 assets" or "3 Light Fixture B1". Where the assets counted are generated the number
+is followed by the word "generated", and next to one of those a sourced count by
+"sourced". So write no noun after a count placeholder and neither of those words:
+"{f1} has {f2}." is a whole sentence. Never put two placeholders next to each other
+with nothing between them. Counts listed together are one count split by
 provenance: name all of them or none, and never describe them as a single figure.
 Name every fact in "required". Say only what the facts say: do not explain, qualify
 or guess at anything they leave out.
@@ -590,6 +592,12 @@ in braces. Say only what the passage says. To quote it, copy its words exactly
 inside double quotes. Do not use double quotes for anything else. A passage's
 numbers are not yours to write: leave out any wording that needs a digit. Use only
 the passages that answer the question, and none if none does.
+
+A segment says what the facts say or what a passage says, never both. A segment
+that cites a passage names no placeholder and cites no fact: say what the passage
+says in its own terms, not which place or count it is about. If no passage answers
+the question, write no segment about the documents at all. Never write that the
+documents do not say something.
 """
 
 COMPOSITION_INSTRUCTIONS = {
@@ -684,7 +692,7 @@ the question was asked within and "total" the count across it.
         + _COMPOSE_RULES
         + """
 "subject" is the place asked about; the other facts are the places it lies within.
-Name every fact in "required".
+Name every fact in "required", in a segment of facts before the passages.
 """
         + _PASSAGE_RULES
     ),

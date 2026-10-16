@@ -72,6 +72,8 @@ def annotate(venue: Venue, answer: Answer, found: ScopeResult) -> Answer:
     if not found.filters:
         return answer
     facts = Facts(answer.facts)
+    # The assets lacking a value are of the same types as the total.
+    total = {fact.ref: fact for fact in answer.facts}[answer.payload["total"][0]]
     required = list(answer.required)
     together = list(answer.together)
     told: list[dict[str, Any]] = []
@@ -85,7 +87,9 @@ def annotate(venue: Venue, answer: Answer, found: ScopeResult) -> Answer:
         if one.test is not FilterTest.NOT_RECORDED and rate.lacking:
             lacking = attributes.not_recorded(one.attribute)
             counts = facts.counts(
-                Tally.of(venue.assets[i] for i in rate.lacking), space_id=found.scope
+                Tally.of(venue.assets[i] for i in rate.lacking),
+                space_id=found.scope,
+                noun=total.noun,
             )
             lacked = facts.condition(
                 lacking, _citation(one, lacking), test=FilterTest.NOT_RECORDED.value
