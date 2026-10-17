@@ -137,7 +137,10 @@ def slug(prefix: str, name: str) -> str:
 
 
 def document_persona(kind: str, anchors: list[tuple[str, str | None]]) -> str:
-    """The strictest anchor's. A manual's type anchors count once, as the least strict of them."""
+    """The strictest anchor's. A manual's type anchors count once, as the least strict of them.
+
+    A handover record that no anchor gives a clearance to is staff.
+    """
     ranks = [
         PERSONAS.index(lowest)
         for anchor, lowest in anchors
@@ -150,6 +153,8 @@ def document_persona(kind: str, anchors: list[tuple[str, str | None]]) -> str:
     ]
     if shared:
         ranks.append(min(shared))
+    if not ranks and kind == "handover-record":
+        return "staff"
     return PERSONAS[max(ranks, default=0)]
 
 

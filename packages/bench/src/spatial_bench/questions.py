@@ -32,6 +32,10 @@ FORMAT = "spatial-gold@1"
 GOLD_DIR_ENV = "SPATIAL_GOLD_DIR"
 
 
+# The layer's cause when retrieval found nothing to answer from.
+NO_DOCUMENT = "no-document"
+
+
 class GoldError(Exception):
     pass
 
@@ -81,6 +85,16 @@ class Expected(_Model):
     # Every document retrieval may return here, and the ones the question is after.
     retrievable: list[str] | None = None
     documents: list[str] | None = None
+    # The question names a document beyond the persona's clearance at a place they can
+    # see. That ends like a document that doesn't exist: whether anything else matches
+    # its title is retrieval's say, so an abstention for want of a document is right too.
+    or_no_document: bool = False
+
+    def allows(self, kind: ExpectedKind | None, cause: str | None) -> bool:
+        """Whether a turn of this kind and cause is the one gold expects."""
+        if kind is self.kind:
+            return True
+        return self.or_no_document and kind is ExpectedKind.ABSTENTION and cause == NO_DOCUMENT
 
 
 class FilterSlot(_Model):

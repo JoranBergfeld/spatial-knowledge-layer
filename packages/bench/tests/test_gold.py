@@ -143,7 +143,7 @@ def test_every_question_is_asked_as_a_visitor_and_as_maintenance(everything: Que
 def test_gold_sees_what_each_persona_sees(everything: QuestionSet) -> None:
     seen = everything.world["visible"]
 
-    assert seen["visitor"] == {"spaces": 9, "asset_types": 4, "assets": 14, "documents": 6}
+    assert seen["visitor"] == {"spaces": 9, "asset_types": 4, "assets": 14, "documents": 4}
     assert seen["staff"]["assets"] == 23
     assert seen["maintenance"] == {"spaces": 17, "asset_types": 10, "assets": 35, "documents": 12}
 
@@ -259,14 +259,19 @@ def test_a_document_is_reachable_only_through_what_the_persona_sees(
     assert technician.documents == ["doc:panelboard-om-pdf"]
     assert technician.retrievable == ["doc:panelboard-om-pdf", "doc:warranty-general-pdf"]
 
+    # The closeout is a handover record on an untagged building, so staff. The visitor
+    # can see the building, so either an answer from something else or no document.
     closeout = "What does Building Closeout say about Harbour Clinic?"
     visitor = expected(everything, closeout, "visitor")
-    assert visitor.documents == ["doc:closeout-pdf"]
+    assert (visitor.kind, visitor.documents, visitor.or_no_document) == (
+        ExpectedKind.ANSWER,
+        [],
+        True,
+    )
+    assert expected(everything, closeout, "maintenance").documents == ["doc:closeout-pdf"]
     # Everything a visitor may read at all: nothing keyed to plant, staff equipment or a
-    # system with a maintenance type in it.
+    # system with a maintenance type in it, and no handover record on untagged spaces.
     assert visitor.retrievable == [
-        "doc:closeout-pdf",
-        "doc:firstfloor-notes-pdf",
         "doc:lighta-productdata-pdf",
         "doc:reception-finishes-pdf",
         "doc:sprinkler-test-pdf",

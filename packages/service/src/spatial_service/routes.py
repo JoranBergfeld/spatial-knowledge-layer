@@ -55,6 +55,8 @@ from spatial_service.places import ROOM, Venue, tier
 # metres is about the width of a corridor and a wall, enough for a hydrant on a
 # facade or a point dropped just outside a door, and it bounds what the snap hides
 # to about four modelled seconds. Past that, which place was meant is a guess.
+# Still not measured: every one of the test bench's assets sits in a room, so the
+# snap never runs there. It gets measured when a venue with outdoor assets does.
 OPEN_SPACE_SNAP_M = 5.0
 OPEN_SPACE_RULE = "snap-open-space-point@1"
 

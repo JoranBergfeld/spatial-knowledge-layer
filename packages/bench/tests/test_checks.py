@@ -170,7 +170,8 @@ def test_the_copies_differ_only_in_what_a_visitor_cannot_see(bench_bundle: Path)
 
     assert len(base.assets) == 35
     assert {asset.id for asset in removed.assets} == set(base.visible(Persona.VISITOR).assets)
-    assert len(removed.documents) == 6
+    # The closeout and the first floor notes are handover records on untagged spaces: staff.
+    assert len(removed.documents) == 4
     assert len(added.assets) > 2 * 35 - 14
     assert len(added.documents) == 12 + 6 + 6
     for copy in (removed, added):

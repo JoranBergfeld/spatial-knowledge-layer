@@ -23,9 +23,11 @@ from typing import Any
 from spatial_core.records import Space
 from spatial_service.places import Venue, tier
 
-# How many spaces the planner is shown at most, the root aside. Not tuned on the
-# real venue yet.
-NODE_CAP = 200
+# How many spaces the planner is shown at most, the root aside. It was 200, which
+# cut the test bench's rooms for staff and maintenance (249 and 274 spaces) and left
+# their planner with floors only. 400 shows them every room, for a few thousand more
+# planning tokens. The campus is still unmeasured.
+NODE_CAP = 400
 
 
 @dataclass(frozen=True)

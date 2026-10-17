@@ -24,9 +24,11 @@ misclassifies something is fixed by changing the rule.
                                    category to the lowest persona it admits. A
                                    handover has no access tags, so every one is
                                    an authored default
-    document-clearance@1           a document takes its strictest anchor's clearance;
+    document-clearance@2           a document takes its strictest anchor's clearance;
                                    a manual shared by several types takes the
-                                   least restrictive of those types first
+                                   least restrictive of those types first; a
+                                   handover record no anchor gives a clearance
+                                   to is staff
 
 The rules interpret whom the venue admits the public to. They never claim to know
 who really holds a key.
@@ -56,7 +58,10 @@ VISIBLE_RULE = "visible-by-edges@1"
 TYPE_RULE = "clearance-from-omniclass@1"
 ASSET_VISIBLE_RULE = "visible-assets@1"
 SPACE_CATEGORY_RULE = "clearance-from-space-category@1"
-DOCUMENT_RULE = "document-clearance@1"
+DOCUMENT_RULE = "document-clearance@2"
+# A handover record whose anchors carry no clearance at all (only untagged
+# buildings, say) fails closed to this. Any other kind of document is visitor.
+UNCLEARED_HANDOVER_RECORD = Persona.STAFF
 
 # The published mapping. Any value not listed fails closed to maintenance.
 ACCESS: Mapping[str, Persona] = {
@@ -348,8 +353,11 @@ def document_clearance(
     a manual shared by several types: its type anchors count as one, the least
     restrictive of them, since whoever may see any of those types may read the
     manual. An anchor with no clearance of its own (a building nobody tagged)
-    limits nothing, and a document with only such anchors is visitor. Whether a
-    persona sees the document at all still needs one of its anchors visible.
+    limits nothing. A document with only such anchors is visitor, unless it is a
+    handover record: those fail closed to staff, since a handover is the venue's
+    own paperwork and nobody has said it's public. Scraped pages are public
+    already, which is why they keep the open rule. Whether a persona sees the
+    document at all still needs one of its anchors visible.
     """
     listed = list(anchors)
     if not listed:
@@ -368,4 +376,6 @@ def document_clearance(
         ]
         if types:
             ranks.append(min(types))
+    if not ranks and kind is DocumentKind.HANDOVER_RECORD:
+        return UNCLEARED_HANDOVER_RECORD
     return PERSONAS[max(ranks, default=0)]

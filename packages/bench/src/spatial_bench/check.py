@@ -106,6 +106,8 @@ def compare(asked: Asked) -> Verdict:
     got = kind_of(turn) if asked.status == 200 else None
     mismatches: list[str] = []
     missed: list[str] = []
+    if got is not expected.kind and expected.allows(got, turn.get("cause")):
+        return Verdict(asked.question.id, expected.kind, got, ())
     if got is not expected.kind:
         said = got.value if got else f"HTTP {asked.status}"
         mismatches.append(f"turn kind: got {said}, gold says {expected.kind.value}")

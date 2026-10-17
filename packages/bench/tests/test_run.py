@@ -379,13 +379,13 @@ def test_with_a_scripted_model_and_a_willing_nli_every_stage_holds(finished: Run
     template = finished.template
 
     assert template["stages"]["tools"]["value"] == 1.0
-    # 13 questions are after a document that is there to find.
+    # 11 questions are after a document that is there to find.
     assert template["stages"]["retrieval"]["recall_at_5"] == {
         "value": 1.0,
-        "n": 13,
+        "n": 11,
         "ci95": [1.0, 1.0],
     }
-    assert template["stages"]["retrieval"]["mrr"]["n"] == 13
+    assert template["stages"]["retrieval"]["mrr"]["n"] == 11
     # 96 answers were composed, 13 of them with a segment citing a passage.
     assert template["stages"]["composition"]["holds"]["n"] == 96
     assert template["stages"]["composition"]["numbers"]["value"] == 1.0
@@ -718,7 +718,7 @@ def test_the_ranker_rule_is_worked_out_from_a_second_retrieval_of_each_question(
     (ranker, _) = run.report["adoption_rules"]
 
     # The stand-in ranker returns what plain retrieval does, so there is no gain to adopt.
-    assert ranker["difference"] == {"value": 0.0, "n": 13, "ci95": [0.0, 0.0]}
+    assert ranker["difference"] == {"value": 0.0, "n": 11, "ci95": [0.0, 0.0]}
     assert ranker["met"] is False
     assert "semantic ranker: no gain the interval can show: keep off" in run.said
     assert run.snapshot["run"]["semantic_ranker"] is False

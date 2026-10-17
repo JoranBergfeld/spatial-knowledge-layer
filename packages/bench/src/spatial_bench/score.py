@@ -207,6 +207,10 @@ def score(
     layer_produced = produced = raw.value if raw else UNAVAILABLE
     if answered and segments and not kept:
         produced = ExpectedKind.ABSTENTION.value
+    # Where gold takes either, it expects what came back.
+    expected = question.expected.kind
+    if raw is not expected and question.expected.allows(raw, turn.get("cause")):
+        expected = ExpectedKind.ABSTENTION
 
     relevant = question.expected.documents or []
     recall = rank = again = None
@@ -226,7 +230,7 @@ def score(
         pair=question.pair,
         persona=question.persona.value,
         shape=question.shape,
-        expected=question.expected.kind.value,
+        expected=expected.value,
         produced=produced,
         layer_produced=layer_produced,
         tools=verdict.ok,

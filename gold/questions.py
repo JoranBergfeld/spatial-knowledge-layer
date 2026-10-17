@@ -325,11 +325,15 @@ def documented(
         pool = view.retrievable(anchors)
         if not pool:
             return abstain("no-document")
+        if document.id not in pool:
+            # Beyond clearance, so it ends like a document that doesn't exist. Whether
+            # anything else matches its title is retrieval's say: either will do.
+            return {"kind": ANSWER, "retrievable": pool, "documents": [], "or_no_document": True}
         return {
             "kind": ANSWER,
             # What retrieval may return, and what it should rank first.
             "retrievable": pool,
-            "documents": [document.id] if document.id in pool else [],
+            "documents": [document.id],
         }
 
     return evaluate

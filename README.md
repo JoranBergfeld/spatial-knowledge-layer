@@ -179,7 +179,7 @@ SPATIAL_EMBEDDING_DEPLOYMENT     embeds the chunks. The RAG pipeline's, for now
 | `readable-passage@1` | A passage where a quarter or more of the tokens are junk is dropped before it is translated, embedded or indexed. A token is fine as a word in one case pattern, a number with its unit or fraction, a code like "P-9050", an address or a dotted abbreviation. Stray symbols ("\|", "_", "~-~~~"), lone letters, mixed case ("weYD") and, in English only, a word with a letter pair English hardly has ("Ayenuuy", read off an upside-down page) are junk. Bullets and dashes count neither way, and a passage under eight tokens is always kept. A dropped passage leaves its neighbours' ids alone. A document left with no passage is indexed by its title alone, so it can still be found but nothing is quoted from it. |
 | `numbers-in-words@2` | In the English text, a clock time ("16:30" is "sixteen thirty", and both ends of "8:00-16:00"), a floor ordinal ("2nd floor" is "second floor", "floor 2" is "floor two") and a small standalone count up to twenty ("2 steps" is "two steps") are written out. A measured value with its unit stays as digits ("90 cm", "37.1 MHz", "5 minutes", "5 psi", "2 ft"), and so does a number that names something ("room 7", "channel 2", "10.11"). So does a fraction and the whole number in front of it ("5/8", "3⁄16", "6-1/4", "1 3⁄4", "4 ½"). |
 | `date-from-last-change@1` | A page's document date is the day its own "letzte Änderung:" line says. No line, no date: the document is undated. Manuals are never dated. The day it was fetched is never its date. |
-| `document-clearance@1` | A document's clearance class is its strictest anchor's. A manual shared by several types takes the least restrictive of those types first. An anchor with no clearance of its own (an untagged building) limits nothing. It lives in `packages/core`, with the other clearance rules. |
+| `document-clearance@2` | A document's clearance class is its strictest anchor's. A manual shared by several types takes the least restrictive of those types first. An anchor with no clearance of its own (an untagged building) limits nothing, so a page anchored only to untagged buildings is visitor. A handover record like that is staff instead: it's the venue's own paperwork and nobody said it's public, whereas a scraped page was public to begin with. So KIT's 36 lecture hall pages still reach visitors. It lives in `packages/core`, with the other clearance rules. |
 
 Fetching an original is also its link check: the source answered or it did not, and
 the manifest and every chunk record `online` or `offline` with the day build asked. A
@@ -291,7 +291,7 @@ then writes, then checks what it wrote:
 - every chunk belongs to a document of the bundle and carries that document's anchors,
   no more and no fewer
 - every chunk is anchored to spaces, types and assets of the snapshot
-- every chunk's clearance class is its strictest anchor's, by `document-clearance@1`,
+- every chunk's clearance class is its strictest anchor's, by `document-clearance@2`,
   worked out from the document's anchors and not from the chunk's own id lists. A chunk
   that dropped its strictest anchor and filed itself lower used to agree with itself
 - every chunk's ancestor ids are its space and asset anchors' paths
@@ -427,7 +427,7 @@ AZURE_OPENAI_API_VERSION         optional, 2024-10-21 by default
 SPATIAL_PLANNING_DEPLOYMENT      the deployment that plans
 SPATIAL_COMPOSITION_DEPLOYMENT   the deployment that composes, which must be a different one
 SPATIAL_LLM_TIMEOUT_SECONDS      optional, 30 by default
-SPATIAL_TREE_NODE_CAP            optional, 200 by default: how much of the tree the planner sees
+SPATIAL_TREE_NODE_CAP            optional, 400 by default: how much of the tree the planner sees
 OTEL_EXPORTER_OTLP_ENDPOINT      optional; where metrics are pushed. Unset, none are
 AZURE_SEARCH_ENDPOINT            optional: the Azure AI Search service, with AZURE_SEARCH_API_KEY
 SPATIAL_SEARCH_DIR               optional, instead of those two: the stand-in index directory
@@ -536,7 +536,10 @@ earlier ones resolved, and the recovery call would tell what the persona can see
 **The step cap is six.** The longest place chain worth reading in one question is
 three deep ("room 107 on level 1 of 50.34"), then a type, the assets and a count over
 them. A plan over the cap is rejected, not truncated, since a shortened plan answers a
-different question.
+different question. Measured, not guessed anymore: of about 300 plans in the
+2026-10-17 runs the longest had five steps. Mentions are capped at 200 characters and
+the longest seen was 60. The open-space snap (5 m, routes.py) is still a choice: the
+test bench puts every asset in a room, so it never runs there.
 
 ### Assets
 
@@ -763,9 +766,14 @@ under it.
 The depth is measured every turn and recorded in the trace under `tree`: the depth of
 the cut, the depth of the whole visible tree, and how many spaces each has. On the test
 fixture (12 spaces for a visitor) the default cap shows all four levels and a cap of 8
-cuts it at the floors. It has not been measured on the real campus yet, since there is
-no bundle to hand here. 200 is a guess until then. With a few hundred buildings it will
-most likely cut at the buildings or above.
+cuts it at the floors. On the test bench a visitor sees 88 spaces, staff 249 and
+maintenance 274. The cap used to be 200, which cut staff and maintenance at the floors,
+so their planner never saw a room name. It's 400 now, which shows every room. That cost
+something: a planning call went from about 4,000 input tokens to 6,100 on average over
+run 2026-10-17-5d907262, all of it on staff and maintenance turns (the visitor's tree
+didn't change), and the run cost $4.87 where the one before was $3.41. Hand-written
+questions went from 41% to 51% correct. The campus is still unmeasured. With a few
+hundred buildings it will most likely cut at the buildings or above.
 
 A turn is one of four kinds:
 
@@ -850,11 +858,12 @@ The anchors are ids the persona can see, and nothing else:
 | a place | the place and every visible space under it, the visible assets under it, and their types |
 
 The filter the index gets is: clearance class within the persona's, and at least one of
-the chunk's anchors among those ids. The spec words it as three clauses (clearance, scope
-matches or a type is visible in scope, an anchor in the visible set). Spelling the scope
-out as the visible ids in it folds the last two into one. It is a bit stricter in one
-corner, on purpose: a document tied to the scope only through something the persona
-cannot see does not come back, even if another of its anchors is visible elsewhere.
+the chunk's anchors among those ids. The spec used to word it as three clauses
+(clearance, scope matches or a type is visible in scope, an anchor in the visible set).
+Spelling the scope out as the visible ids in it folds the last two into one, and the
+spec says so now too (#26). It is a bit stricter in one corner, on purpose: a document
+tied to the scope only through something the persona cannot see does not come back,
+even if another of its anchors is visible elsewhere.
 
 A type only gets into those ids through a visible asset of it. So a manual anchored to
 a type is retrievable through such an asset and no other way, and a manual for
@@ -1095,7 +1104,11 @@ uv run bench check --bundle bench-bundles/2026-09-15 --gold gold.json \
 The question set is template questions per question shape, each asked as a visitor and
 as a maintenance technician, each with its expected turn kind and its own gold: the ids,
 the counts, the clarification candidates, the fill rate, the documents retrieval may
-return. Nothing is drawn at random, so the same workbook gives the same file. Routes and
+return. Nothing is drawn at random, so the same workbook gives the same file. A question
+can name a document the persona can't read at a place they can see. That has to end the
+way a document that doesn't exist does, and whether anything else matches its title is
+up to retrieval, so gold marks it `or_no_document`: an answer from something else or a
+`no-document` abstention both count. Routes and
 proximity have no questions and are listed as unmeasured. Follow-ups have none either.
 
 `bench check` calls no model. The planner writes the plan a question's slots spell out
@@ -1126,6 +1139,10 @@ runs three things:
 
 Each passes or fails. CI runs gold generation, the load invariants and all three on the
 hand-made handover, and a failure fails the build.
+
+`--no-counterfactual` skips the counterfactual check, which loads the bundle twice more
+and is slow. Handy day to day. `bench run` refuses a checks report that skipped it, so
+nothing published ever goes without both.
 
 The demo venue gets the same checks as an internal regression. It has no handover, so
 its gold is read off its bundle (`bench gold bundle --bundle bundles/<date>`), visible

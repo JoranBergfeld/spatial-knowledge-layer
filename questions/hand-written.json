@@ -380,9 +380,8 @@
       "question": "Do you have a floor plan for upstairs?",
       "expected": {
         "kind": "answer",
-        "documents": [
-          "doc:v1-sd-01-secondfloorplan-pdf"
-        ]
+        "documents": [],
+        "or_no_document": true
       }
     },
     {
@@ -754,9 +753,8 @@
       "question": "According to the plumbing schedule, where are the drinking fountains?",
       "expected": {
         "kind": "answer",
-        "documents": [
-          "doc:v1-sd-03-plumbingfixtures-pdf"
-        ]
+        "documents": [],
+        "or_no_document": true
       }
     },
     {
@@ -1006,10 +1004,8 @@
       "shape": "place-document",
       "question": "Where can I find the warranty for the roof membrane?",
       "expected": {
-        "kind": "answer",
-        "documents": [
-          "doc:v1-sd-07-warranty-roofmembrane-pdf"
-        ]
+        "kind": "abstention",
+        "reason": "no-document"
       }
     },
     {

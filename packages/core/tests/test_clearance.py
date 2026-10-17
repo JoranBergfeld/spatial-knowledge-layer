@@ -350,6 +350,7 @@ def test_a_type_with_no_visible_asset_is_not_visible() -> None:
 
 
 PAGE, MANUAL = DocumentKind.ACCESSIBILITY_PAGE, DocumentKind.MANUAL
+RECORD = DocumentKind.HANDOVER_RECORD
 SPACE, TYPE, ASSET = AnchorKind.SPACE, AnchorKind.ASSET_TYPE, AnchorKind.ASSET
 VISITOR, STAFF, MAINTENANCE = Persona.VISITOR, Persona.STAFF, Persona.MAINTENANCE
 
@@ -398,6 +399,16 @@ def test_an_anchor_with_no_clearance_of_its_own_limits_nothing() -> None:
     # A building nobody tagged has none. It is visible only through its rooms.
     assert document_clearance(PAGE, [(SPACE, None)]) is VISITOR
     assert document_clearance(PAGE, [(SPACE, None), (SPACE, STAFF)]) is STAFF
+
+
+def test_a_handover_record_with_no_cleared_anchor_fails_closed_to_staff() -> None:
+    assert document_clearance(RECORD, [(SPACE, None)]) is STAFF
+    assert document_clearance(RECORD, [(SPACE, None), (SPACE, None)]) is STAFF
+    # One anchor with a clearance and the usual rule applies, visitor included.
+    assert document_clearance(RECORD, [(SPACE, None), (SPACE, VISITOR)]) is VISITOR
+    assert document_clearance(RECORD, [(SPACE, None), (SPACE, MAINTENANCE)]) is MAINTENANCE
+    # A manual keeps the open rule, like a page.
+    assert document_clearance(MANUAL, [(SPACE, None)]) is VISITOR
 
 
 def test_a_document_with_no_anchor_has_no_clearance() -> None:

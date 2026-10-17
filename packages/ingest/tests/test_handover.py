@@ -323,7 +323,8 @@ def test_a_document_keyed_to_a_row_is_anchored_to_it_as_sourced(bundle: Path) ->
         ("asset_type", "type:light-fixture-a", "sourced")
     ]
     assert documents["doc:elecroom-schedule-pdf"]["clearance_class"] == "maintenance"
-    assert documents["doc:closeout-pdf"]["clearance_class"] == "visitor"
+    # A handover record on an untagged building fails closed.
+    assert documents["doc:closeout-pdf"]["clearance_class"] == "staff"
     assert documents["doc:examtable-pdf"]["clearance_class"] == "staff"
 
 
