@@ -877,7 +877,8 @@ Facts and passages go to composition as two lists and are never scored against e
 other. The composer gets a passage's kind, title and text under a ref (`p1`, `p2`). It
 does not get its id, link or date. A passage ref goes in a segment's `cites`, never in
 braces, so nothing of a passage is filled in and a number still only comes from a fact.
-The digit rule holds for document segments as well, quoted or not.
+The digit rule holds for document segments as well, quoted or not, except that there it
+drops the one segment (below).
 
 What the host checks of a document segment, and drops the segment for, alone, with a
 note in the trace's `dropped_segments`:
@@ -892,6 +893,9 @@ note in the trace's `dropped_segments`:
 - it says what the documents don't say ("the documents do not say anything about X").
   Nothing entails an absence. That one is a short list of wordings, not a parser, so a
   new way of saying it will get through until someone adds it.
+- it writes a digit. That's the model copying a passage's numbers ("pH 700 Benchtop
+  Meter"). It used to reject the whole answer, facts and all, which turned decent
+  answers into abstentions. A digit in a fact segment still does.
 
 If no segment citing a passage is left, the turn is an abstention, `ungrounded`. One
 gap: a fact the answer has to name counts as named even when the segment naming it

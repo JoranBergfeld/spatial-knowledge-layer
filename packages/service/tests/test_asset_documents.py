@@ -180,14 +180,18 @@ def test_facts_and_passages_reach_composition_as_two_lists() -> None:
         {"text": 'It says "torque them 1 time a year".', "cites": ["p1"]},
     ],
 )
-def test_a_number_written_into_a_document_segment_rejects_the_answer(
+def test_a_number_written_into_a_document_segment_drops_that_segment(
     segment: dict[str, Any],
 ) -> None:
     plan = manual("servicing", "Audimax", "panelboard")
     turn = ask("maintenance", "?", plan, saying(segment))
 
-    assert (turn["kind"], turn["cause"]) == ("abstention", "composition-rejected")
-    assert turn["trace"]["composition_rejection"] == ["segment 2 contains a digit"]
+    # The only passage segment is gone, so there is no document answer left.
+    assert (turn["kind"], turn["cause"]) == ("abstention", "ungrounded")
+    assert turn["trace"]["composition_rejection"] == []
+    [note] = turn["trace"]["dropped_segments"]
+    assert note["segment"] == 2
+    assert "writes a digit" in note["reasons"]
 
 
 # --- provenance ---------------------------------------------------------------------------

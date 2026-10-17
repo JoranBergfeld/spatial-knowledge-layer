@@ -567,20 +567,23 @@ _COMPOSE_RULES = """\
 Return only JSON matching the schema: segments, each with its text and the facts it cites.
 
 Name things only by their placeholders, written in braces: {f1}, {f2}, ... Never
-write a place's name, a type's name or a number yourself, and never write any digit.
-Cite every fact a segment rests on.
+write a place's name, a type's name, a number or a date yourself, and never write any
+digit. Use only the refs the facts have, never one they do not. Cite every fact a
+segment rests on. Naming a fact means writing its placeholder in a segment's text:
+a ref in "cites" alone does not name it.
 """
 
 _COUNT_RULES = """\
-A count placeholder fills in as a number and what it counts: "{f2}" may become
+A count placeholder fills in as a number and what it counts, for example
 "3 assets" or "3 Light Fixture B1". Where the assets counted are generated the number
 is followed by the word "generated", and next to one of those a sourced count by
-"sourced". So write no noun after a count placeholder and neither of those words:
-"{f1} has {f2}." is a whole sentence. Never put two placeholders next to each other
-with nothing between them. Counts listed together are one count split by
-provenance: name all of them or none, and never describe them as a single figure.
-Name every fact in "required". Say only what the facts say: do not explain, qualify
-or guess at anything they leave out.
+"sourced". So write no noun after a count placeholder and neither of those words. A
+count and the place it is in go in one sentence, the place's placeholder and the
+count's both in the text. Never put two placeholders next to each other with nothing
+between them. Counts listed together are one count split by provenance: name all of
+them or none, and never describe them as a single figure. Name every fact in
+"required", each by its placeholder in the text. Say only what the facts say: do not
+explain, qualify or guess at anything they leave out.
 """
 
 _PASSAGE_RULES = """
@@ -590,12 +593,13 @@ passages say about the question, one segment per passage you use, and put the
 passage's ref in that segment's "cites". A passage ref goes in "cites" only, never
 in braces. Say only what the passage says. To quote it, copy its words exactly
 inside double quotes. Do not use double quotes for anything else. A passage's
-numbers are not yours to write: leave out any wording that needs a digit. Use only
-the passages that answer the question, and none if none does.
+numbers are not yours to write: leave out any wording that needs a digit. Use the
+passages that bear on the question, even where they answer it only in part. Leave a
+passage out only when it is about something else.
 
 A segment says what the facts say or what a passage says, never both. A segment
 that cites a passage names no placeholder and cites no fact: say what the passage
-says in its own terms, not which place or count it is about. If no passage answers
+says in its own terms, not which place or count it is about. If no passage bears on
 the question, write no segment about the documents at all. Never write that the
 documents do not say something.
 """
@@ -671,7 +675,8 @@ distance.
 "leaders" hold the most; several share it on a tie, and none means every count is
 zero. "no_recorded_installations" are spaces with nothing recorded in them at all:
 say so for each, and never rank them or give them a count. "scope" is the place
-the question was asked within and "total" the count across it.
+the question was asked within and "total" the count across it. With no leaders, say
+how many there are in the scope, by the placeholders "total" and "scope" hold.
 """
     ),
     QuestionShape.ASSET_DOCUMENT: (
@@ -682,7 +687,10 @@ the question was asked within and "total" the count across it.
         + _COUNT_RULES
         + """
 "scope" is the place asked about, "total" the count of the assets found there and
-"rows" its breakdown, as "rows_by" says. Say what was found first, from the facts.
+"rows" its breakdown, as "rows_by" says. Say what was found first, from the facts,
+in a segment or two. Then answer from the passages: the question asks what the
+documents say, so where a passage bears on it, at least one segment must say what
+that passage says.
 """
         + _PASSAGE_RULES
     ),
@@ -692,7 +700,9 @@ the question was asked within and "total" the count across it.
         + _COMPOSE_RULES
         + """
 "subject" is the place asked about; the other facts are the places it lies within.
-Name every fact in "required", in a segment of facts before the passages.
+Name every fact in "required", in a segment of facts before the passages. Then
+answer from the passages: the question asks what the documents say, so where a
+passage bears on it, at least one segment must say what that passage says.
 """
         + _PASSAGE_RULES
     ),
