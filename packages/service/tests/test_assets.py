@@ -423,7 +423,7 @@ def test_the_planner_sees_the_whole_tree_when_it_fits() -> None:
         "full_depth": 3,
         "nodes": 12,
         "full_nodes": 12,
-        "node_cap": 400,
+        "node_cap": 300,
     }
     assert venue["tiers"] == ["site", "building", "floor", "room"]
     [site] = venue["tree"]

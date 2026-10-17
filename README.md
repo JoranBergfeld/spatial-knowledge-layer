@@ -427,7 +427,7 @@ AZURE_OPENAI_API_VERSION         optional, 2024-10-21 by default
 SPATIAL_PLANNING_DEPLOYMENT      the deployment that plans
 SPATIAL_COMPOSITION_DEPLOYMENT   the deployment that composes, which must be a different one
 SPATIAL_LLM_TIMEOUT_SECONDS      optional, 30 by default
-SPATIAL_TREE_NODE_CAP            optional, 400 by default: how much of the tree the planner sees
+SPATIAL_TREE_NODE_CAP            optional, 300 by default: how much of the tree the planner sees
 OTEL_EXPORTER_OTLP_ENDPOINT      optional; where metrics are pushed. Unset, none are
 AZURE_SEARCH_ENDPOINT            optional: the Azure AI Search service, with AZURE_SEARCH_API_KEY
 SPATIAL_SEARCH_DIR               optional, instead of those two: the stand-in index directory
@@ -768,7 +768,9 @@ the cut, the depth of the whole visible tree, and how many spaces each has. On t
 fixture (12 spaces for a visitor) the default cap shows all four levels and a cap of 8
 cuts it at the floors. On the test bench a visitor sees 88 spaces, staff 249 and
 maintenance 274. The cap used to be 200, which cut staff and maintenance at the floors,
-so their planner never saw a room name. It's 400 now, which shows every room. That cost
+so their planner never saw a room name. It's 300 now. The cut goes a whole level at a
+time, so anything from 274 up shows every room and costs the same here; 300 leaves a bit
+of headroom and keeps the tree to roughly 2,400 tokens (about 8 a space). That cost
 something: a planning call went from about 4,000 input tokens to 6,100 on average over
 run 2026-10-17-5d907262, all of it on staff and maintenance turns (the visitor's tree
 didn't change), and the run cost $4.87 where the one before was $3.41. Hand-written

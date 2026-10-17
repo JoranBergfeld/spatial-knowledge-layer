@@ -25,9 +25,10 @@ from spatial_service.places import Venue, tier
 
 # How many spaces the planner is shown at most, the root aside. It was 200, which
 # cut the test bench's rooms for staff and maintenance (249 and 274 spaces) and left
-# their planner with floors only. 400 shows them every room, for a few thousand more
-# planning tokens. The campus is still unmeasured.
-NODE_CAP = 400
+# their planner with floors only. The tree is cut a whole level at a time, so any
+# cap from 274 up shows every room there. 300 leaves some headroom and bounds the
+# tree at roughly 2,400 tokens (about 8 a space). The campus is still unmeasured.
+NODE_CAP = 300
 
 
 @dataclass(frozen=True)
