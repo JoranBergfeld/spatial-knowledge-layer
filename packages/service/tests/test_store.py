@@ -297,8 +297,11 @@ def test_a_persona_reads_its_visible_assets_and_types_and_every_tier(
 @pytest.mark.parametrize(
     ("persona", "expected"),
     [
-        ("visitor", ["Mini Campus holds 7 generated.", "Informatik: 6 generated."]),
-        ("maintenance", ["Mini Campus holds 9 generated.", "Informatik: 8 generated."]),
+        ("visitor", ["Mini Campus holds 7 generated assets.", "Informatik: 6 generated assets."]),
+        (
+            "maintenance",
+            ["Mini Campus holds 9 generated assets.", "Informatik: 8 generated assets."],
+        ),
     ],
 )
 def test_a_count_read_from_postgres_differs_by_persona(
@@ -342,10 +345,10 @@ def test_service_due_is_worked_out_from_what_postgres_holds(stores: tuple[str, s
 
     assert turn["kind"] == "answer"
     assert [s["text"] for s in turn["segments"]] == [
-        "Audimax holds 1 generated.",
-        "Audimax: 1 generated.",
+        "Audimax holds 1 generated asset.",
+        "Audimax: 1 generated asset.",
         "Counted: service due before 2026-01-01.",
-        "1 generated with no service event or installation date recorded.",
+        "1 generated asset with no service event or installation date recorded.",
     ]
     [fill] = turn["trace"]["assets"]["filters"]
     assert (fill["carried"], fill["of"], fill["default_interval"]) == (2, 3, True)
