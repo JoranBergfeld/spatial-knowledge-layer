@@ -1296,6 +1296,25 @@ Three files in `--out`:
 - `eval-snapshot.json` (`spatial-eval@1`): what the site reads. Only written when the run
   got through every question.
 
+#### Labelling segments
+
+```
+uv run bench label runs/segments-2026-10-17-3ddaadac.jsonl runs/segments-2026-10-17-6f60db21.jsonl
+```
+
+It shows each segment with the passages it cites and asks if they say what it says: `f`
+faithful, `u` not, `s` skip, `q` quit. It does not show the NLI score, so you can't lean
+on it. Every answer goes straight into `labels-<id>.jsonl` beside the segments, so you can
+quit whenever and pick up where you stopped.
+
+Then it works out precision, per run and over all of them: of the segments the NLI model
+kept, the share you called faithful. Kept and unfaithful is the bad one, since that goes
+out to a visitor. Dropped and faithful is counted too. The figures land in
+`nli-precision.json` (`spatial-nli-precision@1`) beside the segments, and under 0.85 it
+says so, since that's the point where we'd look at an LLM judge instead.
+`--precision-only` skips the asking. Labels and figures are private, same as the
+segments.
+
 Spend is reported under the ledger category `evaluation`, by deployment and purpose, with
 the rates' date. It is never visitor spend and the site's gate never reads it. The ledger
 is the backend's. This is the run's report of what to book there. Nothing books it for
@@ -1402,9 +1421,9 @@ Rough here:
 - Tool correctness leans on the trace. A model that plans differently from the scripted
   one and still answers right could be marked wrong on a detail of the trace. Not seen,
   since no real model has been run.
-- NLI precision is to be re-checked by hand on about 50 real composed segments. Nothing
-  here does that. A run writes the segments to label, with passage text and scores, to
-  `segments-<id>.jsonl`. The labelling and the comparing are still to do.
+- NLI precision is to be re-checked by hand on about 50 real composed segments.
+  `bench label` does the asking and the sums (below). The labelling itself is still to
+  do, and it has to be a person.
 - Timing leaks are listed as unmeasured and that is all.
 
 ## Develop

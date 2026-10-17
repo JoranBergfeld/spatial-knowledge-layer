@@ -5,6 +5,7 @@
     bench check --bundle bundles/2026-09-15 --gold gold.json
     bench fresh --gold gold.json --snapshot 2026-09-15 --database-url ...
     bench run --gold gold.json --checks checks.json --rates rates.json --ceiling 20 --out runs/
+    bench label runs/segments-<run id>.jsonl ...
 
 `gold` runs the gold scripts in an interpreter of their own. `check` loads the
 bundle into throwaway databases and runs tool correctness and both leak checks
@@ -17,6 +18,9 @@ with the scripted model. It reports and exits 0 whatever it finds.
 prints what the run could cost, asks, and stops before the ceiling. See
 evalrun.py. It reads the service's own environment (the database, the
 deployments, the index) plus SPATIAL_NLI_MODEL_DIR.
+
+`label` asks a person about each segment a run scored, then works out the NLI
+model's precision on what they said. See label.py.
 """
 
 from __future__ import annotations
@@ -32,8 +36,9 @@ from pathlib import Path
 
 import psycopg
 
-from spatial_bench import evalmetrics, evalrun, fresh, questions, suite
+from spatial_bench import evalmetrics, evalrun, fresh, label, questions, suite
 from spatial_bench.evalrun import Outcome, Prepared, Request, RunError, Wiring
+from spatial_bench.label import LabelError
 from spatial_bench.nli import MODEL_DIR_ENV, NliError, OnnxNli
 from spatial_bench.questions import GoldError
 from spatial_bench.run import BenchError
@@ -125,6 +130,14 @@ def _parser() -> argparse.ArgumentParser:
     )
     run.add_argument(
         "--composition-tokens", type=_tokens, default=assumed.composition, metavar="IN:OUT"
+    )
+
+    labelling = commands.add_parser("label", help="label a run's segments, then NLI precision")
+    labelling.add_argument(
+        "segments", type=Path, nargs="+", help="segments-<run id>.jsonl, as a run wrote it"
+    )
+    labelling.add_argument(
+        "--precision-only", action="store_true", help="ask nothing, just work out the figure"
     )
     return parser
 
@@ -301,6 +314,30 @@ def _say_outcome(request: Request, prepared: Prepared, outcome: Outcome) -> None
         print(f"  {spent['unmetered_calls']} calls reported no usage and were costed as assumed")
 
 
+def _label(args: argparse.Namespace, confirm: Callable[[str], str]) -> int:
+    finished = args.precision_only or label.label(args.segments, ask=confirm)
+    found = label.precision(args.segments)
+    written = label.write_precision(args.segments, found)
+    print()
+    for name, counted in [*found["runs"].items(), ("all of them", found["all"])]:
+        print(
+            f"{name}: {counted['labelled']} of {counted['segments']} labelled,"
+            f" {counted['kept_unfaithful']} kept and unfaithful,"
+            f" {counted['dropped_faithful']} dropped and faithful"
+        )
+        figure = Figure.model_validate(counted["precision"])
+        print(f"  precision: {_figure(figure) if figure.n else 'nothing kept is labelled yet'}")
+    if found["enough"] is False:
+        print(
+            f"Precision is under {label.ENOUGH:.0%}. That is a decision to make:"
+            " fall back to an LLM judge and re-cost the turn."
+        )
+    if not finished:
+        print("Stopped before the end. Run it again to carry on where you left off.")
+    print(f"Written to {written}")
+    return 0
+
+
 def _run(args: argparse.Namespace, wiring: Wiring | None, confirm: Callable[[str], str]) -> int:
     request = Request(
         gold=questions.load(args.gold),
@@ -375,6 +412,8 @@ def main(
             return _check(args)
         if args.command == "fresh":
             return _fresh(args)
+        if args.command == "label":
+            return _label(args, confirm)
         return _run(args, wiring, confirm)
     except (
         GoldError,
@@ -382,6 +421,7 @@ def main(
         RunError,
         SpendError,
         NliError,
+        LabelError,
         psycopg.Error,
         StoreError,
         OSError,
