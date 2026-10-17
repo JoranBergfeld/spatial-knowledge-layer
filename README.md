@@ -497,7 +497,8 @@ enforces that cap rather than trusting the flow to keep it:
 - **Plan.** The planning deployment returns a plan (`packages/service/src/spatial_service/plan.py`):
   the question's shape, the place and asset-type mentions in it, `within` constraints
   between places, and a flat ordered list of typed tool steps. A step may work within
-  the ids an earlier step produced. The plan is checked in code before any tool runs.
+  the ids an earlier step produced. The plan is checked in code before any tool runs
+  (`plan_check.py`).
   Persona and snapshot are not arguments a plan can carry: the host binds them. The
   planner is shown the collapsed tree (below), not the venue.
 - **Execute.** The steps run in order with no model call between them. Every tool only
@@ -512,7 +513,8 @@ enforces that cap rather than trusting the flow to keep it:
   and otherwise in a `plan-rejected` abstention.
 - **Compose.** The composing deployment is told the facts by reference (`{f1}`, `{f2}`)
   with their kinds, never their labels, names, numbers or ids. It returns segments that
-  cite them; the host fills each placeholder from its fact. Output with a digit anywhere
+  cite them; the host fills each placeholder from its fact (`compose.py` builds the
+  facts, `grounding.py` checks and fills the draft). Output with a digit anywhere
   outside a placeholder is rejected whole, and so is an answer that leaves out a fact
   it has to name.
 
@@ -659,7 +661,7 @@ service event"), in an `asset-aggregation` plan.
 
 The two lowest-priority shapes. `route` is "how do I get to the Audimax", `proximity`
 is "where is the nearest extinguisher to room 107". Three more tools
-(`packages/service/src/spatial_service/routes.py`):
+(`packages/service/src/spatial_service/routes.py`, and `nearest.py` beside it):
 
 | Tool | What it does |
 | --- | --- |

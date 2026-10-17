@@ -39,6 +39,8 @@ from spatial_service.assets import (
 )
 from spatial_service.attributes import check_filters
 from spatial_service.conversation import HOW, ConversationState, Referred, resolve
+from spatial_service.nearest import Nearest as NearestFound
+from spatial_service.nearest import nearest
 from spatial_service.places import (
     Outcome,
     Venue,
@@ -70,8 +72,7 @@ from spatial_service.retrieval import (
     check_query,
     document_filter,
 )
-from spatial_service.routes import Nearest as NearestFound
-from spatial_service.routes import Origin, Routed, Target, asset_targets, find, nearest
+from spatial_service.routes import Origin, Routed, Target, asset_targets, find
 
 # The one reason an empty retrieval gives. It never says why nothing came back.
 NOTHING_RETRIEVED = "retrieval returned nothing"

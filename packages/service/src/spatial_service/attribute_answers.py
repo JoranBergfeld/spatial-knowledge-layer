@@ -26,8 +26,8 @@ from typing import Any
 
 from spatial_service import attributes
 from spatial_service.assets import ScopeResult, Tally
-from spatial_service.compose import Answer, Citation, FactKind, Facts
 from spatial_service.conversation import Carried, ConversationState
+from spatial_service.facts import Answer, Citation, FactKind, Facts
 from spatial_service.places import Venue
 from spatial_service.plan import Filter, FilterTest
 

@@ -24,19 +24,6 @@ is cut to what the persona can see before anything reads it, and the new state g
 back out (conversation.py). The trace shows each follow-up reference, what it
 resolved to and from which turn.
 
-A coverage gap is an abstention with a cause of its own, and says which gap. There
-are two, and nothing else gives a reason:
-
-    no recorded installations   nothing is installed in a building, or in something
-                                bigger. Stated only at building level or above. A
-                                room or floor with nothing in it is named as a gap
-                                only through its building, when the whole building
-                                is one. Otherwise the turn abstains without one.
-    attribute not recorded      none of the assets asked about carries the attribute
-                                filtered on: a fill rate of zero. Names the attribute.
-
-Both only ever speak of what the persona can see.
-
 A route that cannot be found is one abstention, whatever stopped it: clearance,
 the crossing rule or a gap in the mapping. Told apart, they would say where the
 restricted corridors are.
@@ -54,782 +41,70 @@ passage can be dropped on its own where a wrong fact rejects the whole answer.
 Each segment goes out with the full text of the passages it cites, for the
 entailment check, which is not done here. A query embedding is a paid call but
 not a model call of the turn, so it is reported in a list of its own.
+
+The pieces live apart: the models in turn_models.py, what the models are told
+in instructions.py, the trace's parts in traces.py, and the turn being built with
+the ways it ends early in outcomes.py.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
-from collections import Counter
-from dataclasses import dataclass, field
-from enum import StrEnum
+from dataclasses import dataclass
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
-
-from spatial_core.records import Asset, AssetType, Persona, Space
-from spatial_service import attribute_answers, attributes, compose, route_answer
+from spatial_service import attribute_answers, attributes, compose, outcomes, route_answer, traces
 from spatial_service.assets import ScopeResult
-from spatial_service.attributes import FilterTrace
-from spatial_service.compose import (
-    POSITION_NOT_RECORDED,
-    POSITION_RECORDED,
-    Answer,
-    Citation,
-    CompositionRejected,
-    FactKind,
-    Segment,
-)
-from spatial_service.conversation import (
-    ASSET_CARRY_CAP,
-    Carried,
-    ConversationState,
-    Pending,
-    advance,
-    name,
-    offered,
-    own,
-    told,
-)
+from spatial_service.conversation import ASSET_CARRY_CAP, offered, told
 from spatial_service.executor import Execution, StepResult, execute
-from spatial_service.llm import Llm, LlmCall, LlmUnavailable, Purpose
-from spatial_service.places import BUILDING, Outcome, Venue, labelled, tier
-from spatial_service.plan import (
-    ALTERNATIVES_CAP,
-    DECLINED,
-    ROUTE_STEP_CAP,
-    STEP_CAP,
-    Filter,
-    FollowUpTarget,
-    MentionKind,
-    Plan,
-    PlanRejected,
-    QuestionShape,
-    parse_plan,
-    resolves,
+from spatial_service.facts import Answer
+from spatial_service.grounding import CompositionRejected, Draft, Segment, ground
+from spatial_service.instructions import (
+    COMPOSITION_INSTRUCTIONS,
+    PLANNING_INSTRUCTIONS,
+    RECOVERY_INSTRUCTIONS,
 )
-from spatial_service.recovery import PlanChange, RecoveryOutcome, Trigger, TriggerKind, diff
+from spatial_service.llm import Llm, LlmUnavailable, Purpose
+from spatial_service.outcomes import OpenTurn
+from spatial_service.places import Outcome, Venue
+from spatial_service.plan import DECLINED, Plan, QuestionShape
+from spatial_service.plan_check import PlanRejected, parse_plan
+from spatial_service.recovery import RecoveryOutcome, Trigger, diff
 from spatial_service.retrieval import (
     Documents,
-    DocumentsTrace,
     DroppedSegment,
     EmbeddingCall,
     RetrievalUnavailable,
 )
 from spatial_service.retrieval import trace as documents_trace
-from spatial_service.route_answer import RouteOut, RouteTrace
 from spatial_service.store import Store
 from spatial_service.tree import NODE_CAP, Collapsed, collapse
-
-# Plan, recover, compose.
-CALL_CAP = 3
-# How much of a plan that is not JSON the trace and the recovery call keep.
-UNPARSED_CAP = 2000
-# How many assets the trace lists one by one. Past that it still accounts for every
-# asset, by provenance class, and the steps still carry every id.
-TRACE_ASSET_CAP = 200
-
-# What a refusal is, for the caller to act on. A snapshot that was dropped and one that
-# never existed are the same thing to a conversation: it ends, with a plain message.
-SNAPSHOT_DROPPED = "snapshot-dropped"
-
-
-class _Model(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-
-class TurnRequest(_Model):
-    persona: Persona
-    # None starts on the current snapshot. A conversation stays on the one it began on.
-    snapshot: str | None = None
-    state: ConversationState | None = None
-    question: str = Field(min_length=1, max_length=500)
-
-
-class TurnKind(StrEnum):
-    ANSWER = "answer"
-    CLARIFICATION = "clarification"
-    ABSTENTION = "abstention"
-    UNAVAILABLE = "unavailable"
-
-
-class AbstentionCause(StrEnum):
-    # Nothing the persona can see matches: either nothing does, or only places
-    # beyond their clearance do. The two are one cause on purpose.
-    NO_SUCH_PLACE = "no-such-place"
-    # The same for an asset type: none by that name, or none the persona can see.
-    NO_SUCH_ASSET_TYPE = "no-such-asset-type"
-    # The scope holds no visible space of the scale level asked for.
-    NOTHING_AT_SCALE_LEVEL = "nothing-at-scale-level"
-    # The next step would depend on what an earlier one found.
-    STEP_DEPENDENT_QUESTION = "step-dependent-question"
-    UNSUPPORTED_QUESTION = "unsupported-question"
-    PLAN_REJECTED = "plan-rejected"
-    COMPOSITION_REJECTED = "composition-rejected"
-    # The venue's data does not reach far enough. The turn's `gap` says where. The
-    # metrics count it apart (metrics.py).
-    COVERAGE_GAP = "coverage-gap"
-    # Retrieval returned nothing, twice. No document the persona can read is
-    # anchored there: none exists, or none within their clearance. One cause.
-    NO_DOCUMENT = "no-document"
-    # Passages were retrieved, and no segment written about them passed provenance.
-    UNGROUNDED = "ungrounded"
-    # Nothing is recorded in the scope asked about, and it is too small a place to
-    # call a gap in the venue's data. No reason is given.
-    NOTHING_RECORDED = "nothing-recorded"
-    # A follow-up reference with nothing to point at: no earlier turn resolved such a
-    # thing, or what it resolved is not something this persona can see.
-    NOTHING_REFERRED_TO = "nothing-referred-to"
-    # No route on the mapped graph for this persona. One cause for every reason
-    # there might be none, on purpose.
-    NO_ROUTE = "no-route"
-    # Nothing of the kind asked for can be placed near there, by route or by containment.
-    NOTHING_NEAR = "nothing-near"
-
-
-class CoverageGap(StrEnum):
-    """Which gap a coverage-gap abstention found."""
-
-    # Nothing the persona can see is installed in a building, or in something bigger.
-    NO_RECORDED_INSTALLATIONS = "no-recorded-installations"
-    # None of the assets asked about carries the attribute filtered on.
-    ATTRIBUTE_NOT_RECORDED = "attribute-not-recorded"
-
-
-class Candidate(_Model):
-    space_id: str
-    label: str
-    # The label of the building it is in, to tell candidates apart.
-    building: str | None
-    # An asset candidate: its id, the label of the space it is in, and whether its
-    # position is recorded. The space is in space_id. Two of a type differ by id.
-    asset_id: str | None = None
-    place: str | None = None
-    position: str | None = None
-
-
-class TraceStep(_Model):
-    id: str
-    tool: str
-    args: dict[str, Any]
-    # The words a resolving step looked up.
-    text: str | None
-    outcome: Outcome
-    ids: list[str]
-    how: str | None
-    # Why the tool rejected its arguments, when it did.
-    rejection: list[str] = []
-
-
-class Verdict(StrEnum):
-    ACCEPTED = "accepted"
-    REJECTED = "rejected"
-
-
-class PlanVersion(_Model):
-    """One plan the turn got: what the model wrote, whether it may run, what it ran."""
-
-    version: int
-    # As the model wrote it, when it is a JSON object, checked or not.
-    plan: dict[str, Any] | None = None
-    # The model's output when it is not, cut to UNPARSED_CAP characters.
-    unparsed: str | None = None
-    verdict: Verdict
-    rejection: list[str] = []
-    steps: list[TraceStep] = []
-    trigger: Trigger | None = None
-    # A second version as changes to the first.
-    changes: list[PlanChange] | None = None
-
-
-class Resolved(_Model):
-    mention: str
-    text: str
-    step: str
-    space_id: str
-    label: str
-    how: str | None
-
-
-class ResolvedTypes(_Model):
-    mention: str
-    text: str
-    step: str
-    type_ids: list[str]
-    names: list[str]
-
-
-class Reference(_Model):
-    """One follow-up reference: what the words pointed back at, and which turn it is from."""
-
-    mention: str
-    text: str
-    step: str
-    # What it was read as, and where it pointed.
-    kind: MentionKind
-    to: FollowUpTarget
-    ordinal: int | None
-    outcome: Outcome
-    # What it resolved to, or the candidates when it has to ask. Empty for nothing.
-    ids: list[str]
-    labels: list[str]
-    # The turn that resolved that, or that offered the candidates.
-    turn: int | None
-    # The assets whose type it took, for "like it".
-    through: list[str] = []
-
-
-class Provenance(_Model):
-    space_id: str
-    record_provenance: str
-    source: str | None
-    label: str
-    label_provenance: str
-    label_rule: str | None
-
-
-class AuthoredDefault(_Model):
-    """A clearance no tag gave, which a rule supplied, deciding what the persona sees."""
-
-    space_id: str
-    persona: Persona
-    rule: str
-
-
-class TreeMeasure(_Model):
-    """How far the tree the planner saw was collapsed. Measured each turn, not assumed."""
-
-    # Levels below the root that were shown, and that the visible tree has.
-    depth: int
-    full_depth: int
-    # Spaces shown, and spaces visible.
-    nodes: int
-    full_nodes: int
-    node_cap: int
-
-
-class TypeTrace(_Model):
-    type_id: str
-    record_provenance: str
-    name: str
-    name_provenance: str
-    name_rule: str | None
-    name_basis: str | None
-    omniclass: str
-    # The lowest persona cleared for it, and the rule that said so.
-    clearance: Persona
-    clearance_rule: str
-    authored_default: bool
-    unrecognised_category: bool
-
-
-class AssetTrace(_Model):
-    """One asset an answer touched: both provenance fields, with the rule or basis."""
-
-    asset_id: str
-    type_id: str
-    space_id: str
-    record_provenance: str
-    source: str | None
-    name: str
-    name_provenance: str
-    name_rule: str | None
-    name_basis: str | None
-    # "recorded", or "position not recorded". Never coordinates.
-    position: str
-    position_provenance: str | None
-    position_rule: str | None
-    position_basis: str | None
-
-
-class ProvenanceClass(_Model):
-    """Assets that share every provenance field, and how many of them there are."""
-
-    record_provenance: str
-    name_provenance: str
-    name_rule: str | None
-    name_basis: str | None
-    position: str
-    position_provenance: str | None
-    position_rule: str | None
-    position_basis: str | None
-    assets: int
-
-
-class CountRow(_Model):
-    space_id: str | None
-    type_id: str | None
-    label: str | None
-    sourced: int
-    generated: int
-    # False for a space with no recorded installations. It has no rank.
-    recorded: bool
-    rank: int | None
-
-
-class AssetsTrace(_Model):
-    # The scope node, or None for the whole venue.
-    scope: str | None
-    types: list[str] | None
-    # The scale level counted by, for an aggregation.
-    grouped_by: str | None
-    # How many assets the answer rests on, and how many of any type the scope holds.
-    touched: int
-    installed_in_scope: int
-    # Each asset, up to TRACE_ASSET_CAP of them.
-    listed: list[AssetTrace]
-    # Every asset, by provenance class.
-    classes: list[ProvenanceClass]
-    rows: list[CountRow]
-    # Assets in scope under no space of the scale level counted by.
-    ungrouped: int = 0
-    # Each attribute filtered on, with its fill rate over the assets asked about.
-    filters: list[FilterTrace] = []
-
-
-class Trace(_Model):
-    snapshot: str
-    persona: Persona
-    # The shape of the plan that ran to the end, if one did.
-    shape: QuestionShape | None = None
-    step_cap: int = STEP_CAP
-    call_cap: int = CALL_CAP
-    tree: TreeMeasure | None = None
-    # The first plan and, after a trigger, the second.
-    plans: list[PlanVersion] = []
-    resolved: list[Resolved] = []
-    resolved_types: list[ResolvedTypes] = []
-    references: list[Reference] = []
-    provenance: list[Provenance] = []
-    authored_defaults: list[AuthoredDefault] = []
-    asset_types: list[TypeTrace] = []
-    assets: AssetsTrace | None = None
-    # What was searched and retrieved, each document with its date.
-    documents: DocumentsTrace | None = None
-    # Segments the provenance check dropped from the answer.
-    dropped_segments: list[DroppedSegment] = []
-    # The persona's graph and what each route or nearest step did on it.
-    route: RouteTrace | None = None
-    composition_rejection: list[str] = []
-    unavailable: str | None = None
-
-
-class Turn(_Model):
-    kind: TurnKind
-    cause: AbstentionCause | None = None
-    # Which gap, when the cause is a coverage gap.
-    gap: CoverageGap | None = None
-    segments: list[Segment]
-    candidates: list[Candidate] = []
-    # Every route the answer rests on, in plan order, each complete in itself.
-    routes: list[RouteOut] = []
-    state: ConversationState
-    trace: Trace
-    llm_calls: list[LlmCall]
-    # Query embeddings made for retrieval. Paid, but not model calls of the turn.
-    embedding_calls: list[EmbeddingCall] = []
-    # Whether this turn needed a second plan, and whether that one ran its steps.
-    recovery: RecoveryOutcome = RecoveryOutcome.NOT_NEEDED
-
-
-class TurnRefused(Exception):
-    """The request cannot be served as asked: a snapshot not served, a state not its own."""
-
-    def __init__(self, status: int, message: str, code: str | None = None) -> None:
-        super().__init__(message)
-        self.status = status
-        self.code = code
-
-
-PLANNING_INSTRUCTIONS = f"""\
-You plan how to answer one question about a venue: its buildings, floors and rooms,
-and the assets installed in them. Return only a plan, as JSON matching the schema.
-
-"venue" shows the top of the venue's containment tree, with what lies below the
-shown part as counts per tier, "tiers", the venue's scale levels, outermost
-first, and "attributes", every attribute an asset can be filtered on. Use them to
-read the question. You cannot expand the tree: name a place in
-words and a step will find it.
-
-shape:
-- "place-location": the question asks where a place is.
-- "asset-containment": it asks what is installed in a place, or where assets of a
-  type are within a place.
-- "asset-aggregation": it asks to compare a count across a scale level ("which
-  floor has the most lights").
-- "asset-document": it asks what a document says about assets: a manual, about the
-  assets in a place or of a type ("what does the manual say about servicing the AC
-  unit in room 107").
-- "place-document": it asks what a place's own page says about it ("what does the
-  accessibility page say about the Audimax").
-- "attribute-filter": it asks for the assets in a place that have, lack, or fall
-  before or after a date on one of "attributes" ("which lights have no serial
-  number", "what falls due for service before June").
-- "asset-location": it asks where one asset from earlier in the conversation is
-  ("where is that one").
-- "proximity": it asks for the nearest asset of a type ("the nearest extinguisher
-  to room 107").
-- "route": it asks how to get somewhere, or how long or how far that is.
-- "step-dependent": answering needs the result of one step to decide the next
-  ("what is in the room with the most lights"). No steps.
-- "unsupported": anything else. No steps.
-
-mentions: each place, asset type and asset the question names, with the words that
-name it, verbatim ("107", "50.34 room 107", "Audimax"; "lights", "AC units"), and
-its kind, "place", "asset-type" or "asset". Ids m1, m2, ... A scale level on its own
-("floor" in "which floor") is not a mention.
-
-constraints: {{"kind": "within", "mention": a, "container": b}} when the question
-puts place a inside place b ("room 107 in 50.34").
-
-steps: ids s1, s2, ..., at most {STEP_CAP}. Every step but the last feeds a later one.
-- resolve_place, one per place mention. Resolve a container before what lies
-  within it, and point the inner step at it with "within": {{"step": "<id>"}}.
-  A place-location plan ends in the step for the place asked about.
-- resolve_asset_type, one per asset-type mention.
-- resolve_asset, one per asset mention. An asset-location plan ends in it.
-- assets_in_scope: every asset under one place. "scope": {{"step": "<the place
-  step>"}}, left out for the whole venue. "types": {{"step": "<the type step>"}},
-  left out for assets of any type. An asset-containment plan ends in it. It covers
-  every space under the scope in one step: never plan a step per room.
-  "filters": [] unless the question filters by an attribute. Then each filter is
-  {{"attribute": <one of "attributes", as written>, "test": "recorded",
-  "not-recorded", "before" or "after", "date": "YYYY-MM-DD" for before and after,
-  else null}}. That is every filter there is: a question needing any other
-  comparison, or an attribute not listed, is "unsupported". An attribute-filter
-  plan ends in an assets_in_scope with at least one filter, and an
-  asset-aggregation plan may filter the assets it counts.
-  "service_due" is when an asset next falls due for service, and "service_event"
-  its latest service on record.
-- aggregate: {{"assets": {{"step": "<the assets_in_scope step>"}}, "by": "<tier>"}}
-  counts those assets per space of that tier. "by" is one of "tiers". A scale level
-  named in the question sets both: the place it names is the scope, the tier it
-  compares across is "by". An asset-aggregation plan ends in it.
-- retrieve_documents: {{"anchors": {{"step": "<id>"}}, "query": "<a few words>"}}
-  searches the documents tied to what that step found. "query" is what to look
-  for in them, in English, from the question ("servicing", "step-free access").
-  An asset-document plan ends in it reading the assets_in_scope step: it searches
-  what is anchored to those assets and their types. Or reading a resolve_asset
-  step, for the documents of the one asset a follow-up points at ("what does its
-  manual say"). A place-document plan ends in it reading the resolve_place step
-  for the place asked about.
-- places_matching, for a place mention that describes rather than names ("the
-  nearest toilet", "a lift"): every place that fits, as a set. Only a route reads it.
-- route: {{"destination": {{"step": "<id>"}}}}, the step for the place asked for: a
-  resolve_place step, a places_matching step, or an assets_in_scope step for a route
-  to an asset. It ends at the nearest. "origin": {{"step": "<a resolve_place step>"}}
-  only when the question says where to start, otherwise leave it out. "step_free":
-  true only when the question asks for no stairs, in whatever words. Never infer it.
-  "alternatives": 2 or 3 only when the question asks for more than one option.
-  For "to A and then to B", a second route with "after": {{"step": "<the first route>"}}.
-  At most {ROUTE_STEP_CAP} route steps, at most {ALTERNATIVES_CAP} alternatives each.
-  A route plan ends in a route step.
-- nearest: {{"assets": {{"step": "<the assets_in_scope step>"}}}}, and "to": {{"step":
-  "<a resolve_place step>"}} for the place to be near, left out when the question
-  names none. A proximity plan ends in it.
-
-Follow-ups. "conversation" holds the earlier questions and what earlier turns
-resolved: a place, assets, asset types, by name. Words that name nothing themselves
-and point back at one of those ("that one", "it", "there", "those", "like it") are
-still a mention, with "refers": {{"to": "earlier-turn"}} and the kind of thing meant:
-"place" for a place, "asset" for one asset, "asset-type" for things of its type
-("more like it"). Never copy a name out of "conversation" into a mention, and never
-resolve one yourself. An asset is only ever named this way: a question that names
-one asset in words is "unsupported".
-
-"filters" in "conversation", where present, are the filters the last asset question
-used. When the question carries on from that one ("and on level 1?", "which of those
-are lights?"), repeat them in the "filters" of the assets_in_scope step. When it
-asks something new, leave them out.
-
-"last_route" in "conversation", where present, is the last route: where it went, where
-it started if the question said, and whether it was step-free. When the question
-carries on from it ("and from there to the library?", "how about to room 201?"), keep
-"step_free" as it was. A question that asks for a route afresh starts without it.
-
-If "pending" is present, the previous turn asked the user which one they meant and
-listed the candidates, which are of the kind "pending" says. Read the question as
-the answer to that, and plan the earlier question it was asked about, with a mention
-whose "refers" is {{"to": "candidate", "ordinal": n}}: n is the candidate's position
-in the list, from 1 ("the second one" is 2).
-"""
-
-RECOVERY_INSTRUCTIONS = (
-    PLANNING_INSTRUCTIONS
-    + """
-"previous" holds the plan you already wrote for this question, which could not run,
-with the trigger it raised and the reasons. Write the whole plan again, fixing what
-the reasons name. Keep what they do not name as it was.
-"""
+from spatial_service.turn_models import (
+    CALL_CAP,
+    SNAPSHOT_DROPPED,
+    UNPARSED_CAP,
+    AbstentionCause,
+    PlanVersion,
+    Trace,
+    TreeMeasure,
+    Turn,
+    TurnKind,
+    TurnRefused,
+    TurnRequest,
+    Verdict,
 )
 
-_COMPOSE_RULES = """\
-Return only JSON matching the schema: segments, each with its text and the facts it cites.
-
-Name things only by their placeholders, written in braces: {f1}, {f2}, ... Never
-write a place's name, a type's name, a number or a date yourself, and never write any
-digit. Use only the refs the facts have, never one they do not. Cite every fact a
-segment rests on. Naming a fact means writing its placeholder in a segment's text:
-a ref in "cites" alone does not name it.
-"""
-
-_COUNT_RULES = """\
-A count placeholder fills in as a number and what it counts, for example
-"3 assets" or "3 Light Fixture B1". Where the assets counted are generated the number
-is followed by the word "generated", and next to one of those a sourced count by
-"sourced". So write no noun after a count placeholder and neither of those words. A
-count and the place it is in go in one sentence, the place's placeholder and the
-count's both in the text. Never put two placeholders next to each other with nothing
-between them. Counts listed together are one count split by provenance: name all of
-them or none, and never describe them as a single figure. Name every fact in
-"required", each by its placeholder in the text. Say only what the facts say: do not
-explain, qualify or guess at anything they leave out.
-"""
-
-_PASSAGE_RULES = """
-"passages" is a second list, apart from the facts: what was retrieved from the
-documents, each with a ref (p1, p2, ...), a title and its text. Then say what the
-passages say about the question, one segment per passage you use, and put the
-passage's ref in that segment's "cites". A passage ref goes in "cites" only, never
-in braces. Say only what the passage says. To quote it, copy its words exactly
-inside double quotes. Do not use double quotes for anything else. A passage's
-numbers are not yours to write: leave out any wording that needs a digit. Use the
-passages that bear on the question, even where they answer it only in part. Leave a
-passage out only when it is about something else.
-
-A segment says what the facts say or what a passage says, never both. A segment
-that cites a passage names no placeholder and cites no fact: say what the passage
-says in its own terms, not which place or count it is about. If no passage bears on
-the question, write no segment about the documents at all. Never write that the
-documents do not say something.
-"""
-
-COMPOSITION_INSTRUCTIONS = {
-    QuestionShape.PLACE_LOCATION: (
-        "You answer where a place is, in one or two short sentences, in the question's "
-        "language.\n" + _COMPOSE_RULES + "\nThe subject is the place asked about; the other "
-        "facts are the places it lies within, innermost first, with their tiers.\n"
-    ),
-    QuestionShape.ASSET_LOCATION: (
-        "You answer where one asset is, in one or two short sentences, in the question's "
-        "language.\n"
-        + _COMPOSE_RULES
-        + """
-"subject" is the asset asked about. Its placeholder fills in as its name, followed
-by "(generated)" when it is, so do not add that word yourself. The place facts are
-the space it is in and the places that lies within, innermost first, with their
-tiers. Where the subject's "position" is "position not recorded", say that its
-position within the space is not recorded.
-"""
-    ),
-    QuestionShape.ASSET_CONTAINMENT: (
-        "You answer what is installed in a place, briefly, in the question's language.\n"
-        + _COMPOSE_RULES
-        + "\n"
-        + _COUNT_RULES
-        + """
-"scope" is the place asked about and "total" the count of what was found there.
-"rows" breaks it down, by asset type or by space as "rows_by" says, most first:
-"of" is the type or space and "counts" its count. "more_rows" counts rows left out,
-"in_spaces_with_no_label" what sits in spaces that have no label to print, and
-"position_not_recorded" the assets found whose position is not recorded.
-"""
-    ),
-    QuestionShape.ROUTE: (
-        "You answer how to get somewhere, briefly, in the question's language.\n"
-        + _COMPOSE_RULES
-        + """
-"routes" are the routes found, in order. Each has its "destination", its "duration"
-and its "distance", the places it passes through in "via", and how it changes level
-in "changes_level_by". "origin" is where it starts, and "origin_is_default" says the
-question named no start. A duration placeholder fills in as seconds and says that it
-is modelled; a distance fills in as metres. Write no unit and no "about" yourself.
-"alternatives" are routes to the next nearest places. Name every fact in "required".
-Say only what the facts say: this is not a measurement and you do not know the way
-in more detail than "via".
-"""
-    ),
-    QuestionShape.PROXIMITY: (
-        "You answer which asset of a kind is nearest, briefly, in the question's language.\n"
-        + _COMPOSE_RULES
-        + "\n"
-        + _COUNT_RULES
-        + """
-"nearest" lists where the nearest ones are: "in" is the place and "counts" how many
-are there. "types" are what they are. "anchor" is the place they are nearest to.
-"basis" says what nearest means here. "modelled-duration": a route reaches them,
-and "duration" and "distance" give it, already saying they are modelled.
-"shared-containment": no route was found, and they are the ones in the same
-"shared" place as the anchor. Then say they share that place, and do not call it a
-distance.
-"""
-    ),
-    QuestionShape.ASSET_AGGREGATION: (
-        "You answer which spaces of one scale level hold the most of something, briefly, "
-        "in the question's language.\n"
-        + _COMPOSE_RULES
-        + "\n"
-        + _COUNT_RULES
-        + """
-"rows" are the spaces of the tier "grouped_by", most first, each with its "counts".
-"leaders" hold the most; several share it on a tie, and none means every count is
-zero. "no_recorded_installations" are spaces with nothing recorded in them at all:
-say so for each, and never rank them or give them a count. "scope" is the place
-the question was asked within and "total" the count across it. With no leaders, say
-how many there are in the scope, by the placeholders "total" and "scope" hold.
-"""
-    ),
-    QuestionShape.ASSET_DOCUMENT: (
-        "You answer what the documents say about the assets in a place, briefly, in the "
-        "question's language.\n"
-        + _COMPOSE_RULES
-        + "\n"
-        + _COUNT_RULES
-        + """
-"scope" is the place asked about, "total" the count of the assets found there and
-"rows" its breakdown, as "rows_by" says. Say what was found first, from the facts,
-in a segment or two. Then answer from the passages: the question asks what the
-documents say, so where a passage bears on it, at least one segment must say what
-that passage says.
-"""
-        + _PASSAGE_RULES
-    ),
-    QuestionShape.PLACE_DOCUMENT: (
-        "You answer what a place's documents say about it, briefly, in the question's "
-        "language.\n"
-        + _COMPOSE_RULES
-        + """
-"subject" is the place asked about; the other facts are the places it lies within.
-Name every fact in "required", in a segment of facts before the passages. Then
-answer from the passages: the question asks what the documents say, so where a
-passage bears on it, at least one segment must say what that passage says.
-"""
-        + _PASSAGE_RULES
-    ),
-}
-
-COMPOSITION_INSTRUCTIONS[QuestionShape.ATTRIBUTE_FILTER] = COMPOSITION_INSTRUCTIONS[
-    QuestionShape.ASSET_CONTAINMENT
+# What app.py, metrics.py and the tests have always taken from here.
+__all__ = [
+    "CALL_CAP",
+    "AbstentionCause",
+    "Turn",
+    "TurnKind",
+    "TurnRefused",
+    "TurnRequest",
+    "TurnService",
 ]
-
-ANSWER_UNAVAILABLE = "The language model could not be reached, so there is no answer."
-CLARIFY = "More than one place matches. Which one do you mean?"
-CLARIFY_ASSET = "That could be more than one asset. Which one do you mean?"
-NO_INSTALLATIONS = "No installations are recorded for {scope}."
-NO_INSTALLATIONS_ANYWHERE = "No installations are recorded here."
-ABSTAIN = {
-    AbstentionCause.NO_SUCH_PLACE: "I don't know a place by that name.",
-    AbstentionCause.NO_SUCH_ASSET_TYPE: "I don't know of anything installed by that name.",
-    AbstentionCause.NOTHING_AT_SCALE_LEVEL: "I don't know of anything at that scale level there.",
-    AbstentionCause.STEP_DEPENDENT_QUESTION: (
-        "That needs one answer before the next question can be asked. Ask them one at a time."
-    ),
-    AbstentionCause.UNSUPPORTED_QUESTION: "I can't answer that kind of question yet.",
-    AbstentionCause.PLAN_REJECTED: "I couldn't work out how to answer that.",
-    AbstentionCause.COMPOSITION_REJECTED: "I found the place but couldn't word the answer.",
-    AbstentionCause.NO_DOCUMENT: "I don't know of a document about that.",
-    AbstentionCause.UNGROUNDED: ("I found documents but couldn't tie an answer to what they say."),
-    AbstentionCause.NOTHING_RECORDED: "I can't answer that from what is recorded.",
-    AbstentionCause.NOTHING_REFERRED_TO: "I don't know what that refers to.",
-    AbstentionCause.NO_ROUTE: "There is no route on the mapped graph for this persona.",
-    AbstentionCause.NOTHING_NEAR: "I don't know of one near there.",
-}
-# What a step that found nothing makes of the turn, by its tool.
-_NOTHING = {
-    "resolve_place": AbstentionCause.NO_SUCH_PLACE,
-    "resolve_asset_type": AbstentionCause.NO_SUCH_ASSET_TYPE,
-    "aggregate": AbstentionCause.NOTHING_AT_SCALE_LEVEL,
-    "places_matching": AbstentionCause.NO_SUCH_PLACE,
-    "route": AbstentionCause.NO_ROUTE,
-    "nearest": AbstentionCause.NOTHING_NEAR,
-}
-_DECLINED = {
-    QuestionShape.STEP_DEPENDENT: AbstentionCause.STEP_DEPENDENT_QUESTION,
-    QuestionShape.UNSUPPORTED: AbstentionCause.UNSUPPORTED_QUESTION,
-}
-
-
-@dataclass
-class _Turn:
-    """A turn being built up."""
-
-    state: ConversationState
-    trace: Trace
-    calls: list[LlmCall]
-    recovery: RecoveryOutcome = RecoveryOutcome.NOT_NEEDED
-    embeddings: list[EmbeddingCall] = field(default_factory=list)
-    question: str = ""
-    routes: list[RouteOut] = field(default_factory=list)
-
-    @property
-    def number(self) -> int:
-        """Which turn of the conversation this is, from 1."""
-        return self.state.turns + 1
-
-    def next(self, **update: Any) -> ConversationState:
-        """The state this turn hands back, with whatever it resolved (conversation.advance)."""
-        return advance(self.state, self.question, **update)
-
-    async def call(
-        self,
-        llm: Llm,
-        purpose: Purpose,
-        *,
-        instructions: str,
-        payload: dict[str, Any],
-        response_format: type[BaseModel],
-    ) -> str:
-        if len(self.calls) >= CALL_CAP:
-            raise RuntimeError(f"a turn makes at most {CALL_CAP} model calls")
-        text, call = await llm.call(
-            purpose, instructions=instructions, payload=payload, response_format=response_format
-        )
-        self.calls.append(call)
-        return text
-
-    def note(self, **fields: Any) -> None:
-        self.trace = self.trace.model_copy(update=fields)
-
-    def add_version(self, version: PlanVersion) -> None:
-        self.note(plans=[*self.trace.plans, version])
-
-    def finish(
-        self,
-        kind: TurnKind,
-        segments: list[Segment],
-        *,
-        cause: AbstentionCause | None = None,
-        gap: CoverageGap | None = None,
-        candidates: list[Candidate] | None = None,
-        state: ConversationState | None = None,
-    ) -> Turn:
-        return Turn(
-            kind=kind,
-            cause=cause,
-            gap=gap,
-            segments=segments,
-            candidates=candidates or [],
-            # Only an answer carries routes: a turn that says nothing shows none.
-            routes=self.routes if kind is TurnKind.ANSWER else [],
-            state=state or self.state,
-            trace=self.trace,
-            llm_calls=self.calls,
-            embedding_calls=self.embeddings,
-            recovery=self.recovery,
-        )
-
-    def abstain(self, cause: AbstentionCause) -> Turn:
-        return self.finish(
-            TurnKind.ABSTENTION,
-            [Segment(text=ABSTAIN[cause], citations=[])],
-            cause=cause,
-            state=self.next(),
-        )
-
-    def unavailable(self, error: LlmUnavailable | RetrievalUnavailable) -> Turn:
-        # The state goes back as it came, so the client can ask again.
-        self.note(unavailable=str(error.purpose))
-        return self.finish(TurnKind.UNAVAILABLE, [Segment(text=ANSWER_UNAVAILABLE, citations=[])])
 
 
 class TurnService:
@@ -850,7 +125,7 @@ class TurnService:
     async def take(self, request: TurnRequest) -> Turn:
         snapshot = await asyncio.to_thread(self._snapshot, request)
         venue = await asyncio.to_thread(self.store.venue, snapshot, request.persona)
-        state = _own_state(request, snapshot, venue)
+        state = outcomes.own_state(request, snapshot, venue)
         shown = collapse(venue, self.node_cap)
         measure = TreeMeasure(
             depth=shown.depth,
@@ -860,7 +135,7 @@ class TurnService:
             node_cap=shown.node_cap,
         )
         trace = Trace(snapshot=snapshot, persona=request.persona, tree=measure)
-        turn = _Turn(state, trace, [], question=request.question)
+        turn = OpenTurn(state, trace, [], question=request.question)
         try:
             first = await self._attempt(turn, request.question, venue, shown, None)
             if first.trigger is None:
@@ -875,11 +150,11 @@ class TurnService:
                 return await self._settle(turn, request.question, venue, second)
         except (LlmUnavailable, RetrievalUnavailable) as error:
             return turn.unavailable(error)
-        return _give_up(turn, venue, second.trigger)
+        return outcomes.give_up(turn, venue, second.trigger)
 
     async def _attempt(
         self,
-        turn: _Turn,
+        turn: OpenTurn,
         question: str,
         venue: Venue,
         shown: Collapsed,
@@ -899,7 +174,7 @@ class TurnService:
         if filters:
             conversation["filters"] = filters
         if turn.state.route is not None:
-            conversation["last_route"] = _told_last_route(turn.state.route, venue)
+            conversation["last_route"] = outcomes.told_last_route(turn.state.route, venue)
         if conversation:
             payload["conversation"] = conversation
         if turn.state.pending is not None:
@@ -960,7 +235,7 @@ class TurnService:
                 version=number,
                 plan=written,
                 verdict=Verdict.ACCEPTED,
-                steps=_steps(execution) if execution is not None else [],
+                steps=traces.steps(execution) if execution is not None else [],
                 trigger=trigger,
             )
             attempt = _Attempt(written, plan, execution, trigger)
@@ -969,29 +244,29 @@ class TurnService:
         turn.add_version(version)
         return attempt
 
-    async def _settle(self, turn: _Turn, question: str, venue: Venue, attempt: _Attempt) -> Turn:
+    async def _settle(self, turn: OpenTurn, question: str, venue: Venue, attempt: _Attempt) -> Turn:
         """The turn a plan that raised no trigger ends in."""
         assert attempt.plan is not None
         shape = attempt.plan.shape
         turn.note(shape=shape)
         if attempt.execution is None:
-            return turn.abstain(_DECLINED[shape])
+            return turn.abstain(outcomes.DECLINED_CAUSE[shape])
 
         execution = attempt.execution
         turn.note(
-            resolved=_resolved(execution, venue),
-            resolved_types=_resolved_types(execution, venue),
-            references=_references(execution, venue),
+            resolved=traces.resolved(execution, venue),
+            resolved_types=traces.resolved_types(execution, venue),
+            references=traces.references(execution, venue),
         )
         turn.note(route=route_answer.trace(venue, execution))
         last = execution.last
         if last.referred is not None and last.outcome is not Outcome.RESOLVED:
-            return _not_referred(turn, venue, last)
+            return outcomes.not_referred(turn, venue, last)
         if last.outcome is Outcome.NONE:
-            return turn.abstain(_NOTHING[last.tool])
+            return turn.abstain(outcomes.NOTHING_FOUND[last.tool])
         if last.outcome is Outcome.AMBIGUOUS:
             assert last.text is not None
-            return _clarify(turn, venue, last.text, last.ids)
+            return outcomes.clarify(turn, venue, last.text, last.ids)
         if last.retrieval is not None:
             return await self._settle_documents(turn, question, venue, shape, last)
 
@@ -1004,8 +279,8 @@ class TurnService:
             asset = venue.assets[last.ids[0]]
             answer = compose.asset_location(venue, question, asset)
             turn.note(
-                asset_types=[_type_trace(venue.asset_types[asset.type_id])],
-                assets=_one_asset_trace(venue, asset),
+                asset_types=[traces.type_trace(venue.asset_types[asset.type_id])],
+                assets=traces.one_asset_trace(venue, asset),
             )
             state = turn.next(place=asset.space_id, assets=[asset.id])
         elif shape is QuestionShape.ROUTE:
@@ -1013,14 +288,14 @@ class TurnService:
             answer = compose.route(venue, question, runs)
             turn.routes = route_answer.routes_of(venue, execution)
             # Where the last route ended, and the route itself as the last route.
-            state = turn.next(place=last.ids[0], route=_last_route(turn, turn.routes[-1]))
+            state = turn.next(place=last.ids[0], route=outcomes.last_route(turn, turn.routes[-1]))
         elif shape is QuestionShape.PROXIMITY:
             assert last.near is not None and last.found is not None
             answer = compose.proximity(venue, question, last.near)
             turn.routes = route_answer.routes_of(venue, execution)
             near = [venue.assets[i] for i in last.near.asset_ids]
             types = [venue.asset_types[i] for i in sorted({asset.type_id for asset in near})]
-            turn.note(asset_types=[_type_trace(kind) for kind in types])
+            turn.note(asset_types=[traces.type_trace(kind) for kind in types])
             state = turn.next(
                 place=near[0].space_id,
                 asset_types=[kind.id for kind in types],
@@ -1036,23 +311,26 @@ class TurnService:
             answer = attribute_answers.annotate(venue, answer, found)
             types = [venue.asset_types[i] for i in found.types or ()]
             turn.note(
-                asset_types=[_type_trace(kind) for kind in types],
-                assets=_assets_trace(venue, last, answer),
+                asset_types=[traces.type_trace(kind) for kind in types],
+                assets=traces.assets_trace(venue, last, answer),
             )
             state = turn.next(
-                **_carried(venue, last, found),
+                **outcomes.carried(venue, last, found),
                 constraints=attribute_answers.carried(found, turn.number),
             )
         places = [fact.space for fact in answer.facts if fact.space is not None]
-        turn.note(provenance=[_provenance(s) for s in places], authored_defaults=_defaults(places))
+        turn.note(
+            provenance=[traces.provenance(s) for s in places],
+            authored_defaults=traces.defaults(places),
+        )
 
         instructions = COMPOSITION_INSTRUCTIONS[shape]
         if found is not None:
             if found.installed == 0:
-                return _nothing_installed(turn, venue, found, state)
+                return outcomes.nothing_installed(turn, venue, found, state)
             unfilled = attribute_answers.gap(found)
             if unfilled is not None:
-                return _attribute_gap(turn, venue, found, unfilled, state)
+                return outcomes.attribute_gap(turn, venue, found, unfilled, state)
             if found.filters:
                 instructions += attribute_answers.RULES
 
@@ -1064,7 +342,7 @@ class TurnService:
         return turn.finish(TurnKind.ANSWER, segments, state=state)
 
     async def _compose(
-        self, turn: _Turn, instructions: str, answer: Answer
+        self, turn: OpenTurn, instructions: str, answer: Answer
     ) -> tuple[list[Segment], list[DroppedSegment]] | None:
         """The composition call, checked. None for a rejected draft, and the trace says why."""
         text = await turn.call(
@@ -1072,10 +350,10 @@ class TurnService:
             Purpose.COMPOSITION,
             instructions=instructions,
             payload=answer.payload,
-            response_format=compose.Draft,
+            response_format=Draft,
         )
         try:
-            return compose.ground(
+            return ground(
                 text, answer.facts, answer.required, answer.together, answer.passages, answer.banned
             )
         except CompositionRejected as rejected:
@@ -1083,7 +361,7 @@ class TurnService:
             return None
 
     async def _settle_documents(
-        self, turn: _Turn, question: str, venue: Venue, shape: QuestionShape, last: StepResult
+        self, turn: OpenTurn, question: str, venue: Venue, shape: QuestionShape, last: StepResult
     ) -> Turn:
         """An answer over two lists: the facts as before, and the passages retrieved."""
         retrieved = last.retrieval
@@ -1095,10 +373,10 @@ class TurnService:
             types = [venue.asset_types[i] for i in retrieved.anchors.asset_type_ids]
             types.sort(key=lambda kind: kind.id)
             turn.note(
-                asset_types=[_type_trace(kind) for kind in types],
-                assets=_assets_trace(venue, last, answer),
+                asset_types=[traces.type_trace(kind) for kind in types],
+                assets=traces.assets_trace(venue, last, answer),
             )
-            state = turn.next(**_carried(venue, last, found))
+            state = turn.next(**outcomes.carried(venue, last, found))
         else:
             assert retrieved.anchors.scope is not None
             subject = venue.spaces[retrieved.anchors.scope]
@@ -1107,8 +385,8 @@ class TurnService:
         places = [fact.space for fact in answer.facts if fact.space is not None]
         turn.note(
             documents=documents_trace(last.step, retrieved),
-            provenance=[_provenance(s) for s in places],
-            authored_defaults=_defaults(places),
+            provenance=[traces.provenance(s) for s in places],
+            authored_defaults=traces.defaults(places),
         )
 
         composed = await self._compose(turn, COMPOSITION_INSTRUCTIONS[shape], answer)
@@ -1154,385 +432,3 @@ def _json_object(text: str) -> dict[str, Any] | None:
     except ValueError:
         return None
     return value if isinstance(value, dict) else None
-
-
-def _give_up(turn: _Turn, venue: Venue, trigger: Trigger | None = None) -> Turn:
-    """A second trigger: ask again what is pending, or else abstain. Never a third call."""
-    pending = turn.state.pending
-    if pending is not None:
-        return _ask_again(turn, venue, pending)
-    if trigger is not None and trigger.kind is TriggerKind.EMPTY_RETRIEVAL:
-        return turn.abstain(AbstentionCause.NO_DOCUMENT)
-    return turn.abstain(AbstentionCause.PLAN_REJECTED)
-
-
-def _ask_again(turn: _Turn, venue: Venue, pending: Pending) -> Turn:
-    return _clarify(
-        turn, venue, pending.mention, tuple(pending.candidates), pending.kind, pending.turn
-    )
-
-
-def _not_referred(turn: _Turn, venue: Venue, last: StepResult) -> Turn:
-    """A follow-up reference that did not come to one thing: ask which, or abstain."""
-    referred = last.referred
-    assert referred is not None and last.text is not None
-    if last.outcome is Outcome.AMBIGUOUS:
-        return _clarify(turn, venue, last.text, referred.ids, referred.kind)
-    # "The fifth one" of three. The candidates still stand, so they are offered again.
-    if referred.to is FollowUpTarget.CANDIDATE and turn.state.pending is not None:
-        return _ask_again(turn, venue, turn.state.pending)
-    return turn.abstain(AbstentionCause.NOTHING_REFERRED_TO)
-
-
-def _told_last_route(route: Carried, venue: Venue) -> dict[str, Any]:
-    """The last route as the planner hears it. Names, never ids, like the rest of it."""
-    labels = [
-        space.label.value if space.label else None
-        for space in map(venue.spaces.get, route.space_ids)
-        if space
-    ]
-    said: dict[str, Any] = {"step_free": bool(route.args.get("step_free"))}
-    if labels and labels[-1]:
-        said["to"] = labels[-1]
-    if len(labels) > 1 and labels[0]:
-        said["from"] = labels[0]
-    return said
-
-
-def _last_route(turn: _Turn, route: RouteOut) -> Carried:
-    """The last route as state carries it: its ends and whether it was step-free.
-
-    Ids only in the id list, origin first, so the next turn's re-filter sees both. A
-    default origin is not an id: it is whatever the venue says next time too. Seconds
-    and metres are not carried. A follow-up routes again.
-    """
-    ends = [route.destination.space_id]
-    if not route.origin.default:
-        ends.insert(0, route.origin.space_id)
-    return Carried(
-        kind="route",
-        turn=turn.number,
-        space_ids=ends,
-        args={"step_free": route.step_free, "default_origin": route.origin.default},
-    )
-
-
-def _carried(venue: Venue, last: StepResult, found: ScopeResult) -> dict[str, Any]:
-    """What an asset answer leaves in state. A slot it has nothing for stays as it was."""
-    update: dict[str, Any] = {}
-    place = found.scope
-    counted = last.aggregation
-    if counted is not None:
-        # "Which floor has the most?" then "what is in there?": there is the one that won.
-        leaders = [g.space_id for g in counted.leaders]
-        if len(leaders) == 1 and venue.spaces[leaders[0]].label is not None:
-            place = leaders[0]
-    if place is not None:
-        update["place"] = place
-    if found.types:
-        update["asset_types"] = list(found.types)
-    # A count per space is about the spaces. Only a containment answer is about its
-    # assets, and only a handful can be pointed back at.
-    few = counted is None and len(found.ids) <= ASSET_CARRY_CAP
-    update["assets"] = list(found.ids) if few else []
-    return update
-
-
-def _own_state(request: TurnRequest, snapshot: str, venue: Venue) -> ConversationState:
-    """The prior state, keeping only ids the persona can see. A fresh one if there is none."""
-    if request.state is None:
-        return ConversationState(snapshot=snapshot, persona=request.persona)
-    return own(request.state, venue)
-
-
-def _clarify(
-    turn: _Turn,
-    venue: Venue,
-    mention: str,
-    ids: tuple[str, ...],
-    kind: MentionKind = MentionKind.PLACE,
-    asked: int | None = None,
-) -> Turn:
-    """Ask which of ``ids`` was meant. They come from the venue, so all are visible."""
-    candidates = []
-    citations = []
-    for item in ids:
-        asset = venue.assets[item] if kind is MentionKind.ASSET else None
-        space = venue.spaces[asset.space_id if asset else item]
-        building = venue.building_of(space)
-        within = labelled(building) if building and building.label else None
-        if asset is None:
-            candidates.append(Candidate(space_id=item, label=labelled(space), building=within))
-            citations.append(_place_citation(space))
-            continue
-        candidates.append(
-            Candidate(
-                space_id=space.id,
-                label=asset.name.value,
-                building=within,
-                asset_id=asset.id,
-                place=space.label.value if space.label else None,
-                position=POSITION_RECORDED if asset.position else POSITION_NOT_RECORDED,
-            )
-        )
-        citations.append(compose.asset_citation(asset))
-    # Asked again, the candidates are still from the turn that first offered them.
-    pending = Pending(mention=mention, candidates=list(ids), kind=kind, turn=asked or turn.number)
-    text = CLARIFY_ASSET if kind is MentionKind.ASSET else CLARIFY
-    return turn.finish(
-        TurnKind.CLARIFICATION,
-        [Segment(text=text, citations=citations)],
-        candidates=candidates,
-        state=turn.next(pending=pending),
-    )
-
-
-def _nothing_installed(
-    turn: _Turn, venue: Venue, found: ScopeResult, state: ConversationState
-) -> Turn:
-    """Nothing visible is installed in scope. A coverage gap only at building level or above.
-
-    A building or anything bigger with nothing in it is a gap and is named. A floor
-    or room is not named: if its whole building is a gap the building is, and if not
-    the turn abstains and gives no reason. Said by the host: no count, no model.
-    """
-    if found.scope is None:
-        gap = venue.root
-    else:
-        scope = venue.spaces[found.scope]
-        gap = next(
-            (s for s in (scope, *venue.ancestors(scope)) if _building_or_above(venue, s)), None
-        )
-        if gap is None or venue.assets_under.get(gap.id):
-            return turn.abstain(AbstentionCause.NOTHING_RECORDED)
-    if gap is not None and gap.label is not None:
-        segment = Segment(
-            text=NO_INSTALLATIONS.format(scope=gap.label.value), citations=[_place_citation(gap)]
-        )
-    else:
-        segment = Segment(text=NO_INSTALLATIONS_ANYWHERE, citations=[])
-    return turn.finish(
-        TurnKind.ABSTENTION,
-        [segment],
-        cause=AbstentionCause.COVERAGE_GAP,
-        gap=CoverageGap.NO_RECORDED_INSTALLATIONS,
-        state=state,
-    )
-
-
-def _building_or_above(venue: Venue, space: Space) -> bool:
-    """Whether a space's tier is the building tier or one outside it."""
-    if BUILDING not in venue.tiers:
-        return space.parent_id is None
-    return tier(space) in venue.tiers[: venue.tiers.index(BUILDING) + 1]
-
-
-def _attribute_gap(
-    turn: _Turn, venue: Venue, found: ScopeResult, unfilled: Filter, state: ConversationState
-) -> Turn:
-    """Assets were asked about and none carries the attribute. Named, by the host."""
-    scope = venue.spaces[found.scope] if found.scope is not None else None
-    has_label = scope is not None and scope.label is not None
-    text = attribute_answers.gap_text(unfilled, labelled(scope) if scope and has_label else None)
-    citations = [_place_citation(scope)] if scope and has_label else []
-    return turn.finish(
-        TurnKind.ABSTENTION,
-        [Segment(text=text, citations=citations)],
-        cause=AbstentionCause.COVERAGE_GAP,
-        gap=CoverageGap.ATTRIBUTE_NOT_RECORDED,
-        state=state,
-    )
-
-
-def _place_citation(space: Space) -> Citation:
-    assert space.label is not None
-    return Citation(
-        kind=FactKind.PLACE,
-        space_id=space.id,
-        label=space.label.value,
-        provenance=space.label.provenance.value,
-        rule=space.label.rule,
-        basis=space.label.basis,
-        record_provenance=space.record_provenance.value,
-    )
-
-
-def _steps(execution: Execution) -> list[TraceStep]:
-    return [
-        TraceStep(
-            id=r.step,
-            tool=r.tool,
-            args=r.args,
-            text=r.text,
-            outcome=r.outcome,
-            ids=list(r.ids),
-            how=r.how,
-            rejection=list(r.rejection),
-        )
-        for r in execution.results
-    ]
-
-
-def _resolved(execution: Execution, venue: Venue) -> list[Resolved]:
-    return [
-        Resolved(
-            mention=r.mention or "",
-            text=r.text or "",
-            step=r.step,
-            space_id=r.ids[0],
-            label=labelled(venue.spaces[r.ids[0]]),
-            how=r.how,
-        )
-        for r in execution.by_tool("resolve_place")
-        if r.outcome is Outcome.RESOLVED
-    ]
-
-
-def _resolved_types(execution: Execution, venue: Venue) -> list[ResolvedTypes]:
-    return [
-        ResolvedTypes(
-            mention=r.mention or "",
-            text=r.text or "",
-            step=r.step,
-            type_ids=list(r.ids),
-            names=[venue.asset_types[i].name.value for i in r.ids],
-        )
-        for r in execution.by_tool("resolve_asset_type")
-        if r.outcome is Outcome.RESOLVED
-    ]
-
-
-def _references(execution: Execution, venue: Venue) -> list[Reference]:
-    found = []
-    for r in execution.results:
-        referred = r.referred
-        if referred is None:
-            continue
-        found.append(
-            Reference(
-                mention=r.mention or "",
-                text=r.text or "",
-                step=r.step,
-                kind=resolves(r.tool),
-                to=referred.to,
-                ordinal=referred.ordinal,
-                outcome=r.outcome,
-                ids=list(r.ids),
-                labels=[name(venue, referred.kind, i) for i in r.ids],
-                turn=referred.turn,
-                through=list(referred.through),
-            )
-        )
-    return found
-
-
-def _provenance(space: Space) -> Provenance:
-    assert space.label is not None
-    return Provenance(
-        space_id=space.id,
-        record_provenance=space.record_provenance.value,
-        source=space.source,
-        label=space.label.value,
-        label_provenance=space.label.provenance.value,
-        label_rule=space.label.rule,
-    )
-
-
-def _defaults(spaces: list[Space]) -> list[AuthoredDefault]:
-    return [
-        AuthoredDefault(space_id=s.id, persona=s.clearance.persona, rule=s.clearance.rule)
-        for s in spaces
-        if s.clearance is not None and s.clearance.authored_default
-    ]
-
-
-def _type_trace(kind: AssetType) -> TypeTrace:
-    return TypeTrace(
-        type_id=kind.id,
-        record_provenance=kind.record_provenance.value,
-        name=kind.name.value,
-        name_provenance=kind.name.provenance.value,
-        name_rule=kind.name.rule,
-        name_basis=kind.name.basis,
-        omniclass=kind.omniclass.value,
-        clearance=kind.clearance.persona,
-        clearance_rule=kind.clearance.rule,
-        authored_default=kind.clearance.authored_default,
-        unrecognised_category=kind.clearance.unrecognised_category,
-    )
-
-
-def _asset_provenance(asset: Asset) -> dict[str, Any]:
-    """Both provenance fields of an asset, with the rule or basis. Never where it is."""
-    position = asset.position
-    return {
-        "record_provenance": asset.record_provenance.value,
-        "name_provenance": asset.name.provenance.value,
-        "name_rule": asset.name.rule,
-        "name_basis": asset.name.basis,
-        "position": POSITION_RECORDED if position else POSITION_NOT_RECORDED,
-        "position_provenance": position.provenance.value if position else None,
-        "position_rule": position.rule if position else None,
-        "position_basis": position.basis if position else None,
-    }
-
-
-def _asset_trace(asset: Asset, fields: dict[str, Any]) -> AssetTrace:
-    """One asset as the trace lists it, with the provenance fields worked out for it."""
-    return AssetTrace(
-        asset_id=asset.id,
-        type_id=asset.type_id,
-        space_id=asset.space_id,
-        source=asset.source,
-        name=asset.name.value,
-        **fields,
-    )
-
-
-def _one_asset_trace(venue: Venue, asset: Asset) -> AssetsTrace:
-    """The trace of an answer about one asset: itself, and how much its space holds."""
-    fields = _asset_provenance(asset)
-    return AssetsTrace(
-        scope=asset.space_id,
-        types=[asset.type_id],
-        grouped_by=None,
-        touched=1,
-        installed_in_scope=len(venue.assets_under.get(asset.space_id, [])),
-        listed=[_asset_trace(asset, fields)],
-        classes=[ProvenanceClass(**fields, assets=1)],
-        rows=[],
-    )
-
-
-def _assets_trace(venue: Venue, last: StepResult, answer: Answer) -> AssetsTrace:
-    found = last.found
-    assert found is not None
-    assets = [venue.assets[i] for i in found.ids]
-    provenance = [_asset_provenance(asset) for asset in assets]
-    classes = Counter(tuple(fields.items()) for fields in provenance)
-    return AssetsTrace(
-        scope=found.scope,
-        types=list(found.types) if found.types is not None else None,
-        grouped_by=last.aggregation.by if last.aggregation else None,
-        touched=len(assets),
-        installed_in_scope=found.installed,
-        listed=[
-            _asset_trace(asset, fields)
-            for asset, fields in list(zip(assets, provenance, strict=True))[:TRACE_ASSET_CAP]
-        ],
-        classes=[ProvenanceClass(**dict(key), assets=count) for key, count in classes.items()],
-        rows=[
-            CountRow(
-                space_id=row.space_id,
-                type_id=row.type_id,
-                label=row.label,
-                sourced=row.tally.sourced,
-                generated=row.tally.generated,
-                recorded=row.recorded,
-                rank=row.rank,
-            )
-            for row in answer.rows
-        ],
-        ungrouped=last.aggregation.ungrouped if last.aggregation else 0,
-        filters=attributes.trace(found.filters),
-    )

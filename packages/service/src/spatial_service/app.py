@@ -49,7 +49,8 @@ from spatial_service.metrics import Metrics
 from spatial_service.retrieval import Documents, Retriever
 from spatial_service.store import PostgresStore, Store
 from spatial_service.tree import NODE_CAP
-from spatial_service.turn import Turn, TurnKind, TurnRefused, TurnRequest, TurnService
+from spatial_service.turn import TurnService
+from spatial_service.turn_models import Turn, TurnKind, TurnRefused, TurnRequest
 from spatial_service.venue_facts import VenueFacts
 
 SEMANTIC_RANKER_ENV = "SPATIAL_SEMANTIC_RANKER"

@@ -34,7 +34,7 @@ from collections.abc import Mapping
 from opentelemetry.metrics import MeterProvider, NoOpMeterProvider
 
 from spatial_service.recovery import RecoveryOutcome
-from spatial_service.turn import AbstentionCause, Turn, TurnKind
+from spatial_service.turn_models import AbstentionCause, Turn, TurnKind
 
 LABELS = ("shape", "persona", "turn_kind", "snapshot")
 UNKNOWN_SHAPE = "unknown"
