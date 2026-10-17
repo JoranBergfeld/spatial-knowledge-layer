@@ -43,7 +43,9 @@ BANNED = ("never",)
 RULES = """
 "filters" lists what the assets counted were tested for. Each "condition" is a
 placeholder that fills in as the test in words: name every one of them, so the count
-reads as the count of assets it holds for. "not_recorded", where present, are assets
+reads as the count of assets it holds for. Write the condition's placeholder in the
+text where the test goes, and never word the test yourself, not even to say what is
+not recorded. "not_recorded", where present, are assets
 in scope that carry no value to test: "counts" is how many and "as" fills in as what
 they lack. Say that it is not recorded for them and nothing more. It is a gap in the
 data. Do not say they passed or failed the test, that something was never done, or

@@ -46,6 +46,7 @@ a note for the trace, where anything wrong with a fact still rejects the lot:
     it says what the documents do not say ("the documents say nothing about X").
         Nothing can entail an absence. With no passage that answers, there is
         no document answer, and the turn abstains (turn.py)
+    it writes a digit. A digit anywhere else still rejects the lot
 
 Whether the passage backs what the segment says is not checked here. That is
 entailment, the backend's half, which is why each segment carries the full text
@@ -813,8 +814,13 @@ def ground(
                 dropped[number] = failures
         reasons += [f"segment {number} {why}" for why in _jammed(segment.text, by_ref)]
         # Placeholders carry digits of their own ({f1}); everything around them may not.
+        # A passage segment with one goes alone: it is the model copying the passage's
+        # numbers ("pH 700"), and the facts it would take down with it are fine.
         if any(character.isdigit() for character in _PLACEHOLDER.sub("", segment.text)):
-            reasons.append(f"segment {number} contains a digit")
+            if by_passage and any(_PASSAGE_REF.fullmatch(ref) for ref in segment.cites):
+                dropped.setdefault(number, []).append("writes a digit")
+            else:
+                reasons.append(f"segment {number} contains a digit")
         used = set(_PLACEHOLDER.findall(segment.text))
         named |= used
         for ref in sorted((used | set(segment.cites)) - by_ref.keys()):
