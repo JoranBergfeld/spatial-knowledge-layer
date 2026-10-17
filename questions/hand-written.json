@@ -778,6 +778,251 @@
         "kind": "abstention",
         "reason": "out-of-scope"
       }
+    },
+    {
+      "id": "boilers-in-clinic",
+      "persona": "maintenance",
+      "shape": "asset-containment",
+      "question": "How many boilers are there in the clinic?",
+      "expected": {
+        "kind": "answer",
+        "ids": [
+          "asset:boiler-b-1"
+        ],
+        "total": 1
+      }
+    },
+    {
+      "id": "fountains-this-building",
+      "persona": "visitor",
+      "shape": "asset-containment",
+      "question": "Are there drinking fountains anywhere in this building?",
+      "expected": {
+        "kind": "answer",
+        "ids": [
+          "asset:drinkingfountain-01",
+          "asset:drinkingfountain-02",
+          "asset:drinkingfountain-03",
+          "asset:drinkingfountain-04"
+        ],
+        "total": 4
+      }
+    },
+    {
+      "id": "ahus-whole-place",
+      "persona": "maintenance",
+      "shape": "asset-containment",
+      "question": "How many AHUs does the whole place have?",
+      "expected": {
+        "kind": "answer",
+        "ids": [
+          "asset:ahu-1",
+          "asset:ahu-2"
+        ],
+        "total": 2
+      }
+    },
+    {
+      "id": "central-mech-spelled-out",
+      "persona": "maintenance",
+      "shape": "place-location",
+      "question": "Where is the central mechanical room?",
+      "expected": {
+        "kind": "answer",
+        "ids": [
+          "space:1e15"
+        ],
+        "within": [
+          "building:pn-0001",
+          "floor:first-floor"
+        ]
+      }
+    },
+    {
+      "id": "central-waiting-room",
+      "persona": "visitor",
+      "shape": "place-location",
+      "question": "Where's the central waiting room?",
+      "expected": {
+        "kind": "answer",
+        "ids": [
+          "space:1ac1"
+        ],
+        "within": [
+          "building:pn-0001",
+          "floor:first-floor"
+        ]
+      }
+    },
+    {
+      "id": "dental-waiting-room",
+      "persona": "visitor",
+      "shape": "place-location",
+      "question": "Where is the dental waiting room?",
+      "expected": {
+        "kind": "clarification",
+        "candidates": [
+          "space:2a10",
+          "space:2a11"
+        ],
+        "matched": 2
+      }
+    },
+    {
+      "id": "electrical-closet",
+      "persona": "maintenance",
+      "shape": "place-location",
+      "question": "Where's the electrical closet?",
+      "expected": {
+        "kind": "answer",
+        "ids": [
+          "space:1c11"
+        ],
+        "within": [
+          "building:pn-0001",
+          "floor:first-floor"
+        ]
+      }
+    },
+    {
+      "id": "air-handlers",
+      "persona": "maintenance",
+      "shape": "asset-containment",
+      "question": "How many air handlers are there?",
+      "expected": {
+        "kind": "answer",
+        "ids": [
+          "asset:ahu-1",
+          "asset:ahu-2"
+        ],
+        "total": 2
+      }
+    },
+    {
+      "id": "vavs-first-floor-control",
+      "persona": "maintenance",
+      "shape": "asset-containment",
+      "question": "How many VAVs are on the first floor?",
+      "expected": {
+        "kind": "answer",
+        "total": 75
+      }
+    },
+    {
+      "id": "water-heater",
+      "persona": "maintenance",
+      "shape": "asset-containment",
+      "question": "Where's the water heater?",
+      "expected": {
+        "kind": "answer",
+        "ids": [
+          "asset:water-heater-01"
+        ],
+        "total": 1
+      }
+    },
+    {
+      "id": "expansion-tanks",
+      "persona": "maintenance",
+      "shape": "asset-containment",
+      "question": "Where are the expansion tanks?",
+      "expected": {
+        "kind": "answer",
+        "ids": [
+          "asset:expansion-tank-et-1",
+          "asset:expansion-tank-et-2"
+        ],
+        "total": 2
+      }
+    },
+    {
+      "id": "find-extinguisher",
+      "persona": "visitor",
+      "shape": "asset-containment",
+      "question": "Where can I find a fire extinguisher?",
+      "expected": {
+        "kind": "answer",
+        "ids": [
+          "asset:fire-extinguisher-cabinet-305-x-215-x-813mm-305-x-215-x-813mm-350693",
+          "asset:fire-extinguisher-cabinet-305-x-215-x-813mm-305-x-215-x-813mm-350968",
+          "asset:fire-extinguisher-cabinet-305-x-215-x-813mm-305-x-215-x-813mm-351171",
+          "asset:fire-extinguisher-cabinet-305-x-215-x-813mm-305-x-215-x-813mm-351256",
+          "asset:fire-extinguisher-cabinet-305-x-215-x-813mm-305-x-215-x-813mm-363794",
+          "asset:fire-extinguisher-cabinet-305-x-215-x-813mm-305-x-215-x-813mm-387916",
+          "asset:fire-extinguisher-cabinet-305-x-215-x-813mm-305-x-215-x-813mm-427576"
+        ],
+        "total": 7
+      }
+    },
+    {
+      "id": "all-panelboards",
+      "persona": "maintenance",
+      "shape": "asset-containment",
+      "question": "Where are all the panelboards?",
+      "expected": {
+        "kind": "answer",
+        "total": 28
+      }
+    },
+    {
+      "id": "vavs-first-or-second",
+      "persona": "maintenance",
+      "shape": "asset-aggregation",
+      "question": "Does the first floor or the second floor have more VAVs?",
+      "expected": {
+        "kind": "answer",
+        "most": [
+          "floor:first-floor"
+        ],
+        "total": 133
+      }
+    },
+    {
+      "id": "ground-floor-contents",
+      "persona": "visitor",
+      "shape": "asset-containment",
+      "question": "What's on the ground floor?",
+      "expected": {
+        "kind": "answer",
+        "total": 649
+      }
+    },
+    {
+      "id": "upstairs-most-lights",
+      "persona": "maintenance",
+      "shape": "asset-aggregation",
+      "question": "Which room upstairs has the most light fixtures?",
+      "expected": {
+        "kind": "answer",
+        "most": [
+          "space:2d05"
+        ],
+        "total": 368
+      }
+    },
+    {
+      "id": "roof-warranty",
+      "persona": "visitor",
+      "shape": "place-document",
+      "question": "Where can I find the warranty for the roof membrane?",
+      "expected": {
+        "kind": "answer",
+        "documents": [
+          "doc:v1-sd-07-warranty-roofmembrane-pdf"
+        ]
+      }
+    },
+    {
+      "id": "pump-pm-schedule",
+      "persona": "maintenance",
+      "shape": "asset-document",
+      "question": "What's the preventive maintenance schedule for the pumps?",
+      "expected": {
+        "kind": "answer",
+        "documents": [
+          "doc:v2-sd-10-preventivemaintenance-pumps-pdf"
+        ]
+      }
     }
   ]
 }
