@@ -1290,7 +1290,7 @@ Three files in `--out`:
   so do not publish it.
 - `segments-<id>.jsonl`: every segment the NLI model scored, one a line, with the full
   text of each passage it cites, the score against each, the best score and whether it
-  was kept. It is there so a person can label segments and check the NLI model by hand.
+  was kept. It is there so segments can be labelled and the NLI model checked against them.
   Private: it holds passage text of every clearance class, it is written readable by
   the owner only, and none of it goes into the eval snapshot or the metrics.
 - `eval-snapshot.json` (`spatial-eval@1`): what the site reads. Only written when the run
@@ -1421,9 +1421,13 @@ Rough here:
 - Tool correctness leans on the trace. A model that plans differently from the scripted
   one and still answers right could be marked wrong on a detail of the trace. Not seen,
   since no real model has been run.
-- NLI precision is to be re-checked by hand on about 50 real composed segments.
-  `bench label` does the asking and the sums (below). The labelling itself is still to
-  do, and it has to be a person.
+- NLI precision, checked on 45 real composed segments from runs 2026-10-17-3ddaadac and
+  2026-10-17-6f60db21: 97.6% (41 of the 42 it kept are faithful, 95% CI 87.7% to 99.6%).
+  So no LLM judge for now. The one bad keep is true somewhere in the document, just not
+  in the passage it cites, and the model let it through at 0.98. It also dropped 3
+  faithful ones, two of them because the claim needs two passages together and it scores
+  one at a time. About a third of the segments are trivial (`"First Floor Plan"`), which
+  flatters the figure a bit.
 - Timing leaks are listed as unmeasured and that is all.
 
 ## Develop
