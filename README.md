@@ -404,8 +404,9 @@ Things that are rough or just not done yet:
 ## The service
 
 One operation, `POST /turn`, plus `GET /venue` for what a caller needs before it asks
-anything (below) and `GET /eval` for the last evaluation run's figures (see "Evaluation
-runs and the eval snapshot"). `POST /turn` takes a persona, a snapshot
+anything (below), `GET /eval` for the last evaluation run's figures (see "Evaluation
+runs and the eval snapshot") and two probes, `GET /health/live` and `GET /health/ready`
+(see "Health probes"). `POST /turn` takes a persona, a snapshot
 (none means the current one), the conversation's prior state and a question, and returns
 a turn:
 
@@ -461,6 +462,26 @@ When there is nothing to say it answers 503 with a refusal body, the same shape 
 current, `{"detail": "...", "code": "store-unreachable"}` when the database cannot be
 connected to. The code is what to act on. The detail is for reading and never holds the
 database URL.
+
+### Health probes
+
+Split the way Spring Boot's actuator splits them, under different paths. Probes read the
+status code, the body is for people.
+
+- `GET /health/live` always answers `200 {"status": "UP"}`. It touches no store, no model
+  and no file, so it is the one to point a container healthcheck or autoupdate at.
+  `/venue` would do for that only once a snapshot is promoted, which is the whole reason
+  these exist.
+- `GET /health/ready` answers `200 {"status": "UP"}` when the store answers and a
+  snapshot is current. Otherwise 503 with `/venue`'s codes:
+  `{"status": "OUT_OF_SERVICE", "code": "no-current-snapshot", "detail": "..."}` when
+  nothing is promoted yet (nothing is broken, there's just nothing to serve), and
+  `{"status": "DOWN", "code": "store-unreachable", "detail": "..."}` when Postgres
+  doesn't answer. It looks the current snapshot up on every request, so a promote flips
+  it to UP without a restart.
+
+Neither calls Azure OpenAI or moves a metric. Plain `application/json`, no auth, same as
+the rest of the service.
 
 ### Metrics
 

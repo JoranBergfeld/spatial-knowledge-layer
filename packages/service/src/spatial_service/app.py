@@ -6,6 +6,9 @@
                  share, the personas and the route constants (venue_facts.py)
     GET /eval    the eval snapshot the last evaluation run wrote, or the one empty
                  answer when there has been no run (evaluation.py)
+    GET /health/live    200 while the process answers HTTP, touching nothing
+    GET /health/ready   200 when the store answers and a snapshot is current, 503
+                        otherwise (health.py)
 
 Configuration is from the environment:
 
@@ -43,7 +46,7 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
 from spatial_service import evaluation as eval_contract
-from spatial_service import metrics, search, venue_facts
+from spatial_service import health, metrics, search, venue_facts
 from spatial_service.llm import Deployment, Llm
 from spatial_service.metrics import Metrics
 from spatial_service.retrieval import Documents, Retriever
@@ -185,6 +188,15 @@ def create_app(
         except eval_contract.EvalSnapshotError as error:
             content = {"detail": str(error), "code": "eval-snapshot-unreadable"}
             return JSONResponse(status_code=500, content=content)
+
+    @app.get("/health/live")
+    def live() -> JSONResponse:
+        return JSONResponse(content=health.UP)
+
+    @app.get("/health/ready")
+    def ready() -> JSONResponse:
+        status, content = health.ready(store)
+        return JSONResponse(status_code=status, content=content)
 
     return app
 
