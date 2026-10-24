@@ -7,6 +7,7 @@ scripted model. The search and the embedder are stand-ins too.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -15,7 +16,8 @@ from fastapi.testclient import TestClient
 import fixture
 import papers
 from papers import ask, manual, page, quoting, retrieved, saying, texts
-from spatial_core.search import Hit, Query
+from spatial_core.records import DocumentKind
+from spatial_core.search import Hit, IndexEntry, LocalIndex, Query
 from spatial_service.app import create_app
 from spatial_service.retrieval import RetrievalUnavailable, Retriever
 
@@ -346,6 +348,49 @@ def test_a_place_page_is_quoted_in_translation_and_links_the_original() -> None:
     assert row["document_date"] == "2012-05-31"
     assert row["space_ids"] == [papers.AUDIMAX]
     assert turn["trace"]["documents"]["anchored_by"] == "places"
+
+
+def test_a_room_gets_its_buildings_page_and_nothing_further_up(tmp_path: Path) -> None:
+    # KIT puts a hall's page on its building. Asked about the hall, that page is
+    # the one that says anything. The campus's page is too far up to be about it.
+    page_kind = DocumentKind.ACCESSIBILITY_PAGE
+    above = [
+        papers._chunk(
+            "page:informatik",
+            page_kind,
+            "Informatik",
+            "Lift at the north door.",
+            spaces=("osm:way/100",),
+        ),
+        papers._chunk(
+            "page:campus", page_kind, "Mini Campus", "Lift at the gate.", spaces=("site:mini",)
+        ),
+    ]
+    local = LocalIndex(tmp_path)
+    local.create(papers.INDEX, papers.DIMENSIONS)
+    local.upload(
+        papers.INDEX,
+        [
+            *papers.entries(),
+            *(IndexEntry(chunk=c, vector=papers.vector(f"{c.title}\n\n{c.text}")) for c in above),
+        ],
+    )
+    with_pages = Retriever(local, papers.Embedder())
+
+    def documents_for(persona: str, place: str) -> set[str]:
+        turn = ask(persona, "?", page("lift", place), retriever=with_pages)
+        return set(retrieved(turn))
+
+    # Up to 50.34, through its floor. Never sideways into the Serverraum's page.
+    audimax = documents_for("maintenance", "Audimax")
+    assert {"page:audimax#0", "page:informatik#0"} <= audimax
+    assert not {"page:server#0", "page:campus#0"} & audimax
+    # Süd is in 30.10, which has no page of its own.
+    assert documents_for("visitor", "Seminarraum Süd") == {"page:sued#0"}
+    # A building goes no further up than itself.
+    building = documents_for("visitor", "50.34")
+    assert "page:informatik#0" in building
+    assert "page:campus#0" not in building
 
 
 def test_a_source_that_was_offline_at_build_is_cited_unlinked_with_that_date() -> None:

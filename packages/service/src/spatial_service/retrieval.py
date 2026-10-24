@@ -5,7 +5,8 @@ snapshot's index with hybrid ranking. Like every tool it is handed a venue cut
 down to one persona, and the anchors are built from that venue alone:
 
     from a place      the place and every visible space under it, the visible
-                      assets under it, and the types of those assets
+                      assets under it, the types of those assets, and the spaces
+                      above it up to its building
     from assets       those assets and their types
     from one asset    the same, for the one a follow-up points at: it and its type
 
@@ -51,10 +52,10 @@ from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict
 
-from spatial_core.records import PERSONAS, Chunk, ChunkRole, Persona
+from spatial_core.records import PERSONAS, Chunk, ChunkRole, Persona, Space
 from spatial_core.search import RRF_K, Filter, Hit, Query, SearchQueries
 from spatial_service.assets import ScopeResult
-from spatial_service.places import Venue
+from spatial_service.places import BUILDING, Venue, tier
 
 # How many passages a retrieval returns.
 TOP = 5
@@ -86,7 +87,7 @@ class Anchors:
 
 
 def anchors_of_place(venue: Venue, place: str) -> Anchors:
-    """A place as anchors: itself and what the persona can see under it."""
+    """A place as anchors: itself, what the persona can see under it, and up to its building."""
     under = venue.assets_under.get(place, [])
     return Anchors(
         by=ANCHORED_BY_PLACE,
@@ -95,10 +96,24 @@ def anchors_of_place(venue: Venue, place: str) -> Anchors:
             s.id
             for s in venue.spaces.values()
             if s.id == place or any(a.id == place for a in s.ancestor_path)
-        ),
+        )
+        | _up_to_building(venue, venue.spaces[place]),
         asset_ids=frozenset(asset.id for asset in under),
         asset_type_ids=frozenset(asset.type_id for asset in under) & venue.asset_types.keys(),
     )
+
+
+def _up_to_building(venue: Venue, space: Space) -> frozenset[str]:
+    """The spaces between a place and its building, the building included. None past it.
+
+    Only the spaces themselves, not what is in them: a building's page, yes, but not
+    the manual of every light on the other floors.
+    """
+    above = venue.ancestors(space)
+    if not any(tier(a) == BUILDING for a in above):
+        return frozenset()
+    upto = next(i for i, a in enumerate(above) if tier(a) == BUILDING)
+    return frozenset(a.id for a in above[: upto + 1])
 
 
 def anchors_of_assets(venue: Venue, found: ScopeResult) -> Anchors:

@@ -902,7 +902,15 @@ The anchors are ids the persona can see, and nothing else:
 | --- | --- |
 | assets | the assets the step found, and the types of those assets |
 | one asset | that asset and its type |
-| a place | the place and every visible space under it, the visible assets under it, and their types |
+| a place | the place and every visible space under it, the visible assets under it, and their types. Plus the spaces above it, up to and including its building |
+
+The bit going up is because of KIT. Its page for the Audimax is anchored to the building,
+30.95, and "Audimax" resolves to the hall inside it, so asking whether the Audimax is
+step-free found nothing. Now a room gets its floor's and its building's documents too. It
+stops at the building, so the campus's pages stay out of every room question, and it's
+the spaces only: the building's page, not the manual of every light on the other floors.
+It does widen the net for every room question in a building with pages. Ranking has to
+sort that out, and I haven't measured whether it does.
 
 The filter the index gets is: clearance class within the persona's, and at least one of
 the chunk's anchors among those ids. The spec used to word it as three clauses

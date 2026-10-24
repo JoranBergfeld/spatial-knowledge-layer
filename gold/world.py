@@ -207,8 +207,15 @@ class View:
         )
 
     def anchors_of_place(self, space_id: str) -> set[tuple[str, str]]:
-        """A place, what is visible under it, and the types of the assets there."""
+        """A place, what is visible under it, the types of the assets there, and up to its building.
+
+        Upwards it is the spaces only, the building included and nothing past it.
+        """
         found = {("space", space_id), *(("space", inner) for inner in self.inside(space_id))}
+        path = self.world.path(space_id)
+        buildings = [i for i, up in enumerate(path) if self.world.spaces[up].tier == "building"]
+        if buildings:
+            found |= {("space", up) for up in path[buildings[-1] :] if up in self.spaces}
         return found | self.anchors_of_assets(self.under.get(space_id, []))
 
     def anchors_of_assets(self, assets: list[Asset]) -> set[tuple[str, str]]:

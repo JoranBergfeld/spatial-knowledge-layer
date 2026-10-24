@@ -279,6 +279,14 @@ def test_a_document_is_reachable_only_through_what_the_persona_sees(
     ]
 
 
+def test_a_room_reaches_its_buildings_documents_and_no_further(everything: QuestionSet) -> None:
+    # The closeout hangs on Harbour Clinic. Asked about a room in it, it is in reach,
+    # for whoever may read it at all. The visitor may not.
+    reception = "What does Reception Finish Schedule say about RECEPTION?"
+    assert "doc:closeout-pdf" in (expected(everything, reception, "maintenance").retrievable or [])
+    assert "doc:closeout-pdf" not in (expected(everything, reception, "visitor").retrievable or [])
+
+
 def test_a_document_with_no_ocr_text_is_not_in_gold(everything: QuestionSet) -> None:
     assert everything.world["documents"] == 12
     assert not any("Lost Scan" in question.question for question in everything.questions)
