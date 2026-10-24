@@ -1,13 +1,17 @@
-"""Ingestion's side of the search index: writing a snapshot's chunks to Azure AI Search.
+"""Ingestion's side of the search index: writing a snapshot's chunks to Postgres or Azure.
 
-One index per snapshot, hybrid: the text and title are searchable for BM25, the
-vector field takes the embedding, and the service fuses the two with RRF. The
-anchor ids, the ancestor ids and the clearance class are filterable, since the
-retrieval filter is made of exactly those.
+One index per snapshot, hybrid: the text and title are searchable by keyword,
+a vector column or field takes the embedding, and the service fuses the two with
+RRF. The anchor ids, the ancestor ids and the clearance class are filterable,
+since the retrieval filter is made of exactly those.
+
+In Postgres an index is a table in the search schema of the load's own database,
+next to the snapshot it belongs to (ddl/search.sql in spatial_core). That needs
+pgvector, created once by the superuser. Load never creates it.
 
 Which index load writes to comes from the environment: an Azure AI Search
 service when AZURE_SEARCH_ENDPOINT is set, else the stand-in directory named by
-SPATIAL_SEARCH_DIR.
+SPATIAL_SEARCH_DIR, else Postgres.
 """
 
 from __future__ import annotations
@@ -20,6 +24,9 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+import psycopg
+from psycopg import sql
+from psycopg.rows import dict_row
 
 from spatial_core.records import Chunk
 from spatial_core.search import (
@@ -29,6 +36,7 @@ from spatial_core.search import (
     LocalIndex,
     SearchIndex,
 )
+from spatial_core.stores import READER_ROLE, SEARCH_SCHEMA, ddl
 
 ENDPOINT_ENV = "AZURE_SEARCH_ENDPOINT"
 API_KEY_ENV = "AZURE_SEARCH_API_KEY"
@@ -212,8 +220,96 @@ class AzureSearchIndex:
         return self._send("GET", f"/indexes/{name}", missing_is_fine=True).is_success
 
 
-def from_env(env: Mapping[str, str] | None = None) -> SearchIndex:
-    """The index store load writes to, from the environment."""
+class PostgresSearchIndex:
+    """Each index a table, search.<name>, that the service's reader role can SELECT."""
+
+    def __init__(self, database_url: str) -> None:
+        self._url = database_url
+
+    def _connect(self) -> psycopg.Connection[dict[str, Any]]:
+        try:
+            return psycopg.connect(self._url, autocommit=True, row_factory=dict_row)
+        except psycopg.Error as error:
+            raise SearchError(f"the search index's database cannot be reached: {error}") from error
+
+    @staticmethod
+    def _table(name: str) -> sql.Identifier:
+        return sql.Identifier(SEARCH_SCHEMA, name)
+
+    def create(self, name: str, dimensions: int) -> None:
+        definition = sql.SQL(ddl("search")).format(
+            reader=sql.Identifier(READER_ROLE),
+            table=sql.Identifier(name),
+            dimensions=sql.Literal(int(dimensions)),
+        )
+        with self._connect() as conn:
+            if conn.execute("SELECT FROM pg_extension WHERE extname = 'vector'").fetchone() is None:
+                raise SearchError(
+                    "this database has no vector extension. Its superuser creates it once"
+                    " (CREATE EXTENSION vector); load does not"
+                )
+            try:
+                with conn.transaction():
+                    conn.execute(sql.SQL("DROP TABLE IF EXISTS {}").format(self._table(name)))
+                    conn.execute(definition)
+            except psycopg.Error as error:
+                raise SearchError(f"could not create the index {name}: {error}") from error
+
+    def upload(self, name: str, entries: Sequence[IndexEntry]) -> None:
+        columns = [*Chunk.model_fields, "embedding"]
+        query = sql.SQL(
+            "INSERT INTO {} ({}) VALUES ({}, %s::vector) ON CONFLICT (id) DO UPDATE SET {}"
+        ).format(
+            self._table(name),
+            sql.SQL(", ").join(sql.Identifier(column) for column in columns),
+            sql.SQL(", ").join(sql.Placeholder() for _ in Chunk.model_fields),
+            sql.SQL(", ").join(
+                sql.SQL("{0} = excluded.{0}").format(sql.Identifier(column))
+                for column in columns[1:]
+            ),
+        )
+        rows = [
+            [
+                *entry.chunk.model_dump(mode="json").values(),
+                # pgvector's text form: [0.1,0.2,...]. Saves a dependency on its Python package.
+                "[" + ",".join(repr(float(x)) for x in entry.vector) + "]",
+            ]
+            for entry in entries
+        ]
+        with self._connect() as conn:
+            try:
+                with conn.transaction(), conn.cursor() as cursor:
+                    cursor.executemany(query, rows)
+            except psycopg.Error as error:
+                raise SearchError(f"{name} refused the chunks: {error}") from error
+
+    def chunks(self, name: str) -> list[Chunk]:
+        query = sql.SQL("SELECT {} FROM {} ORDER BY id").format(
+            sql.SQL(", ").join(sql.Identifier(field) for field in Chunk.model_fields),
+            self._table(name),
+        )
+        with self._connect() as conn:
+            try:
+                rows = conn.execute(query).fetchall()
+            except psycopg.Error as error:
+                raise SearchError(f"could not read the index {name}: {error}") from error
+        return [Chunk.model_validate(row) for row in rows]
+
+    def delete(self, name: str) -> None:
+        with self._connect() as conn:
+            conn.execute(sql.SQL("DROP TABLE IF EXISTS {}").format(self._table(name)))
+
+    def exists(self, name: str) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT to_regclass(%s) IS NOT NULL AS there",
+                (self._table(name).as_string(conn),),
+            ).fetchone()
+        return bool(row and row["there"])
+
+
+def from_env(database_url: str, env: Mapping[str, str] | None = None) -> SearchIndex:
+    """The index store load writes to, from the environment. Postgres unless told otherwise."""
     env = os.environ if env is None else env
     if env.get(ENDPOINT_ENV):
         if not env.get(API_KEY_ENV):
@@ -221,7 +317,4 @@ def from_env(env: Mapping[str, str] | None = None) -> SearchIndex:
         return AzureSearchIndex(endpoint=env[ENDPOINT_ENV], api_key=env[API_KEY_ENV])
     if env.get(SEARCH_DIR_ENV):
         return LocalIndex(Path(env[SEARCH_DIR_ENV]))
-    raise SearchError(
-        f"load writes a search index: set {ENDPOINT_ENV} and {API_KEY_ENV}, "
-        f"or {SEARCH_DIR_ENV} for the stand-in"
-    )
+    return PostgresSearchIndex(database_url)

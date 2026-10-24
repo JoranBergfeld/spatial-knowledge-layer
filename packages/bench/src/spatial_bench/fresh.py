@@ -64,7 +64,7 @@ def report(
     """Ask, and say how it went. Returns how many turns did not match gold."""
     asked = questions.load(gold)
     if index is None:
-        index = search.from_env(os.environ)
+        index = search.from_env(os.environ, database_url)
     # The framework warns on every turn that a scripted client calls no functions.
     logging.getLogger("agent_framework").setLevel(logging.ERROR)
     verdicts = ask(asked, PostgresStore(database_url), snapshot, index)

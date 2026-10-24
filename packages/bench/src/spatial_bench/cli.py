@@ -209,24 +209,23 @@ def wiring_from_env(compare_ranker: bool) -> Wiring:
 
     try:
         settings = Settings.from_env()
-        index = search.from_env(os.environ)
+        index = search.from_env(os.environ, settings.database_url)
     except (ConfigError, ValueError) as error:
         raise RunError(str(error)) from error
     if not os.environ.get(MODEL_DIR_ENV):
         raise RunError(f"set {MODEL_DIR_ENV} to the directory with the site's NLI model")
-    if compare_ranker and (index is None or settings.semantic_ranker):
-        raise RunError("--compare-ranker needs an index, and the ranker off for the run itself")
-    documents = reranked = None
-    if index is not None:
-        embedder = search.AzureEmbedder(
-            endpoint=settings.endpoint,
-            api_key=settings.api_key,
-            api_version=settings.api_version,
-            timeout_seconds=settings.timeout_seconds,
+    if compare_ranker and (not isinstance(index, search.AzureSearch) or settings.semantic_ranker):
+        raise RunError(
+            "--compare-ranker needs an Azure index, and the ranker off for the run itself"
         )
-        documents = Retriever(index, embedder, semantic_ranker=settings.semantic_ranker)
-        if compare_ranker:
-            reranked = Retriever(index, embedder, semantic_ranker=True)
+    embedder = search.AzureEmbedder(
+        endpoint=settings.endpoint,
+        api_key=settings.api_key,
+        api_version=settings.api_version,
+        timeout_seconds=settings.timeout_seconds,
+    )
+    documents = Retriever(index, embedder, semantic_ranker=settings.semantic_ranker)
+    reranked = Retriever(index, embedder, semantic_ranker=True) if compare_ranker else None
     return Wiring(
         store=PostgresStore(settings.database_url),
         llm=azure_llm(settings),

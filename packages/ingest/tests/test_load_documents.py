@@ -433,19 +433,22 @@ def test_load_reports_the_link_check_and_an_offline_source_does_not_block(
     assert "/halls/gone.html (hall:gone)" in log.read_text()
 
 
-def test_load_refuses_to_run_with_no_search_index_configured(
+def test_with_no_index_named_load_writes_to_postgres_and_never_creates_pgvector(
     bundle: Bundle,
     database_url: str,
     monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     built = bundle(C)
     monkeypatch.delenv("SPATIAL_SEARCH_DIR")
 
+    # This database has no vector extension, and load is not the one to make it.
     assert ingest("load", built, database_url) == 1
 
-    assert "AZURE_SEARCH_ENDPOINT" in capsys.readouterr().err
-    assert query(database_url, "SELECT count(*) FROM pg_namespace WHERE nspname = 'control'") == [
+    assert "PostgresSearchIndex" in caplog.text
+    assert "no vector extension" in caplog.text
+    assert query(database_url, "SELECT status FROM control.snapshots") == [("failed",)]
+    assert query(database_url, "SELECT count(*) FROM pg_extension WHERE extname = 'vector'") == [
         (0,)
     ]
 

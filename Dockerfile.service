@@ -1,0 +1,50 @@
+# syntax=docker/dockerfile:1
+
+# Image for the service. It holds core and the service, and nothing of ingestion.
+#
+#     docker run --rm -p 8000:8000 \
+#         -e SPATIAL_SERVICE_DATABASE_URL \
+#         -e AZURE_OPENAI_ENDPOINT -e AZURE_OPENAI_API_KEY \
+#         -e SPATIAL_PLANNING_DEPLOYMENT -e SPATIAL_COMPOSITION_DEPLOYMENT \
+#         <image>
+#
+# The search index is the tables in the same database unless the environment says
+# otherwise (see packages/service/src/spatial_service/app.py for the full list).
+#
+# Built and pushed to GHCR by .github/workflows/publish-service-image.yml.
+FROM python:3.12-slim
+
+# uv ships as a static binary in its own image. Pinned to the 0.11 line we develop against.
+COPY --from=ghcr.io/astral-sh/uv:0.11 /uv /uvx /bin/
+
+WORKDIR /app
+
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=0
+
+# Dependencies first, so this layer survives source-only edits.
+COPY pyproject.toml uv.lock ./
+COPY packages/core/pyproject.toml packages/core/pyproject.toml
+COPY packages/service/pyproject.toml packages/service/pyproject.toml
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --no-install-workspace --package spatial-service
+
+COPY packages/core packages/core
+COPY packages/service packages/service
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --no-editable --package spatial-service
+
+# The venv's python comes first on the path, so a healthcheck that runs
+# `python -c "import urllib.request; ..."` gets the same one the service does.
+ENV PATH="/app/.venv/bin:$PATH" \
+    SPATIAL_SERVICE_HOST=0.0.0.0 \
+    SPATIAL_SERVICE_PORT=8000
+
+# It answers HTTP from the network, so not as root.
+RUN useradd --system --no-create-home spatial
+USER spatial
+
+EXPOSE 8000
+
+ENTRYPOINT ["spatial-service"]

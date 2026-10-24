@@ -2,7 +2,7 @@ name: publish-ingest-image
 
 # Build the ingestion image and push it to GHCR on every push to main.
 # Mirrors publish-image.yml in JoranBergfeld/azure-documentation-ragas-pipeline.
-# The service gets an image of its own once it exists.
+# The service has its own, publish-service-image.yml.
 on:
   push:
     branches: [main]

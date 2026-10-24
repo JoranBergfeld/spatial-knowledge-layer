@@ -399,9 +399,12 @@ def test_the_manifest_records_ingestion_spend(bundle: Path, openai: OpenAI) -> N
     assert by_purpose["translation"]["output_tokens"] == (
         len(prose.GAEDE_TRANSLATED.split()) + len(prose.BAU_ENGLISH.split())
     )
-    # No row in the rate table for the translation deployment: tokens, no cost.
-    assert by_purpose["translation"]["cost_usd"] is None
-    assert spend["unpriced"] == [prose.TRANSLATION_DEPLOYMENT]
+    # 0.75 in and 4.50 out a million, as the rate table has it.
+    translation = by_purpose["translation"]
+    assert translation["cost_usd"] == round(
+        (translation["input_tokens"] * 0.75 + translation["output_tokens"] * 4.5) / 1_000_000, 6
+    )
+    assert spend["unpriced"] == []
 
     # Eight passages and seven summaries.
     assert by_purpose["embedding"]["calls"] == 15
@@ -409,7 +412,10 @@ def test_the_manifest_records_ingestion_spend(bundle: Path, openai: OpenAI) -> N
     # 0.02 dollars a million tokens, as the rate table has it.
     assert by_purpose["embedding"]["rate"]["usd_per_million_input"] == 0.02
     assert by_purpose["embedding"]["cost_usd"] == round(embedded * 0.02 / 1_000_000, 6)
-    assert spend["total_usd"] == by_purpose["embedding"]["cost_usd"]
+    # The total is rounded once, the calls each, so they can differ in the last place.
+    assert spend["total_usd"] == pytest.approx(
+        sum(call["cost_usd"] for call in spend["calls"]), abs=1e-5
+    )
 
 
 def test_the_manifest_pins_the_corpus_and_counts_the_parts(bundle: Path, corpus_file: Path) -> None:

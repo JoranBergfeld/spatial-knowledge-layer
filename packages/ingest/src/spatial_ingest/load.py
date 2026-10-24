@@ -318,10 +318,11 @@ def load(*, bundle: Path, database_url: str, index: SearchIndex | None = None) -
     name = index_name(manifest["venue"], snapshot)
     if index is None:
         try:
-            index = search.from_env()
+            index = search.from_env(database_url)
         except search.SearchError as error:
             raise LoadError(str(error)) from error
     log.info("loading %s (venue %s) from %s", snapshot, manifest["venue"], bundle)
+    log.info("the search index goes to %s", type(index).__name__)
     _report_links(manifest)
 
     with db.connect(database_url) as conn:

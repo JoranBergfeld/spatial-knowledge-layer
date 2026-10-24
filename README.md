@@ -21,7 +21,8 @@ Terms here are used as written there.
 ```
 packages/core     record models, the stores' DDL and the clearance rules, shared with the service
 packages/ingest   the ingestion CLI, its own package and its own image
-packages/service  the turn service: FastAPI on Microsoft Agent Framework, reading the stores
+packages/service  the turn service: FastAPI on Microsoft Agent Framework, reading the stores,
+                  and its own image (Dockerfile.service)
 packages/bench    the evaluation harness: question sets, a scripted model, the leak checks,
                   evaluation runs
 gold/             gold answers from a handover, by scripts that import none of the above
@@ -225,13 +226,18 @@ never makes one. A summary made under another prompt version is made again.
 
 The layer has a Postgres database of its own on the site's instance. Ingestion owns its
 DDL (`packages/core/src/spatial_core/ddl/`) and applies it on every run; nothing else
-migrates it. Create the database once, owned by ingestion's login, which also needs
-`CREATEROLE` to make the service's role:
+migrates it. Create the database once, owned by ingestion's login, and pgvector in it as
+the superuser, since the owner may not create extensions and load won't try:
 
 ```
 CREATE ROLE ingest LOGIN CREATEROLE PASSWORD '...';
 CREATE DATABASE spatial OWNER ingest;
+\c spatial
+CREATE EXTENSION vector;
 ```
+
+The owner only needs `CREATEROLE` when `spatial_reader` does not exist yet. Homelab
+creates it beforehand, so there the owners go without.
 
 Then, with `SPATIAL_DATABASE_URL` (or `--database-url`) naming that login:
 
@@ -242,20 +248,26 @@ uv run ingest promote --date 2026-09-08   # roll back: the same command, the pre
 ```
 
 Load also writes the document chunks and summaries to a search index, one per snapshot,
-named after the venue and the date (`spatial-kit-campus-sued-20260915`). It finds the search
-service in the environment:
+named after the venue and the date (`spatial-kit-campus-sued-20260915`). By default that
+index is a table in the same database, `search."spatial-kit-campus-sued-20260915"`, with
+a `vector(1536)` column for `text-embedding-3-small` and an English `tsvector` of title
+and text. Load checks pgvector is there and fails the snapshot if not. It grants the
+table to `spatial_reader` itself, since the database sets no default privileges. The
+environment can send the index elsewhere:
 
 ```
-AZURE_SEARCH_ENDPOINT   the Azure AI Search service
+AZURE_SEARCH_ENDPOINT   the Azure AI Search service, which wins over everything else
 AZURE_SEARCH_API_KEY    an admin key, since load creates and drops indexes
 SPATIAL_SEARCH_DIR      instead of those two: a directory, one JSON file per index
 ```
 
-The directory is a stand-in for tests and laptops. It stores chunks and vectors and
-ranks nothing. The Azure index is hybrid: text and title searchable for BM25, a vector
-field for the embedding, and the anchor ids by kind, the flattened ancestor ids, the
-clearance class and the role (passage or summary) all filterable. Load makes no model
-call. The summaries and the vectors are the bundle's.
+So a shell with the bench's `.env` sourced loads into the bench's Azure Search, not
+Postgres. Unset `AZURE_SEARCH_ENDPOINT` first. Load logs which one it wrote to.
+
+The directory is a stand-in for tests and laptops. Both real indexes are hybrid: keywords
+over text and title, the embedding, and the anchor ids by kind, the flattened ancestor
+ids, the clearance class and the role (passage or summary) all filterable. Load makes no
+model call. The summaries and the vectors are the bundle's.
 
 `ingest load --gold gold.json` also asks a question set of the new snapshot and prints
 how it went. That never fails a load. See "On a freshly loaded snapshot".
@@ -386,8 +398,12 @@ Things that are rough or just not done yet:
 - Changing the summary prompt version re-embeds every passage, since the summary is in
   front of it.
 - An index loaded before summaries existed has no `role` field. Load the snapshot again.
-- The real Azure AI Search client is only tested against a stand-in on localhost.
-  Nobody has pointed it at a real service yet.
+- The Azure AI Search client is only tested against a stand-in on localhost. The bench
+  ran on it, the site never will: its indexes are in Postgres now.
+- The Postgres keyword half is `ts_rank` over English stems, ORed. That is not BM25: it
+  does not know a rare word from a common one. The vector half is exact cosine after
+  the filter, with no ANN index, which is fine for a few thousand chunks and would not
+  be for a few million.
 - An edge carries where its door is and the level it is on: the door's own `level` tag,
   else the one level its spaces share, else nothing. A door with no level changes no
   level in a route, so a stair door mapped without one makes the climb free.
@@ -432,11 +448,19 @@ SPATIAL_TREE_NODE_CAP            optional, 300 by default: how much of the tree 
 OTEL_EXPORTER_OTLP_ENDPOINT      optional; where metrics are pushed. Unset, none are
 AZURE_SEARCH_ENDPOINT            optional: the Azure AI Search service, with AZURE_SEARCH_API_KEY
 SPATIAL_SEARCH_DIR               optional, instead of those two: the stand-in index directory
-SPATIAL_SEMANTIC_RANKER          optional: "on" reranks passages with the semantic ranker. Off by default
+SPATIAL_SEMANTIC_RANKER          optional: "on" reranks passages with Azure's semantic ranker. Off by default
 SPATIAL_EVAL_SNAPSHOT            optional: the file an evaluation run wrote its eval snapshot to
+SPATIAL_SERVICE_HOST             optional, 127.0.0.1 by default (0.0.0.0 in the image)
+SPATIAL_SERVICE_PORT             optional, 8000 by default
 ```
 
-With no search index named, the service still runs and no document is ever retrieved.
+With no search index named, the service searches the `search` tables in its own database,
+through the same reader login.
+
+The image is `ghcr.io/joranbergfeld/spatial-knowledge-layer-service`, built from
+`Dockerfile.service` and pushed on every push to main. It holds core and the service,
+nothing of ingestion, runs as a user that is not root and listens on 0.0.0.0:8000.
+`python` on its path is the service's own, for a healthcheck that wants one.
 
 ### The venue
 
@@ -1481,7 +1505,8 @@ uv run mypy
 ```
 
 The load and promote tests, and the service's store tests, need a Postgres superuser URL
-in `SPATIAL_TEST_DATABASE_URL` and make databases of their own. Without it they skip,
+in `SPATIAL_TEST_DATABASE_URL` and make databases of their own. The server needs pgvector
+installed (`pgvector/pgvector:pg16` does), for the search index tests. Without it they skip,
 except in CI. The turn tests run against a fixture snapshot in memory and a scripted
 model, and need neither.
 

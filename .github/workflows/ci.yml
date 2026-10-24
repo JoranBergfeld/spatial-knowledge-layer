@@ -16,9 +16,10 @@ jobs:
     permissions:
       contents: read
     # The load and promote tests run against a real Postgres, each in a database of its own.
+    # With pgvector, for the search index tests.
     services:
       postgres:
-        image: postgres:16
+        image: pgvector/pgvector:pg16
         env:
           POSTGRES_PASSWORD: postgres
         ports:

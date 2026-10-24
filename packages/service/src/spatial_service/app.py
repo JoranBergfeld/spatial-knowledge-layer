@@ -26,10 +26,10 @@ Configuration is from the environment:
     AZURE_SEARCH_ENDPOINT            optional: the Azure AI Search service the snapshots'
                                      indexes are in, with AZURE_SEARCH_API_KEY
     SPATIAL_SEARCH_DIR               optional: the stand-in index directory, when no
-                                     Azure service is named. With neither, no document
-                                     is ever retrieved.
-    SPATIAL_SEMANTIC_RANKER          optional: "on" reranks retrieved passages with the
-                                     semantic ranker. Off by default.
+                                     Azure service is named. With neither, the indexes
+                                     are tables in the service's own database.
+    SPATIAL_SEMANTIC_RANKER          optional: "on" reranks retrieved passages with
+                                     Azure's semantic ranker. Off by default.
     SPATIAL_EVAL_SNAPSHOT            optional: the file an evaluation run wrote its eval
                                      snapshot to. Unset or not there yet, /eval says so.
 """
@@ -128,14 +128,12 @@ def azure_llm(settings: Settings) -> Llm:
     )
 
 
-def documents_from_env(settings: Settings, env: Mapping[str, str] = os.environ) -> Documents | None:
-    """Document retrieval as the environment sets it up, or None when it names no index."""
+def documents_from_env(settings: Settings, env: Mapping[str, str] = os.environ) -> Documents:
+    """Document retrieval as the environment sets it up."""
     try:
-        index = search.from_env(env)
+        index = search.from_env(env, settings.database_url)
     except ValueError as error:
         raise ConfigError(str(error)) from error
-    if index is None:
-        return None
     embedder = search.AzureEmbedder(
         endpoint=settings.endpoint,
         api_key=settings.api_key,

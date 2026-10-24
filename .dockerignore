@@ -6,3 +6,9 @@
 .ruff_cache
 bundles
 **/tests
+.env
+# Local bench material. Neither image copies it, so keep it out of the context.
+handover
+bench-bundles
+bench-search
+runs

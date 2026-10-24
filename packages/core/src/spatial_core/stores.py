@@ -6,6 +6,7 @@ a schema pair joined in a third schema of views (ADR 0001 in the site's reposito
 The DDL is in ddl/. Ingestion applies it; the service only reads.
 
 A snapshot's document chunks live in a search index of its own, named here too.
+In Postgres that index is a table in the search schema (ddl/search.sql).
 """
 
 from __future__ import annotations
@@ -16,6 +17,8 @@ from dataclasses import dataclass
 from importlib import resources
 
 CONTROL_SCHEMA = "control"
+# Where a snapshot's search index is a table, when the index is in Postgres.
+SEARCH_SCHEMA = "search"
 # The service's role: SELECT on the control tables and on each snapshot's views.
 READER_ROLE = "spatial_reader"
 

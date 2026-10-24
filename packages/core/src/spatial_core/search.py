@@ -2,8 +2,8 @@
 
 Ingestion writes an index at load and the service searches it. Writing goes
 through SearchIndex and searching through SearchQueries, so neither side cares
-whether the index is Azure AI Search or the stand-in below. Structured facts
-never come from here, only prose.
+whether the index is a table in Postgres, Azure AI Search or the stand-in below.
+Structured facts never come from here, only prose.
 
 LocalIndex is that stand-in: one JSON file per index in a directory. It is what
 the tests use and what a laptop uses.
@@ -11,7 +11,7 @@ the tests use and what a laptop uses.
 A query is words, a vector and a filter, and the answer is hybrid: a keyword
 ranking and a vector ranking fused with RRF, inside document search and nowhere
 else. The filter is a value, not a string, so the stand-in can apply it and the
-Azure client can render it, and there is one definition of which chunk passes:
+other two can render it, and there is one definition of which chunk passes:
 Filter.matches.
 
 An index holds passages and one summary per document, told apart by role. A
