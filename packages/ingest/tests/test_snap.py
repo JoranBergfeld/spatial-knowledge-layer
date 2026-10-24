@@ -92,6 +92,16 @@ def test_a_space_is_never_snapped_to_itself() -> None:
     assert (found.room, found.circulation) == ("stairs", CORRIDOR)
 
 
+def test_two_doorless_shafts_side_by_side_are_joined_once() -> None:
+    # Two lifts wall to wall, each a room and circulation both, with no door mapped.
+    # Each is the other's nearest, which used to make the same pair twice.
+    outlines = {"lift-a": box(0, 0, 3, 3), "lift-b": box(3, 0, 6, 3)}
+
+    found = snaps(outlines, ["lift-a", "lift-b"], ["lift-a", "lift-b"])
+
+    assert [(one.room, one.circulation) for one in found] == [("lift-a", "lift-b")]
+
+
 def test_each_room_gets_one_snap_in_a_stable_order() -> None:
     outlines = {
         CORRIDOR: box(0, 0, 20, 2),

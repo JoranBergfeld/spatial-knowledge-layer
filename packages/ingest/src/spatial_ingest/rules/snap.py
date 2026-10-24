@@ -12,6 +12,8 @@ door asset hangs on it.
 
 Rough edges: a room with one mapped door and a second, unmapped opening gets
 nothing, and neither does an entrance sitting a little further out than SNAP_M.
+Two doorless lift shafts wall to wall get joined to each other, since each is
+circulation. A lift into a lift, which is silly, and harmless for a route.
 """
 
 from __future__ import annotations
@@ -62,6 +64,9 @@ def snaps(
     index = STRtree(shapes)
 
     found = []
+    # A space can be a room and circulation both (a lift shaft tagged indoor=room).
+    # Two of those side by side each snap to the other: one pair, joined once.
+    joined: set[frozenset[str]] = set()
     for room in rooms:
         shape = transform(local.metres, outlines[room].geometry)
         levels = set(outlines[room].levels)
@@ -75,6 +80,9 @@ def snaps(
         if not near:
             continue
         _, other, level, target = min(near, key=lambda hit: (hit[0], hit[1]))
+        if frozenset((room, other)) in joined:
+            continue
+        joined.add(frozenset((room, other)))
         point = nearest_points(target, shape)[0]
         lon, lat = local.degrees(point.x, point.y)
         found.append(Snap(room, other, lon, lat, level))

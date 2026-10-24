@@ -190,8 +190,8 @@ still quoted. One that never answered has nothing to quote and is skipped.
 Spend is tokens per deployment times a dated rate from
 `packages/ingest/src/spatial_ingest/rates.json`, the same rows as the site's budget
 table. A deployment with no row is recorded with its tokens and no cost, and the build
-says so. Right now that is the translation deployment: I have no price for it yet.
-Summaries run on the same deployment, so they are tokens without a cost too.
+says so. `gpt-5.4-mini` translates and summarises, and its row is the site's, which came
+off third-party trackers. The first KIT build (2026-10-24) cost $0.04 all in.
 
 ### Summaries
 
