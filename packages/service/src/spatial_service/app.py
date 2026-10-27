@@ -4,6 +4,9 @@
                  and a question; returns the turn with its trace
     GET /venue   the snapshot served now and the one before, the sourced clearance
                  share, the personas and the route constants (venue_facts.py)
+    GET /places  every building a persona can see in a named snapshot, with its
+                 equipment types; /places/{building_id} one building's floors, rooms
+                 and which rooms hold what (listing.py)
     GET /eval    the eval snapshot the last evaluation run wrote, or the one empty
                  answer when there has been no run (evaluation.py)
     GET /health/live    200 while the process answers HTTP, touching nothing
@@ -42,11 +45,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Query
 from fastapi.responses import JSONResponse
 
+from spatial_core.records import Persona
 from spatial_service import evaluation as eval_contract
-from spatial_service import health, metrics, search, venue_facts
+from spatial_service import health, listing, metrics, search, venue_facts
+from spatial_service.listing import BuildingPlaces, Places, PlacesRefused
 from spatial_service.llm import Deployment, Llm
 from spatial_service.metrics import Metrics
 from spatial_service.retrieval import Documents, Retriever
@@ -178,6 +183,24 @@ def create_app(
             content = {"detail": str(unavailable), "code": unavailable.code}
             return JSONResponse(status_code=503, content=content)
 
+    @app.get("/places", response_model=Places)
+    def places(persona: Persona, snapshot: str = Query(min_length=1)) -> Places | JSONResponse:
+        try:
+            return listing.places(listing.served_venue(store, snapshot, persona))
+        except PlacesRefused as refused:
+            return _refusal(refused)
+
+    # :path, since a building's id has a slash in it ("osm:way/100").
+    @app.get("/places/{building_id:path}", response_model=BuildingPlaces)
+    def building_places(
+        building_id: str, persona: Persona, snapshot: str = Query(min_length=1)
+    ) -> BuildingPlaces | JSONResponse:
+        try:
+            venue = listing.served_venue(store, snapshot, persona)
+            return listing.building_places(venue, building_id)
+        except PlacesRefused as refused:
+            return _refusal(refused)
+
     @app.get("/eval")
     def eval_snapshot() -> Any:
         # Read on every request: a run writes the file while the service is up.
@@ -197,6 +220,11 @@ def create_app(
         return JSONResponse(status_code=status, content=content)
 
     return app
+
+
+def _refusal(refused: PlacesRefused) -> JSONResponse:
+    content = {"detail": str(refused), "code": refused.code}
+    return JSONResponse(status_code=refused.status, content=content)
 
 
 def _eval_snapshot(env: Mapping[str, str]) -> Path | None:

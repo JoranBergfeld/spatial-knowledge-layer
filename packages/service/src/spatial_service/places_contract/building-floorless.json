@@ -1,0 +1,16 @@
+{
+  "snapshot": "2026-09-15",
+  "persona": "staff",
+  "id": "osm:way/300",
+  "name": "Mensa",
+  "label": "Mensa",
+  "floors": [],
+  "floorless_rooms": [
+    {
+      "id": "osm:way/3001",
+      "label": "10.50 room 107",
+      "ref": "107"
+    }
+  ],
+  "equipment": []
+}

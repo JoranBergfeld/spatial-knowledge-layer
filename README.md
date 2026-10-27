@@ -421,11 +421,11 @@ Things that are rough or just not done yet:
 ## The service
 
 One operation, `POST /turn`, plus `GET /venue` for what a caller needs before it asks
-anything (below), `GET /eval` for the last evaluation run's figures (see "Evaluation
-runs and the eval snapshot") and two probes, `GET /health/live` and `GET /health/ready`
-(see "Health probes"). `POST /turn` takes a persona, a snapshot
-(none means the current one), the conversation's prior state and a question, and returns
-a turn:
+anything (below), `GET /places` for what there is to ask about (see "Places"), `GET /eval`
+for the last evaluation run's figures (see "Evaluation runs and the eval snapshot") and
+two probes, `GET /health/live` and `GET /health/ready` (see "Health probes"). `POST /turn`
+takes a persona, a snapshot (none means the current one), the conversation's prior state
+and a question, and returns a turn:
 
 ```
 {"persona": "visitor", "snapshot": null, "state": null, "question": "Where is 50.34 room 107?"}
@@ -487,6 +487,34 @@ When there is nothing to say it answers 503 with a refusal body, the same shape 
 current, `{"detail": "...", "code": "store-unreachable"}` when the database cannot be
 connected to. The code is what to act on. The detail is for reading and never holds the
 database URL.
+
+### Places
+
+A listing of what's on campus, so someone browsing the demo has something to ask about.
+Two free reads, no model calls. Both need `persona` and `snapshot` as query parameters,
+and the snapshot is never filled in for you.
+
+- `GET /places?persona=visitor&snapshot=2026-10-24`: every building the persona can
+  see, each with `id`, `name`, `label` and its equipment types (`type_id`, `name`,
+  `count`, `provenance`: `sourced` for OSM fire kit, `seed` for the rest).
+- `GET /places/{building_id}?persona=...&snapshot=...`: one building's `floors`, lowest
+  first, each with its rooms (`id`, `label`, `ref`), the `floorless_rooms` that hang
+  straight off a building with no levels mapped, and its `equipment` as above plus the
+  `rooms` holding each type. An asset mapped onto the building itself counts but sits in
+  no room, so `count` can say more than `rooms` does. Building ids have a slash in them
+  (`osm:way/100`), and that's fine in the path.
+
+It reads the same persona-cut venue a turn does, so whatever is beyond clearance isn't
+hidden here, it's not there. No outlines, positions or coordinates, and no individual
+assets. Refusals have `/venue`'s shape: 409 `snapshot-dropped` for a snapshot that isn't
+served (same as a turn), 404 `no-such-building` for a building the persona can't see or
+that isn't one, 503 `store-unreachable`. A missing snapshot or an unknown persona is a
+plain 422.
+
+`packages/service/src/spatial_service/listing.py` is the contract, strict models
+throughout. `places_contract/` next to it holds bodies for the backend's contract tests
+to copy: `places.json`, `building.json` and `building-floorless.json`, read off the test
+fixture's mini campus. A test checks they're still what the service answers.
 
 ### Health probes
 

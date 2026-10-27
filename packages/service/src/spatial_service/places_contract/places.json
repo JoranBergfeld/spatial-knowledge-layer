@@ -1,0 +1,44 @@
+{
+  "snapshot": "2026-09-15",
+  "persona": "visitor",
+  "buildings": [
+    {
+      "id": "osm:way/200",
+      "name": null,
+      "label": "30.10",
+      "equipment": [
+        {
+          "type_id": "seed:type:light-fixture-b1",
+          "name": "Light Fixture B1",
+          "count": 1,
+          "provenance": "seed"
+        }
+      ]
+    },
+    {
+      "id": "osm:way/100",
+      "name": "Informatik",
+      "label": "Informatik",
+      "equipment": [
+        {
+          "type_id": "osm:type:fire_extinguisher",
+          "name": "Fire extinguisher",
+          "count": 1,
+          "provenance": "sourced"
+        },
+        {
+          "type_id": "seed:type:light-fixture-b1",
+          "name": "Light Fixture B1",
+          "count": 5,
+          "provenance": "seed"
+        },
+        {
+          "type_id": "seed:type:light-fixture-q4",
+          "name": "Light Fixture Q4",
+          "count": 1,
+          "provenance": "seed"
+        }
+      ]
+    }
+  ]
+}

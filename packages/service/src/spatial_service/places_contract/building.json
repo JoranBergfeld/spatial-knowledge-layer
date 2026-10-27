@@ -1,0 +1,67 @@
+{
+  "snapshot": "2026-09-15",
+  "persona": "visitor",
+  "id": "osm:way/100",
+  "name": "Informatik",
+  "label": "Informatik",
+  "floors": [
+    {
+      "id": "floor:way/100:0",
+      "label": "50.34 level 0",
+      "rooms": [
+        {
+          "id": "osm:way/1002",
+          "label": "Audimax",
+          "ref": null
+        },
+        {
+          "id": "osm:way/1010",
+          "label": "Treppenhaus",
+          "ref": null
+        }
+      ]
+    },
+    {
+      "id": "floor:way/100:1",
+      "label": "50.34 level 1",
+      "rooms": [
+        {
+          "id": "osm:way/1003",
+          "label": "50.34 room 107",
+          "ref": "107"
+        }
+      ]
+    }
+  ],
+  "floorless_rooms": [],
+  "equipment": [
+    {
+      "type_id": "osm:type:fire_extinguisher",
+      "name": "Fire extinguisher",
+      "count": 1,
+      "provenance": "sourced",
+      "rooms": [
+        "osm:way/1002"
+      ]
+    },
+    {
+      "type_id": "seed:type:light-fixture-b1",
+      "name": "Light Fixture B1",
+      "count": 5,
+      "provenance": "seed",
+      "rooms": [
+        "osm:way/1002",
+        "osm:way/1003"
+      ]
+    },
+    {
+      "type_id": "seed:type:light-fixture-q4",
+      "name": "Light Fixture Q4",
+      "count": 1,
+      "provenance": "seed",
+      "rooms": [
+        "osm:way/1010"
+      ]
+    }
+  ]
+}
