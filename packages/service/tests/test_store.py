@@ -168,6 +168,9 @@ def _bundle(root: Path) -> Path:
             f"{half}/service_events.jsonl": [
                 e for e in fixture.service_events() if e.id.startswith(half)
             ],
+            f"{half}/maintenance_tasks.jsonl": [
+                t for t in fixture.maintenance_tasks() if t.id.startswith(half)
+            ],
             f"{half}/visible_assets.jsonl": [
                 v for v in visible_assets if v.asset_id.startswith(half)
             ],
@@ -333,6 +336,20 @@ def test_a_persona_reads_the_service_events_of_its_visible_assets_only(
     serverraum = {e.id for e in fixture.service_events() if e.asset_id == "seed:asset:P2"}
     assert events(Persona.MAINTENANCE) == everyone
     assert events(Persona.VISITOR) == everyone - serverraum
+
+
+def test_a_persona_reads_the_jobs_of_its_visible_types_only(stores: tuple[str, str]) -> None:
+    _, reader_url = stores
+    store = PostgresStore(reader_url)
+
+    def jobs(persona: Persona) -> set[str]:
+        held = store.venue(fixture.SNAPSHOT, persona).maintenance_tasks
+        return {task.id for found in held.values() for task in found}
+
+    everyone = {t.id for t in fixture.maintenance_tasks()}
+    panel = {t.id for t in fixture.maintenance_tasks() if t.type_id == fixture.PANEL}
+    assert jobs(Persona.MAINTENANCE) == everyone
+    assert jobs(Persona.STAFF) == everyone - panel
 
 
 def test_service_due_is_worked_out_from_what_postgres_holds(stores: tuple[str, str]) -> None:

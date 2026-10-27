@@ -19,6 +19,8 @@ The tools, and what each produces:
     places_matching      a description of places   -> a place set (one or many)
     route                an origin and a destination -> a route
     nearest              assets, and a place to be near -> the nearest of them
+    maintenance_tasks    assets, or the one asset a follow-up points at
+                                                     -> the planned jobs on their types
 
 A reference binds only to an earlier step that produces what it reads. Nothing
 reads groups or passages, and nothing that resolves a mention reads assets, so a
@@ -96,6 +98,9 @@ class QuestionShape(StrEnum):
     PROXIMITY = "proximity"
     # "How do I get to the Audimax?": a route between places, by modelled duration.
     ROUTE = "route"
+    # "What maintenance do the AC units in room 107 need?": the planned jobs on the
+    # types of the assets under a scope, and the rest of them in the same building.
+    ASSET_MAINTENANCE = "asset-maintenance"
     # A question whose next step depends on what an earlier one finds. No steps:
     # the turn abstains, it does not loop.
     STEP_DEPENDENT = "step-dependent"
@@ -321,6 +326,16 @@ class Nearest(_Step):
     to: StepRef | None = None
 
 
+class MaintenanceTasks(_Step):
+    """The planned jobs on the types of a step's assets, and where else in the building they are."""
+
+    # "asset" is the one a follow-up points at.
+    READS: ClassVar[dict[str, str]] = {"assets": "assets|asset"}
+
+    tool: Literal["maintenance_tasks"]
+    assets: StepRef
+
+
 # Every tool a step can call. A plain union, not a discriminated one: that would
 # put a oneOf in the schema, which strict structured output does not take.
 Step = (
@@ -333,6 +348,7 @@ Step = (
     | PlacesMatching
     | Route
     | Nearest
+    | MaintenanceTasks
 )
 # The steps that resolve a mention.
 Resolving = (ResolvePlace, ResolveAssetType, ResolveAsset, PlacesMatching)
@@ -346,6 +362,7 @@ STEPS: dict[str, type[_Step]] = {
     "places_matching": PlacesMatching,
     "route": Route,
     "nearest": Nearest,
+    "maintenance_tasks": MaintenanceTasks,
 }
 
 

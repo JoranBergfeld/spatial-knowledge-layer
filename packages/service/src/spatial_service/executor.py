@@ -39,6 +39,7 @@ from spatial_service.assets import (
 )
 from spatial_service.attributes import check_filters
 from spatial_service.conversation import HOW, ConversationState, Referred, resolve
+from spatial_service.maintenance import Jobs, maintenance_tasks
 from spatial_service.nearest import Nearest as NearestFound
 from spatial_service.nearest import nearest
 from spatial_service.places import (
@@ -51,6 +52,7 @@ from spatial_service.places import (
 from spatial_service.plan import (
     Aggregate,
     AssetsInScope,
+    MaintenanceTasks,
     Mention,
     Nearest,
     PlacesMatching,
@@ -102,6 +104,8 @@ class StepResult:
     # What a route step came to, and what a nearest step picked.
     routed: Routed | None = None
     near: NearestFound | None = None
+    # The jobs a maintenance_tasks step found, and the same kit nearby.
+    jobs: Jobs | None = None
 
 
 @dataclass(frozen=True)
@@ -273,6 +277,19 @@ def _run(
         ids = near.asset_ids if near is not None else ()
         outcome = Outcome.RESOLVED if near is not None else Outcome.NONE
         return _result(step, mentions, outcome, ids, matched=len(ids), found=among.found, near=near)
+    if isinstance(step, MaintenanceTasks):
+        read = done[step.assets.step]
+        scoped = read.found
+        if read.tool == "resolve_asset":
+            # The one asset a follow-up points at, read as the assets step it stands in for.
+            scoped = the_asset(venue, venue.assets[read.ids[0]])
+        assert scoped is not None
+        jobs = maintenance_tasks(venue, scoped)
+        ids = tuple(task.id for task in jobs.tasks)
+        # No job on record is a result, the same as no assets: the turn says so.
+        return _result(
+            step, mentions, Outcome.RESOLVED, ids, matched=len(ids), found=scoped, jobs=jobs
+        )
     # A step over an asset mention is a follow-up reference or is rejected, so it never gets here.
     assert isinstance(step, Aggregate)
     source = done[step.assets.step].found

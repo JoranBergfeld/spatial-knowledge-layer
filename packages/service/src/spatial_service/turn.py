@@ -54,7 +54,15 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
-from spatial_service import attribute_answers, attributes, compose, outcomes, route_answer, traces
+from spatial_service import (
+    attribute_answers,
+    attributes,
+    compose,
+    maintenance,
+    outcomes,
+    route_answer,
+    traces,
+)
 from spatial_service.assets import ScopeResult
 from spatial_service.conversation import ASSET_CARRY_CAP, offered, told
 from spatial_service.executor import Execution, StepResult, execute
@@ -68,7 +76,7 @@ from spatial_service.instructions import (
 from spatial_service.llm import Llm, LlmUnavailable, Purpose
 from spatial_service.outcomes import OpenTurn
 from spatial_service.places import Outcome, Venue
-from spatial_service.plan import DECLINED, Plan, QuestionShape
+from spatial_service.plan import Plan, QuestionShape
 from spatial_service.plan_check import PlanRejected, parse_plan
 from spatial_service.recovery import RecoveryOutcome, Trigger, diff
 from spatial_service.retrieval import (
@@ -217,7 +225,7 @@ class TurnService:
         else:
             written = plan.model_dump(mode="json", exclude_none=True)
             execution = None
-            if plan.shape not in DECLINED:
+            if outcomes.declined(plan.shape, venue.persona) is None:
                 # Off the loop: a retrieval step waits on the index.
                 execution = await asyncio.to_thread(
                     execute, plan, venue, turn.state, self.documents
@@ -250,7 +258,9 @@ class TurnService:
         shape = attempt.plan.shape
         turn.note(shape=shape)
         if attempt.execution is None:
-            return turn.abstain(outcomes.DECLINED_CAUSE[shape])
+            cause = outcomes.declined(shape, venue.persona)
+            assert cause is not None
+            return turn.abstain(cause)
 
         execution = attempt.execution
         turn.note(
@@ -301,6 +311,17 @@ class TurnService:
                 asset_types=[kind.id for kind in types],
                 assets=[asset.id for asset in near][:ASSET_CARRY_CAP],
             )
+        elif shape is QuestionShape.ASSET_MAINTENANCE:
+            found, jobs = last.found, last.jobs
+            assert found is not None and jobs is not None
+            answer = compose.maintenance(venue, question, found, jobs)
+            turn.maintenance = maintenance.out(venue, last.step, jobs)
+            turn.note(
+                maintenance=maintenance.trace(last.step, jobs),
+                asset_types=[traces.type_trace(venue.asset_types[i]) for i in jobs.types],
+                assets=traces.assets_trace(venue, last, answer),
+            )
+            state = turn.next(**outcomes.carried(venue, last, found))
         else:
             found = last.found
             assert found is not None
@@ -328,6 +349,9 @@ class TurnService:
         if found is not None:
             if found.installed == 0:
                 return outcomes.nothing_installed(turn, venue, found, state)
+            jobs = last.jobs
+            if jobs is not None and jobs.types and jobs.without == jobs.types:
+                return outcomes.no_planned_maintenance(turn, venue, jobs.without, state)
             unfilled = attribute_answers.gap(found)
             if unfilled is not None:
                 return outcomes.attribute_gap(turn, venue, found, unfilled, state)

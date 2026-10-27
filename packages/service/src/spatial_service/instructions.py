@@ -35,6 +35,10 @@ shape:
 - "proximity": it asks for the nearest asset of a type ("the nearest extinguisher
   to room 107").
 - "route": it asks how to get somewhere, or how long or how far that is.
+- "asset-maintenance": it asks what planned maintenance assets get: which jobs, how
+  often, how long they take, what their steps are ("what maintenance do the AC units
+  need", "how often are the extinguishers in 50.34 checked"). What a manual or
+  document says is "asset-document", even about servicing.
 - "step-dependent": answering needs the result of one step to decide the next
   ("what is in the room with the most lights"). No steps.
 - "unsupported": anything else. No steps.
@@ -92,6 +96,10 @@ steps: ids s1, s2, ..., at most {STEP_CAP}. Every step but the last feeds a late
 - nearest: {{"assets": {{"step": "<the assets_in_scope step>"}}}}, and "to": {{"step":
   "<a resolve_place step>"}} for the place to be near, left out when the question
   names none. A proximity plan ends in it.
+- maintenance_tasks: {{"assets": {{"step": "<the assets_in_scope step>"}}}}: the
+  planned jobs on the types of those assets. Or reading a resolve_asset step, for
+  the one asset a follow-up points at ("what maintenance does that one need"). An
+  asset-maintenance plan ends in it, and its assets_in_scope has no filters.
 
 Follow-ups. "conversation" holds the earlier questions and what earlier turns
 resolved: a place, assets, asset types, by name. Words that name nothing themselves
@@ -272,6 +280,25 @@ passage bears on it, at least one segment must say what that passage says.
         + _PASSAGE_RULES
     ),
 }
+
+COMPOSITION_INSTRUCTIONS[QuestionShape.ASSET_MAINTENANCE] = (
+    "You answer what planned maintenance some assets get, in one or two short sentences, "
+    "in the question's language.\n"
+    + _COMPOSE_RULES
+    + "\n"
+    + _COUNT_RULES
+    + """
+"scope" is the place asked about and "total" the count of the assets asked about
+there. "jobs" lists each type with planned jobs on record: "type" is the type and
+"jobs" fills in as how many planned jobs it has, already saying "planned jobs", so
+write no noun after it. The jobs themselves are shown to the reader in a table under
+your answer: do not list them, name them or say how often or how long. "no_jobs" are
+types with no planned maintenance recorded: say so for each. "more_no_jobs", where
+present, counts more types with none: say how many. "nearby", where present,
+counts more of the same types elsewhere in "building", outside the scope: say they
+are there too and could be done on the same visit.
+"""
+)
 
 COMPOSITION_INSTRUCTIONS[QuestionShape.ATTRIBUTE_FILTER] = COMPOSITION_INSTRUCTIONS[
     QuestionShape.ASSET_CONTAINMENT

@@ -1019,6 +1019,92 @@
           "doc:v2-sd-10-preventivemaintenance-pumps-pdf"
         ]
       }
+    },
+    {
+      "id": "ahu-planned-jobs",
+      "persona": "maintenance",
+      "shape": "asset-maintenance",
+      "question": "What planned maintenance do the AHUs get?",
+      "expected": {
+        "kind": "answer"
+      }
+    },
+    {
+      "id": "boiler-how-often",
+      "persona": "maintenance",
+      "shape": "asset-maintenance",
+      "question": "How often does the boiler get serviced?",
+      "expected": {
+        "kind": "answer"
+      }
+    },
+    {
+      "id": "main-mech-room-jobs",
+      "persona": "maintenance",
+      "shape": "asset-maintenance",
+      "question": "What planned maintenance is there for the kit in the main mechanical room?",
+      "expected": {
+        "kind": "answer"
+      }
+    },
+    {
+      "id": "sprinklers-in-main-mech",
+      "persona": "maintenance",
+      "shape": "asset-maintenance",
+      "question": "What maintenance do the sprinklers in the main mechanical room need?",
+      "expected": {
+        "kind": "answer"
+      }
+    },
+    {
+      "id": "ahu-annual-steps",
+      "persona": "maintenance",
+      "shape": "asset-maintenance",
+      "question": "What are the steps in the AHU annual maintenance?",
+      "expected": {
+        "kind": "answer"
+      }
+    },
+    {
+      "id": "light-fixture-jobs",
+      "persona": "maintenance",
+      "shape": "asset-maintenance",
+      "question": "How often do the light fixtures get maintained?",
+      "expected": {
+        "kind": "coverage-gap",
+        "reason": "no-planned-maintenance"
+      }
+    },
+    {
+      "id": "pump-jobs",
+      "persona": "maintenance",
+      "shape": "asset-maintenance",
+      "question": "Is there any planned maintenance for the pumps?",
+      "expected": {
+        "kind": "coverage-gap",
+        "reason": "no-planned-maintenance"
+      }
+    },
+    {
+      "id": "sprinkler-schedule-visitor",
+      "persona": "visitor",
+      "shape": "asset-maintenance",
+      "question": "How often are the sprinklers checked?",
+      "expected": {
+        "kind": "abstention",
+        "reason": "staff-only"
+      },
+      "pair": "sprinkler-schedule"
+    },
+    {
+      "id": "sprinkler-schedule-maintenance",
+      "persona": "maintenance",
+      "shape": "asset-maintenance",
+      "question": "How often are the sprinklers checked?",
+      "expected": {
+        "kind": "answer"
+      },
+      "pair": "sprinkler-schedule"
     }
   ]
 }

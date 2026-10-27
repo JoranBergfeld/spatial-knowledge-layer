@@ -45,6 +45,7 @@ PRODUCES = {
     "places_matching": "place-set",
     "route": "route",
     "nearest": "nearest",
+    "maintenance_tasks": "jobs",
 }
 
 # The tool a shape's last step calls: the one whose result is the answer.
@@ -58,6 +59,7 @@ ENDS_IN = {
     QuestionShape.ASSET_LOCATION: "resolve_asset",
     QuestionShape.PROXIMITY: "nearest",
     QuestionShape.ROUTE: "route",
+    QuestionShape.ASSET_MAINTENANCE: "maintenance_tasks",
 }
 
 # What a document shape's retrieval is anchored by: what the step it reads produces.
@@ -253,4 +255,6 @@ def _filter_reasons(plan: Plan) -> list[str]:
         reasons.append("an attribute-filter plan filters by at least one attribute")
     if plan.shape is QuestionShape.ASSET_CONTAINMENT and filtering:
         reasons.append("an asset-containment plan has no filters; with one it is attribute-filter")
+    if plan.shape is QuestionShape.ASSET_MAINTENANCE and filtering:
+        reasons.append("an asset-maintenance plan has no filters: jobs are planned per type")
     return reasons

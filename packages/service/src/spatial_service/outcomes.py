@@ -5,7 +5,7 @@ second trigger. All said by the host: no model call. Plus what an answer leaves 
 the state for the next turn.
 
 A coverage gap is an abstention with a cause of its own, and says which gap. There
-are two, and nothing else gives a reason:
+are three, and nothing else gives a reason:
 
     no recorded installations   nothing is installed in a building, or in something
                                 bigger. Stated only at building level or above. A
@@ -14,8 +14,13 @@ are two, and nothing else gives a reason:
                                 is one. Otherwise the turn abstains without one.
     attribute not recorded      none of the assets asked about carries the attribute
                                 filtered on: a fill rate of zero. Names the attribute.
+    no planned maintenance      none of the types asked about has a planned job on
+                                record. Names the types.
 
-Both only ever speak of what the persona can see.
+All three only ever speak of what the persona can see.
+
+A visitor asking for maintenance plans is declined for the shape, before any step
+runs (declined). Nothing looked up, so nothing to give away.
 """
 
 from __future__ import annotations
@@ -25,7 +30,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from spatial_core.records import Space
+from spatial_core.records import Persona, Space
 from spatial_service import attribute_answers
 from spatial_service.assets import ScopeResult
 from spatial_service.conversation import (
@@ -43,10 +48,12 @@ from spatial_service.facts import (
     Citation,
     FactKind,
     asset_citation,
+    type_citation,
 )
 from spatial_service.grounding import Segment
 from spatial_service.llm import Llm, LlmCall, LlmUnavailable, Purpose
-from spatial_service.places import BUILDING, Outcome, Venue, labelled, tier
+from spatial_service.maintenance import STAFF, MaintenanceOut
+from spatial_service.places import Outcome, Venue, building_or_above, labelled
 from spatial_service.plan import Filter, FollowUpTarget, MentionKind, QuestionShape
 from spatial_service.recovery import RecoveryOutcome, Trigger, TriggerKind
 from spatial_service.retrieval import EmbeddingCall, RetrievalUnavailable
@@ -68,6 +75,9 @@ CLARIFY = "More than one place matches. Which one do you mean?"
 CLARIFY_ASSET = "That could be more than one asset. Which one do you mean?"
 NO_INSTALLATIONS = "No installations are recorded for {scope}."
 NO_INSTALLATIONS_ANYWHERE = "No installations are recorded here."
+NO_PLANNED_MAINTENANCE = "No planned maintenance is recorded for {types}."
+# How many types a gap names. "Lights" is 42 types on the Clinic.
+GAP_TYPE_CAP = 5
 ABSTAIN = {
     AbstentionCause.NO_SUCH_PLACE: "I don't know a place by that name.",
     AbstentionCause.NO_SUCH_ASSET_TYPE: "I don't know of anything installed by that name.",
@@ -84,6 +94,7 @@ ABSTAIN = {
     AbstentionCause.NOTHING_REFERRED_TO: "I don't know what that refers to.",
     AbstentionCause.NO_ROUTE: "There is no route on the mapped graph for this persona.",
     AbstentionCause.NOTHING_NEAR: "I don't know of one near there.",
+    AbstentionCause.STAFF_ONLY: "Maintenance plans are only shown to staff.",
 }
 # What a step that found nothing makes of the turn, by its tool.
 NOTHING_FOUND = {
@@ -98,6 +109,17 @@ DECLINED_CAUSE = {
     QuestionShape.STEP_DEPENDENT: AbstentionCause.STEP_DEPENDENT_QUESTION,
     QuestionShape.UNSUPPORTED: AbstentionCause.UNSUPPORTED_QUESTION,
 }
+# Shapes only some personas get an answer to. Anyone else is declined before a step runs.
+ANSWERED_FOR = {QuestionShape.ASSET_MAINTENANCE: STAFF}
+
+
+def declined(shape: QuestionShape, persona: Persona) -> AbstentionCause | None:
+    """Why a plan of ``shape`` runs no step for ``persona``, or None when it runs."""
+    if shape in DECLINED_CAUSE:
+        return DECLINED_CAUSE[shape]
+    if persona not in ANSWERED_FOR.get(shape, (persona,)):
+        return AbstentionCause.STAFF_ONLY
+    return None
 
 
 @dataclass
@@ -111,6 +133,7 @@ class OpenTurn:
     embeddings: list[EmbeddingCall] = field(default_factory=list)
     question: str = ""
     routes: list[RouteOut] = field(default_factory=list)
+    maintenance: MaintenanceOut | None = None
 
     @property
     def number(self) -> int:
@@ -162,6 +185,7 @@ class OpenTurn:
             candidates=candidates or [],
             # Only an answer carries routes: a turn that says nothing shows none.
             routes=self.routes if kind is TurnKind.ANSWER else [],
+            maintenance=self.maintenance if kind is TurnKind.ANSWER else None,
             state=state or self.state,
             trace=self.trace,
             llm_calls=self.calls,
@@ -328,7 +352,7 @@ def nothing_installed(
     else:
         scope = venue.spaces[found.scope]
         gap = next(
-            (s for s in (scope, *venue.ancestors(scope)) if _building_or_above(venue, s)), None
+            (s for s in (scope, *venue.ancestors(scope)) if building_or_above(venue, s)), None
         )
         if gap is None or venue.assets_under.get(gap.id):
             return turn.abstain(AbstentionCause.NOTHING_RECORDED)
@@ -347,13 +371,6 @@ def nothing_installed(
     )
 
 
-def _building_or_above(venue: Venue, space: Space) -> bool:
-    """Whether a space's tier is the building tier or one outside it."""
-    if BUILDING not in venue.tiers:
-        return space.parent_id is None
-    return tier(space) in venue.tiers[: venue.tiers.index(BUILDING) + 1]
-
-
 def attribute_gap(
     turn: OpenTurn, venue: Venue, found: ScopeResult, unfilled: Filter, state: ConversationState
 ) -> Turn:
@@ -367,6 +384,29 @@ def attribute_gap(
         [Segment(text=text, citations=citations)],
         cause=AbstentionCause.COVERAGE_GAP,
         gap=CoverageGap.ATTRIBUTE_NOT_RECORDED,
+        state=state,
+    )
+
+
+def no_planned_maintenance(
+    turn: OpenTurn, venue: Venue, type_ids: tuple[str, ...], state: ConversationState
+) -> Turn:
+    """Types were asked about and none has a planned job on record. Named, by the host."""
+    kinds = [venue.asset_types[i] for i in type_ids[:GAP_TYPE_CAP]]
+    names = [kind.name.value for kind in kinds]
+    if len(type_ids) > GAP_TYPE_CAP:
+        names.append(f"{len(type_ids) - GAP_TYPE_CAP} more types")
+    listed = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+    return turn.finish(
+        TurnKind.ABSTENTION,
+        [
+            Segment(
+                text=NO_PLANNED_MAINTENANCE.format(types=listed),
+                citations=[type_citation(kind) for kind in kinds],
+            )
+        ],
+        cause=AbstentionCause.COVERAGE_GAP,
+        gap=CoverageGap.NO_PLANNED_MAINTENANCE,
         state=state,
     )
 

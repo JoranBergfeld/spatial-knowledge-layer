@@ -35,6 +35,7 @@ from spatial_service.facts import (
     Row,
 )
 from spatial_service.grounding import CompositionRejected, ground
+from spatial_service.maintenance import Jobs
 from spatial_service.nearest import Nearest
 from spatial_service.places import Venue, label
 from spatial_service.retrieval import Retrieval
@@ -54,6 +55,7 @@ __all__ = [
     "containment",
     "ground",
     "location",
+    "maintenance",
     "place_documents",
     "proximity",
     "route",
@@ -372,6 +374,73 @@ def proximity(venue: Venue, question: str, near: Nearest) -> Answer:
     payload["required"] = required
     payload["facts"] = facts.told()
     return Answer(facts.items, payload, required, together, rows)
+
+
+def maintenance(venue: Venue, question: str, found: ScopeResult, jobs: Jobs) -> Answer:
+    """The assets asked about, how many planned jobs each type has, and the same kit nearby.
+
+    The jobs themselves are not facts: they go out as rows of a table (maintenance.py).
+    The answer is the lead-in to it.
+    """
+    facts = Facts()
+    assets = [venue.assets[i] for i in found.ids]
+    scope = _scope(venue, facts, found)
+    noun = facts.noun(venue, found.types)
+    total = facts.counts(Tally.of(assets), space_id=found.scope, noun=noun)
+    together = [total]
+    required = [*([scope] if scope else []), *total]
+
+    with_jobs = []
+    for type_id in jobs.types:
+        if type_id in jobs.without:
+            continue
+        named = {task.name.value for task in jobs.tasks if task.type_id == type_id}
+        kind = facts.asset_type(venue.asset_types[type_id])
+        count = facts.jobs(len(named), type_id=type_id)
+        with_jobs.append({"type": kind, "jobs": count})
+        required += [kind, count]
+    payload: dict[str, Any] = {
+        "question": question,
+        "shape": "asset-maintenance",
+        "scope": scope,
+        "total": total,
+        "jobs": with_jobs,
+        "no_jobs": [],
+    }
+    # Types the question named are named back. Whatever else a place holds is only
+    # counted: the main mechanical room has dozens of types with no job.
+    listed = jobs.without[:ROW_CAP] if found.types is not None else ()
+    payload["no_jobs"] = [facts.asset_type(venue.asset_types[i]) for i in listed]
+    required += payload["no_jobs"]
+    if len(jobs.without) > len(listed):
+        payload["more_no_jobs"] = facts.number(
+            len(jobs.without) - len(listed), about="more types with no planned maintenance"
+        )
+        required.append(payload["more_no_jobs"])
+    if jobs.nearby is not None:
+        building = facts.place(venue.spaces[jobs.nearby.building])
+        rows = []
+        for type_id in jobs.nearby.types:
+            kind = facts.asset_type(venue.asset_types[type_id])
+            counts = facts.counts(
+                jobs.nearby.tally(type_id), space_id=jobs.nearby.building, noun=kind
+            )
+            rows.append({"type": kind, "counts": counts})
+            together.append(counts)
+            required += counts
+        payload["nearby"] = {"building": building, "rows": rows}
+        required.append(building)
+
+    grouped: dict[str, list[Asset]] = {}
+    for asset in assets:
+        grouped.setdefault(asset.type_id, []).append(asset)
+    breakdown = [
+        Row(Tally.of(members), type_id=type_id, label=venue.asset_types[type_id].name.value)
+        for type_id, members in sorted(grouped.items())
+    ]
+    payload["required"] = required
+    payload["facts"] = facts.told()
+    return Answer(facts.items, payload, required, together, breakdown)
 
 
 def _scope(venue: Venue, facts: Facts, found: ScopeResult) -> str | None:
