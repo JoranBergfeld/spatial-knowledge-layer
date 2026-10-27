@@ -91,6 +91,19 @@ def asset_citation(asset: Asset) -> Citation:
     )
 
 
+def type_citation(kind: AssetType) -> Citation:
+    """One asset type, as a citation: its name and how that was reached."""
+    return Citation(
+        kind=FactKind.ASSET_TYPE,
+        type_id=kind.id,
+        label=kind.name.value,
+        provenance=kind.name.provenance.value,
+        rule=kind.name.rule,
+        basis=kind.name.basis,
+        record_provenance=kind.record_provenance.value,
+    )
+
+
 @dataclass(frozen=True)
 class Fact:
     ref: str
@@ -142,19 +155,7 @@ class Facts:
     def asset_type(self, kind: AssetType) -> str:
         key = ("type", kind.id)
         if key not in self._seen:
-            self._seen[key] = self._add(
-                FactKind.ASSET_TYPE,
-                kind.name.value,
-                Citation(
-                    kind=FactKind.ASSET_TYPE,
-                    type_id=kind.id,
-                    label=kind.name.value,
-                    provenance=kind.name.provenance.value,
-                    rule=kind.name.rule,
-                    basis=kind.name.basis,
-                    record_provenance=kind.record_provenance.value,
-                ),
-            )
+            self._seen[key] = self._add(FactKind.ASSET_TYPE, kind.name.value, type_citation(kind))
         return self._seen[key]
 
     def asset(self, asset: Asset) -> str:
@@ -217,6 +218,16 @@ class Facts:
         """What a count over ``types`` is of: the type, where there is one, else ANY_ASSETS."""
         kinds = sorted(set(types or ()))
         return self.asset_type(venue.asset_types[kinds[0]]) if len(kinds) == 1 else ANY_ASSETS
+
+    def jobs(self, count: int, *, type_id: str) -> str:
+        """How many planned jobs a type has, worded by the host: "2 planned jobs"."""
+        text = f"{count} planned job" + ("" if count == 1 else "s")
+        return self._add(
+            FactKind.COUNT,
+            text,
+            Citation(kind=FactKind.COUNT, type_id=type_id, label=text, count=count),
+            told={"about": "planned jobs, and says so"},
+        )
 
     def condition(self, text: str, citation: Citation, **told: str) -> str:
         """What a filter tested, worded by the host so the model cannot reword it."""

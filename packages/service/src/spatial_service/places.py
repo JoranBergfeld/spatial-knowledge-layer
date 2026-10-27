@@ -31,7 +31,15 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from functools import cached_property
 
-from spatial_core.records import Asset, AssetType, Edge, Persona, ServiceEvent, Space
+from spatial_core.records import (
+    Asset,
+    AssetType,
+    Edge,
+    MaintenanceTask,
+    Persona,
+    ServiceEvent,
+    Space,
+)
 from spatial_core.search import IndexRef
 
 # How many candidates a clarification names.
@@ -89,6 +97,8 @@ class Venue:
     index: IndexRef | None = None
     # The service events of visible assets, by asset. An event is hidden with its asset.
     service_events: Mapping[str, tuple[ServiceEvent, ...]] = field(default_factory=dict)
+    # The planned jobs on visible types, by type. A job is hidden with its type.
+    maintenance_tasks: Mapping[str, tuple[MaintenanceTask, ...]] = field(default_factory=dict)
     # The circulation edges the persona may take, between spaces they can see.
     edges: tuple[Edge, ...] = ()
     # How many doors the persona may take each space has (routes.door_counts).
@@ -141,6 +151,13 @@ class Venue:
 
 def tier(space: Space) -> str:
     return space.tier.value
+
+
+def building_or_above(venue: Venue, space: Space) -> bool:
+    """Whether a space's tier is the building tier or one outside it."""
+    if BUILDING not in venue.tiers:
+        return space.parent_id is None
+    return tier(space) in venue.tiers[: venue.tiers.index(BUILDING) + 1]
 
 
 def label(space: Space) -> str | None:

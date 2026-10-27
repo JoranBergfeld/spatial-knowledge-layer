@@ -23,6 +23,7 @@ from spatial_core.records import (
     Asset,
     AssetType,
     Edge,
+    MaintenanceTask,
     Persona,
     ServiceEvent,
     Space,
@@ -72,6 +73,7 @@ class MemoryStore:
         visible_asset_types: Mapping[Persona, Collection[str]] | None = None,
         index: IndexRef | None = None,
         service_events: Iterable[ServiceEvent] = (),
+        maintenance_tasks: Iterable[MaintenanceTask] = (),
         edges: Iterable[Edge] = (),
         default_origin: str | None = None,
         sourced_share: float | None = None,
@@ -89,6 +91,7 @@ class MemoryStore:
         self._visible_assets = visible_assets or {}
         self._visible_types = visible_asset_types or {}
         self._events = list(service_events)
+        self._tasks = list(maintenance_tasks)
         self._edges = tuple(edges)
         self._default_origin = default_origin
 
@@ -111,6 +114,7 @@ class MemoryStore:
             tiers=tiers_of(self._spaces.values()),
             index=self.index,
             service_events=by_asset(e for e in self._events if e.asset_id in assets),
+            maintenance_tasks=by_type(t for t in self._tasks if t.type_id in types),
             **circulation(self._edges, ids, persona, self._default_origin),
         )
 
@@ -120,6 +124,13 @@ def by_asset(events: Iterable[ServiceEvent]) -> dict[str, tuple[ServiceEvent, ..
     for event in events:
         grouped.setdefault(event.asset_id, []).append(event)
     return {asset_id: tuple(found) for asset_id, found in grouped.items()}
+
+
+def by_type(tasks: Iterable[MaintenanceTask]) -> dict[str, tuple[MaintenanceTask, ...]]:
+    grouped: dict[str, list[MaintenanceTask]] = {}
+    for task in tasks:
+        grouped.setdefault(task.type_id, []).append(task)
+    return {type_id: tuple(found) for type_id, found in grouped.items()}
 
 
 def circulation(
@@ -228,6 +239,12 @@ class PostgresStore:
             " JOIN {views}.visible_assets visible ON visible.asset_id = event.asset_id"
             " WHERE visible.persona = %s"
         ).format(**names)
+        # A job is read only through a visible type, so it is hidden with it.
+        tasks_query = sql.SQL(
+            "SELECT task.* FROM {views}.maintenance_tasks task"
+            " JOIN {views}.visible_asset_types visible ON visible.type_id = task.type_id"
+            " WHERE visible.persona = %s"
+        ).format(**names)
         # Tier words only, over every space: see Venue.tiers.
         tiers_query = sql.SQL(
             "SELECT tier->>'value' AS tier, min(jsonb_array_length(ancestor_path)) AS depth"
@@ -248,6 +265,7 @@ class PostgresStore:
             asset_rows = conn.execute(assets_query, (persona.value,)).fetchall()
             type_rows = conn.execute(types_query, (persona.value,)).fetchall()
             event_rows = conn.execute(events_query, (persona.value,)).fetchall()
+            task_rows = conn.execute(tasks_query, (persona.value,)).fetchall()
             tier_rows = conn.execute(tiers_query).fetchall()
             edge_rows = conn.execute(edges_query).fetchall()
         spaces = [Space.model_validate(row) for row in rows]
@@ -268,5 +286,6 @@ class PostgresStore:
             if loaded["search_index"]
             else None,
             service_events=by_asset(ServiceEvent.model_validate(row) for row in event_rows),
+            maintenance_tasks=by_type(MaintenanceTask.model_validate(row) for row in task_rows),
             **circulation(edges, visible, persona, loaded["default_origin"]),
         )

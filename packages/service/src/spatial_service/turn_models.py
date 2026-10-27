@@ -16,6 +16,7 @@ from spatial_service.attributes import FilterTrace
 from spatial_service.conversation import ConversationState
 from spatial_service.grounding import Segment
 from spatial_service.llm import LlmCall
+from spatial_service.maintenance import MaintenanceOut, MaintenanceTrace
 from spatial_service.places import Outcome
 from spatial_service.plan import STEP_CAP, FollowUpTarget, MentionKind, QuestionShape
 from spatial_service.recovery import PlanChange, RecoveryOutcome, Trigger
@@ -86,6 +87,9 @@ class AbstentionCause(StrEnum):
     NO_ROUTE = "no-route"
     # Nothing of the kind asked for can be placed near there, by route or by containment.
     NOTHING_NEAR = "nothing-near"
+    # A question only staff and maintenance get an answer to, asked as a visitor.
+    # Said for the shape, before anything is looked up.
+    STAFF_ONLY = "staff-only"
 
 
 class CoverageGap(StrEnum):
@@ -95,6 +99,8 @@ class CoverageGap(StrEnum):
     NO_RECORDED_INSTALLATIONS = "no-recorded-installations"
     # None of the assets asked about carries the attribute filtered on.
     ATTRIBUTE_NOT_RECORDED = "attribute-not-recorded"
+    # None of the types asked about has a planned job on record.
+    NO_PLANNED_MAINTENANCE = "no-planned-maintenance"
 
 
 class Candidate(_Model):
@@ -311,6 +317,8 @@ class Trace(_Model):
     dropped_segments: list[DroppedSegment] = []
     # The persona's graph and what each route or nearest step did on it.
     route: RouteTrace | None = None
+    # What a maintenance step found: the types, their jobs, and what was counted nearby.
+    maintenance: MaintenanceTrace | None = None
     composition_rejection: list[str] = []
     unavailable: str | None = None
 
@@ -324,6 +332,8 @@ class Turn(_Model):
     candidates: list[Candidate] = []
     # Every route the answer rests on, in plan order, each complete in itself.
     routes: list[RouteOut] = []
+    # The planned jobs a maintenance answer rests on, as rows, and the same kit nearby.
+    maintenance: MaintenanceOut | None = None
     state: ConversationState
     trace: Trace
     llm_calls: list[LlmCall]

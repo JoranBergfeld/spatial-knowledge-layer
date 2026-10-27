@@ -130,8 +130,9 @@ is written only to the bundle's `seed/` half. The fire equipment OSM maps
 
 Every asset carries its ancestor path: its space's path and then its space.
 
-The Clinic has no maintenance job for any of the generated types. The two jobs in the
-file (the door's and the panelboard's) are authored, and the file says so.
+The Clinic has no maintenance job for any of the generated types. Every job in the
+file is authored, one or two per type, and the file says so. They're plausible, not
+anybody's maintenance plan.
 
 The manifest counts the types whose code fell back (`inventory.unrecognised_categories`),
 the way `clearance.unrecognised_access` does for spaces. It never blocks a load. The
@@ -800,6 +801,45 @@ Rough, all of it. Not measured against anything, and the spec lists both shapes 
 unmeasured. A space with no outline cannot be routed to. Type and description matching
 are word lists.
 
+### Planned maintenance
+
+`asset-maintenance` is "what maintenance do the AC units need" or "how often are the
+extinguishers in 50.34 checked". One more tool (`packages/service/src/spatial_service/maintenance.py`):
+
+| Tool | What it does |
+| --- | --- |
+| `maintenance_tasks` | The planned jobs (COBie Jobs, `maintenance_tasks` in the snapshot) on the types of an assets step's assets, or of the one asset a follow-up points at. |
+
+```
+resolve_place -> resolve_asset_type -> assets_in_scope -> maintenance_tasks   asset-maintenance
+resolve_asset -> maintenance_tasks                                            asset-maintenance
+```
+
+**The answer is a table.** Jobs hang off a type, so the jobs are the ones on the
+types asked about, or on the types the scope holds when the question names none.
+They go back in `maintenance.tasks` on the turn, one row per job record, values as
+recorded (the Clinic's step rows and its "n/a" included), at most 30. The composer
+only writes the lead-in: how many of the assets are there, how many planned jobs each
+type has, and which types have none. It never sees the jobs.
+
+**Nearby.** Whoever services the lights in one room probably does the rest of the
+building while they're there. So when the scope is below building tier, the other
+visible assets of the same types in that building (types with a job, and in scope)
+are counted per floor, in `maintenance.nearby`, and the lead-in says so. Plain
+counts. Due dates don't come into it yet, which might turn out dumb in practice.
+
+**Staff and maintenance only.** A visitor asking this shape gets `staff-only`
+("Maintenance plans are only shown to staff."), decided by the host from the shape
+before any step runs. Same words whether the type exists or not. A job is read only
+through a visible type, so staff don't see the jobs on maintenance-only kit.
+
+Types asked about with no job at all are a `coverage-gap` with `gap` set to
+`no-planned-maintenance`, naming them. No model is called for it. What a manual says
+about servicing stays `asset-document`.
+
+The demo venue's jobs are authored (inventory.json, see above), so they're plausible
+and that's it. Measured only by the hand-written questions.
+
 ### The collapsed tree
 
 The planner is shown the top of the containment tree: labels and tiers of the spaces
@@ -828,7 +868,7 @@ A turn is one of four kinds:
 | --- | --- |
 | `answer` | Every step found what it needed and the composition passed its checks. |
 | `clarification` | A step matched several places, or the mention was a bare room number, which is never a label. Or a follow-up reference pointed at more than one asset. The candidates are all visible to the persona, at most six. The state carries them, and the next turn's planner sees their labels. |
-| `abstention` | `no-such-place` when nothing the persona can see matches. A place beyond clearance and a place that does not exist give the same abstention, and the same trace but for the words asked. `no-such-asset-type` is the same for a type. Also `nothing-at-scale-level`, `step-dependent-question`, `unsupported-question`, `plan-rejected` and `composition-rejected`. `nothing-referred-to` when a follow-up reference has nothing to point at. `no-document` and `ungrounded` for document questions (see Documents in an answer). `nothing-recorded` is a room or floor with nothing in it, inside a building that has installations: no reason given. And `coverage-gap`, with the turn's `gap` saying which: `no-recorded-installations`, when nothing the persona can see is installed in a building or anything bigger, or `attribute-not-recorded`, when no asset asked about carries the attribute filtered on. A gap in the data, not a count of zero. Nothing else gives a reason. `no-route` is any route that cannot be found, whatever stopped it, and `nothing-near` a proximity question with nothing to be near. |
+| `abstention` | `no-such-place` when nothing the persona can see matches. A place beyond clearance and a place that does not exist give the same abstention, and the same trace but for the words asked. `no-such-asset-type` is the same for a type. Also `nothing-at-scale-level`, `step-dependent-question`, `unsupported-question`, `plan-rejected` and `composition-rejected`. `nothing-referred-to` when a follow-up reference has nothing to point at. `no-document` and `ungrounded` for document questions (see Documents in an answer). `nothing-recorded` is a room or floor with nothing in it, inside a building that has installations: no reason given. And `coverage-gap`, with the turn's `gap` saying which: `no-recorded-installations`, when nothing the persona can see is installed in a building or anything bigger, `attribute-not-recorded`, when no asset asked about carries the attribute filtered on, or `no-planned-maintenance`, when no type asked about has a planned job. A gap in the data, not a count of zero. `staff-only` when a visitor asks for maintenance plans. Nothing else gives a reason. `no-route` is any route that cannot be found, whatever stopped it, and `nothing-near` a proximity question with nothing to be near. |
 | `unavailable` | A model could not be reached. HTTP 503, no answer, and the prior state back unchanged. |
 
 Every turn carries its trace, the new conversation state, each model call's token usage

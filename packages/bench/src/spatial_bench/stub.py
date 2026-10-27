@@ -72,6 +72,8 @@ def plan_for(question: Question) -> dict[str, Any]:
         add({"tool": "aggregate", "assets": found, "by": slots.by})
     elif question.shape == "asset-document":
         add({"tool": "retrieve_documents", "anchors": found, "query": slots.query})
+    elif question.shape == "asset-maintenance":
+        add({"tool": "maintenance_tasks", "assets": found})
     return {"shape": question.shape, "mentions": mentions, "steps": steps}
 
 

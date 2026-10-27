@@ -34,6 +34,9 @@ maintenance; all generated but the extinguisher, which OSM maps):
 Nothing in 30.10 room 107, Seminarraum Süd or anywhere in the Mensa. So a visitor
 counts 8 assets, staff 9 and maintenance 13.
 
+Planned jobs: one each on Light Fixture B1, Panelboard P1 and the fire extinguisher.
+Light Fixture Q4 has none.
+
 What the assets carry (L is a light, P a panelboard; the extinguisher carries nothing):
 
           installation_date   serial_number   service events        service due
@@ -68,6 +71,7 @@ from spatial_core.records import (
     Asset,
     AssetType,
     Clearance,
+    MaintenanceTask,
     Persona,
     Position,
     RecordProvenance,
@@ -311,6 +315,37 @@ def service_events() -> list[ServiceEvent]:
     ]
 
 
+# (type, job, every N months, hours). Light Fixture Q4 has none.
+_JOBS = [
+    (LIGHT_B1, "Check light fixture", "12", "0.1"),
+    (PANEL, "Inspect distribution board", "12", "1.0"),
+    (EXTINGUISHER, "Inspect fire extinguisher", "24", "0.25"),
+]
+
+
+def maintenance_tasks() -> list[MaintenanceTask]:
+    return [
+        MaintenanceTask(
+            id=f"seed:task:{type_id}:1",
+            record_provenance=RecordProvenance.SEED,
+            type_id=type_id,
+            name=_inferred(name),
+            category=_inferred("PM"),
+            status=_inferred("Scheduled"),
+            description=_inferred(f"{name}, and record it."),
+            duration=_inferred(hours),
+            duration_unit=_inferred("hour"),
+            start=_inferred("0"),
+            task_start_unit=_inferred("month"),
+            frequency=_inferred(months),
+            frequency_unit=_inferred("month"),
+            task_number=_inferred("1"),
+            resource_names=_inferred("Facility services"),
+        )
+        for type_id, name, months, hours in _JOBS
+    ]
+
+
 def assets() -> list[Asset]:
     by_id = {space.id: space for space in spaces()}
     names = {kind.id: kind.name.value for kind in asset_types()}
@@ -367,6 +402,7 @@ def store() -> MemoryStore:
         visible_assets=seen_assets,
         visible_asset_types=seen_types,
         service_events=service_events(),
+        maintenance_tasks=maintenance_tasks(),
     )
 
 
