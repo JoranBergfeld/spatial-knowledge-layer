@@ -130,8 +130,9 @@ is written only to the bundle's `seed/` half. The fire equipment OSM maps
 
 Every asset carries its ancestor path: its space's path and then its space.
 
-The Clinic has no maintenance job for any of the generated types. The two jobs in the
-file (the door's and the panelboard's) are authored, and the file says so.
+The Clinic has no maintenance job for any of the generated types. Every job in the
+file is authored, one or two per type, and the file says so. They're plausible, not
+anybody's maintenance plan.
 
 The manifest counts the types whose code fell back (`inventory.unrecognised_categories`),
 the way `clearance.unrecognised_access` does for spaces. It never blocks a load. The

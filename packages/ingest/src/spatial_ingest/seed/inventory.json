@@ -15,7 +15,7 @@
       "Each type is the most installed Clinic type with its Table 23 code, and stands for every Clinic type with that code.",
       "m2_per_item is a category's summed net area over its components with the type's code. A component listing two spaces counts in the first.",
       "min is 1 where the median Clinic space of the category holds at least one.",
-      "The Clinic has no Job for any of these types. The jobs on the door and the panelboard are authored here, not sourced."
+      "The Clinic has no Job for any of these types. Every job on them is authored here, not sourced."
     ]
   },
   "door_type": "door-type-a",
@@ -151,7 +151,18 @@
       "clinic_types_with_code": 24,
       "clinic_components_with_code": 668,
       "layout": "grid",
-      "jobs": []
+      "jobs": [
+        {
+          "name": "Check light fixture",
+          "category": "PM",
+          "frequency": 12,
+          "frequency_unit": "month",
+          "duration": 0.1,
+          "duration_unit": "hour",
+          "description": "Check the fitting, clean the diffuser and replace failed lamps or drivers.",
+          "resource_names": "Electrician"
+        }
+      ]
     },
     "light-fixture-q4": {
       "name": "Light Fixture Q4",
@@ -166,7 +177,18 @@
       "clinic_types_with_code": 15,
       "clinic_components_with_code": 166,
       "layout": "grid",
-      "jobs": []
+      "jobs": [
+        {
+          "name": "Check light fixture",
+          "category": "PM",
+          "frequency": 12,
+          "frequency_unit": "month",
+          "duration": 0.1,
+          "duration_unit": "hour",
+          "description": "Check the fitting, clean the diffuser and replace failed lamps or drivers.",
+          "resource_names": "Electrician"
+        }
+      ]
     },
     "ac-unit-type-1": {
       "name": "AC Unit Type 1",
@@ -181,7 +203,28 @@
       "clinic_types_with_code": 2,
       "clinic_components_with_code": 5,
       "layout": "grid",
-      "jobs": []
+      "jobs": [
+        {
+          "name": "Clean AC unit filters",
+          "category": "PM",
+          "frequency": 3,
+          "frequency_unit": "month",
+          "duration": 0.5,
+          "duration_unit": "hour",
+          "description": "Clean or replace the filters, and check the condensate drain and the fan.",
+          "resource_names": "HVAC technician"
+        },
+        {
+          "name": "Refrigerant leak check",
+          "category": "PM",
+          "frequency": 12,
+          "frequency_unit": "month",
+          "duration": 1.0,
+          "duration_unit": "hour",
+          "description": "Check the refrigerant circuit for leaks and record the result.",
+          "resource_names": "HVAC technician"
+        }
+      ]
     },
     "vav-200-mm": {
       "name": "VAV 200 mm",
@@ -196,7 +239,18 @@
       "clinic_types_with_code": 10,
       "clinic_components_with_code": 133,
       "layout": "grid",
-      "jobs": []
+      "jobs": [
+        {
+          "name": "Check VAV box",
+          "category": "PM",
+          "frequency": 12,
+          "frequency_unit": "month",
+          "duration": 0.5,
+          "duration_unit": "hour",
+          "description": "Check the damper, the actuator and the airflow sensor against the design flow.",
+          "resource_names": "HVAC technician"
+        }
+      ]
     },
     "supply-diffuser-600-face": {
       "name": "Supply Diffuser 600 Face",
@@ -211,7 +265,18 @@
       "clinic_types_with_code": 12,
       "clinic_components_with_code": 454,
       "layout": "grid",
-      "jobs": []
+      "jobs": [
+        {
+          "name": "Clean supply diffuser",
+          "category": "PM",
+          "frequency": 12,
+          "frequency_unit": "month",
+          "duration": 0.1,
+          "duration_unit": "hour",
+          "description": "Clean the face and check the damper setting.",
+          "resource_names": "Facilities technician"
+        }
+      ]
     },
     "ball-valve-50-mm": {
       "name": "Ball Valve 50 mm",
@@ -226,7 +291,18 @@
       "clinic_types_with_code": 5,
       "clinic_components_with_code": 172,
       "layout": "perimeter",
-      "jobs": []
+      "jobs": [
+        {
+          "name": "Exercise ball valve",
+          "category": "PM",
+          "frequency": 12,
+          "frequency_unit": "month",
+          "duration": 0.1,
+          "duration_unit": "hour",
+          "description": "Open and close it fully, and check the stem for leaks.",
+          "resource_names": "Plumber"
+        }
+      ]
     },
     "lavatory-p-3100": {
       "name": "Lavatory P-3100",
@@ -241,7 +317,18 @@
       "clinic_types_with_code": 10,
       "clinic_components_with_code": 83,
       "layout": "perimeter",
-      "jobs": []
+      "jobs": [
+        {
+          "name": "Check lavatory",
+          "category": "PM",
+          "frequency": 12,
+          "frequency_unit": "month",
+          "duration": 0.25,
+          "duration_unit": "hour",
+          "description": "Check the tap, the trap and the fixings for leaks.",
+          "resource_names": "Plumber"
+        }
+      ]
     },
     "water-closet-p-9050": {
       "name": "Water Closet P-9050",
@@ -256,7 +343,18 @@
       "clinic_types_with_code": 2,
       "clinic_components_with_code": 24,
       "layout": "perimeter",
-      "jobs": []
+      "jobs": [
+        {
+          "name": "Check water closet",
+          "category": "PM",
+          "frequency": 12,
+          "frequency_unit": "month",
+          "duration": 0.25,
+          "duration_unit": "hour",
+          "description": "Check the flush valve, the seals and the fixings.",
+          "resource_names": "Plumber"
+        }
+      ]
     },
     "urinal-p-8150": {
       "name": "Urinal P-8150",
@@ -271,7 +369,18 @@
       "clinic_types_with_code": 1,
       "clinic_components_with_code": 3,
       "layout": "perimeter",
-      "jobs": []
+      "jobs": [
+        {
+          "name": "Check urinal",
+          "category": "PM",
+          "frequency": 6,
+          "frequency_unit": "month",
+          "duration": 0.25,
+          "duration_unit": "hour",
+          "description": "Descale the trap and check the flush valve.",
+          "resource_names": "Plumber"
+        }
+      ]
     },
     "lighting-and-appliance-panelboard": {
       "name": "Lighting and Appliance Panelboard",

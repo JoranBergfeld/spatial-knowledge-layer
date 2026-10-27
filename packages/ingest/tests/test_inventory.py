@@ -404,7 +404,7 @@ def test_maintenance_tasks_follow_cobie_job(bundle: Path) -> None:
     assert task["frequency"]["value"] == "12"
     assert task["frequency_unit"]["value"] == "month"
     # The bench has no job for any generated type, so only the authored ones are
-    # written: the door's and the panelboard's, and the sourced fire types'.
+    # written, for the types the venue uses, and the sourced fire types'.
     authored = {f"seed:type:{key}" for key, kind in inputs()["types"].items() if kind["jobs"]}
     used = {t["id"] for t in read_jsonl(bundle / "seed" / "asset_types.jsonl")}
     fire = {t["id"] for t in read_jsonl(bundle / "osm" / "asset_types.jsonl")}
@@ -451,9 +451,30 @@ def test_each_asset_has_at_most_one_latest_service_event(bundle: Path) -> None:
         installed = asset["attributes"].get("installation_date")
         if installed:
             assert start >= datetime.date.fromisoformat(installed["value"])
-    assert {event["task_id"] is None for event in events} == {True, False}
+    # Every type the venue uses has a job, so every event carries one.
+    assert all(event["task_id"] is not None for event in events)
     # Sourced fire assets get events too, in the seed half.
     assert any(event["asset_id"].startswith("osm:asset:") for event in events)
+
+
+def test_a_type_without_a_job_is_serviced_within_a_year(venue_file: Path, tmp_path: Path) -> None:
+    data = inputs()
+    data["types"]["light-fixture-b1"]["jobs"] = []
+    path = write_inputs(tmp_path / "jobless.json", data)
+
+    assert build(venue_file, tmp_path / "out", "--inventory", str(path)) == 0
+    built = tmp_path / "out" / DATE
+    lights = {a["id"] for a in seeded(built) if a["type_id"] == "seed:type:light-fixture-b1"}
+    events = read_jsonl(built / "seed" / "service_events.jsonl")
+    snapshot = datetime.date.fromisoformat(DATE)
+
+    jobless = [e for e in events if e["asset_id"] in lights]
+    assert jobless
+    for event in jobless:
+        assert event["task_id"] is None
+        start = datetime.date.fromisoformat(event["start"]["value"])
+        assert (snapshot - start).days < 365
+    assert all(e["task_id"] is not None for e in events if e["asset_id"] not in lights)
 
 
 def test_generated_records_are_seed_and_every_value_is_inferred_with_its_basis(

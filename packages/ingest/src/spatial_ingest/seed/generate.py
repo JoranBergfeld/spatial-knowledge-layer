@@ -52,8 +52,8 @@ The service-event share and the performer are chosen here, not measured, since t
 bench has no service events. The share is 0.7. A bench that records
 events at all records them on most of its assets, but not all; seven in ten keeps
 the gap visible without making "when was this last serviced" mostly unanswerable.
-The bench has no task for any generated type, so the two that carry one (the door
-and the panelboard) have it authored in inventory.json, and the file says so.
+The bench has no task for any generated type, so every task on one is authored in
+inventory.json, and the file says so.
 """
 
 from __future__ import annotations
