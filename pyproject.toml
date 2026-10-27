@@ -28,6 +28,8 @@ dev = [
     "mypy",
     "types-shapely",
     "types-openpyxl",
+    "mdformat>=1.0.0",
+    "mdformat-gfm>=1.0.0",
 ]
 
 [tool.pytest.ini_options]

@@ -1,0 +1,3 @@
+#!/bin/sh
+# Nothing goes up that CI would turn red. Wired by `git config core.hooksPath .githooks`.
+exec "$(git rev-parse --show-toplevel)/scripts/check"

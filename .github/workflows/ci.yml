@@ -44,6 +44,7 @@ jobs:
         run: |
           uv run ruff check .
           uv run ruff format --check .
+          uv run mdformat --check README.md
 
       - name: Typecheck
         run: uv run mypy
