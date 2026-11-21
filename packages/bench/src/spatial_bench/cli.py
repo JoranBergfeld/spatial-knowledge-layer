@@ -203,7 +203,7 @@ def _fresh(args: argparse.Namespace) -> int:
 def wiring_from_env(compare_ranker: bool) -> Wiring:
     """The real models, index and NLI model, as the environment names them."""
     from spatial_service import search
-    from spatial_service.app import ConfigError, Settings, azure_llm
+    from spatial_service.app import ConfigError, Settings, chat_llm
     from spatial_service.retrieval import Retriever
     from spatial_service.store import PostgresStore
 
@@ -229,7 +229,7 @@ def wiring_from_env(compare_ranker: bool) -> Wiring:
     reranked = Retriever(index, embedder, semantic_ranker=True) if compare_ranker else None
     return Wiring(
         store=PostgresStore(settings.database_url),
-        llm=azure_llm(settings),
+        llm=chat_llm(settings),
         nli=OnnxNli(Path(os.environ[MODEL_DIR_ENV])),
         documents=documents,
         reranked=reranked,
