@@ -164,11 +164,14 @@ is all that leaves the bundle. The German is in `translations.jsonl`, also priva
 Build needs these for a corpus with anything in it:
 
 ```
-AZURE_OPENAI_ENDPOINT            the Azure OpenAI resource
+SPATIAL_LLM_BASE_URL             optional: an OpenAI-compatible /v1 server that translates
+                                 and summarises, the Spark's (http://192.168.5.6:8101/v1)
+SPATIAL_LLM_API_KEY              its Bearer key
+AZURE_OPENAI_ENDPOINT            the Azure OpenAI resource, while anything still goes there
 AZURE_OPENAI_API_KEY             its key
 AZURE_OPENAI_API_VERSION         optional, 2024-10-21 by default
-SPATIAL_COMPOSITION_DEPLOYMENT   translates and summarises. The same deployment that
-                                 composes answers
+SPATIAL_COMPOSITION_DEPLOYMENT   translates and summarises. The same deployment (or, on
+                                 the /v1 server, model) that composes answers
 SPATIAL_EMBEDDING_DEPLOYMENT     embeds the chunks on Azure, when no /v1 server does
 SPATIAL_EMBEDDING_BASE_URL       optional: an OpenAI-compatible /v1 server that embeds
                                  instead, the Spark's (http://192.168.5.6:8103/v1)
@@ -189,6 +192,13 @@ pointing build at another embedder embeds everything again, and there is no
 `vectors.jsonl` to delete by hand. The Spark only lets LXC 217 and the website reach
 8103, so a build on a workstation goes through an SSH tunnel to the Spark and sets the
 base URL to `http://127.0.0.1:8103/v1`.
+
+With both base URLs set, a build asks Azure nothing. 8101 is behind the same firewall,
+so tunnel it too (`-L 8101:127.0.0.1:8101`). A rebuild keeps every translation and
+summary the bundle already holds, whichever deployment made them, so pointing build at
+the Spark only sends it what is new. The manifest's `made_by` then lists both models. To
+have everything written by one model, bump the prompt's version, which makes them all
+again.
 
 | Rule | What it does |
 | -- | -- |
@@ -1357,6 +1367,17 @@ uv run bench run --gold gold.json --checks checks.json --rates rates.json \
 It reads the service's own environment (the database, both deployments, the index), so
 point `SPATIAL_SERVICE_DATABASE_URL` at the test bench's database. It measures that
 database's current snapshot. It also wants `SPATIAL_NLI_MODEL_DIR`, see below.
+
+The site serves the Spark, so a run that counts runs there too: `SPATIAL_LLM_BASE_URL`
+and `SPATIAL_LLM_API_KEY` for 8101, both deployments set to the model it serves, and the
+`SPATIAL_EMBEDDING_*` variables for 8103, through the same tunnels as a build. The Spark
+costs nothing per token, but every model a run calls still needs a line in the rates
+file, at 0:
+
+```
+"nvidia/Qwen3.8-Flash-Next-NVFP4": {"input": 0.0, "output": 0.0},
+"google/embeddinggemma-2": {"input": 0.0}
+```
 
 Before it calls anything it prints the run id, the snapshot, the deployments, the number
 of questions, a cost estimate and the ceiling, and waits for you to type `yes`. There is

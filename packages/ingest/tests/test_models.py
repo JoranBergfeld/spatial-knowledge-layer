@@ -161,3 +161,71 @@ def test_a_v1_server_needs_its_key_and_model_not_an_azure_embedding_deployment()
         models.from_env(env)
     assert models.configured_embedding({models.EMBEDDING_DEPLOYMENT_ENV: "small"}) == "small"
     assert models.configured_embedding({}) is None
+
+
+def test_a_v1_server_translates_and_summarises_in_place_of_azure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sent: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
+
+    def post(
+        url: str, *, headers: dict[str, Any], json: dict[str, Any], **_: Any
+    ) -> httpx.Response:
+        sent.append((url, headers, json))
+        if url.endswith("/embeddings"):
+            answer: dict[str, Any] = {
+                "data": [{"embedding": [0.6, 0.8]}],
+                "usage": {"prompt_tokens": 2},
+            }
+        else:
+            answer = {**ANSWER, "model": "nvidia/Qwen3.8-Flash-Next-NVFP4"}
+        return httpx.Response(200, json=answer, request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(models.httpx, "post", post)
+    # No Azure at all: both kinds of call have a /v1 server.
+    env = {
+        models.TRANSLATION_DEPLOYMENT_ENV: "nvidia/Qwen3.8-Flash-Next-NVFP4",
+        models.LLM_BASE_URL_ENV: "http://spark:8101/v1/",
+        models.LLM_API_KEY_ENV: "llm-key",
+        models.EMBEDDING_BASE_URL_ENV: "http://spark:8103/v1",
+        models.EMBEDDING_API_KEY_ENV: "embed-key",
+        models.EMBEDDING_MODEL_ENV: "google/embeddinggemma-2",
+    }
+    client = models.from_env(env)
+
+    translated = client.translate("Ein Urinal.", "de")
+    summarised = client.summarise("Summarise.", "A long manual.")
+    client.embed("a passage")
+
+    assert translated.text == summarised.text == "A urinal."
+    assert translated.deployment == "nvidia/Qwen3.8-Flash-Next-NVFP4"
+    assert translated.model == "nvidia/Qwen3.8-Flash-Next-NVFP4"
+    (url, headers, body) = sent[0]
+    assert url == "http://spark:8101/v1/chat/completions"
+    assert headers == {"Authorization": "Bearer llm-key"}
+    assert body["model"] == "nvidia/Qwen3.8-Flash-Next-NVFP4"
+    assert [m["role"] for m in body["messages"]] == ["system", "user"]
+    assert sent[2][0] == "http://spark:8103/v1/embeddings"
+
+
+def test_a_v1_chat_server_needs_its_key() -> None:
+    env = {
+        models.TRANSLATION_DEPLOYMENT_ENV: "nvidia/Qwen3.8-Flash-Next-NVFP4",
+        models.LLM_BASE_URL_ENV: "http://spark:8101/v1",
+        models.EMBEDDING_BASE_URL_ENV: "http://spark:8103/v1",
+        models.EMBEDDING_API_KEY_ENV: "embed-key",
+        models.EMBEDDING_MODEL_ENV: "google/embeddinggemma-2",
+    }
+    with pytest.raises(models.ModelError, match="SPATIAL_LLM_API_KEY"):
+        models.from_env(env)
+
+
+def test_azure_is_still_needed_while_something_goes_there() -> None:
+    env = {
+        models.TRANSLATION_DEPLOYMENT_ENV: "compose",
+        models.LLM_BASE_URL_ENV: "http://spark:8101/v1",
+        models.LLM_API_KEY_ENV: "llm-key",
+        models.EMBEDDING_DEPLOYMENT_ENV: "small",
+    }
+    with pytest.raises(models.ModelError, match="AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY"):
+        models.from_env(env)
