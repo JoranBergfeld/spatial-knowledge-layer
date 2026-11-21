@@ -4,7 +4,8 @@ Load and promote write to the layer's database, named by --database-url or the
 SPATIAL_DATABASE_URL environment variable. Ingestion holds those credentials; the
 service never does. Load also writes the search index, which it finds through
 AZURE_SEARCH_ENDPOINT and AZURE_SEARCH_API_KEY. Build translates and embeds, and
-finds its deployments through the AZURE_OPENAI_* variables the service uses.
+finds its models through the variables the service uses: SPATIAL_LLM_* and
+SPATIAL_EMBEDDING_* for /v1 servers (the Spark), AZURE_OPENAI_* for the rest.
 """
 
 from __future__ import annotations

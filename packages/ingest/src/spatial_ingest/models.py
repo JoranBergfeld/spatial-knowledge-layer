@@ -1,11 +1,12 @@
 """The model calls build makes: translating a passage, summarising a document, embedding.
 
-Translation and summaries go to the composition deployment on the Azure OpenAI
-resource the service uses, named by the same environment variables. Embedding
-goes to the same resource unless SPATIAL_EMBEDDING_BASE_URL names an
-OpenAI-compatible /v1 server instead (the Spark's vLLM, serving
-google/embeddinggemma-2). Then the model's name stands where a deployment's
-would, in the vectors and the manifest, and the service reads it back from there.
+Translation and summaries go to the composition deployment, named by the same
+environment variables the service uses: on SPATIAL_LLM_BASE_URL, an
+OpenAI-compatible /v1 server (the Spark's LLM), when it is set, and on the Azure
+OpenAI resource otherwise. Embedding likewise goes to SPATIAL_EMBEDDING_BASE_URL
+(the Spark's vLLM, serving google/embeddinggemma-2) when it is set, and to Azure
+otherwise. On a /v1 server the model's name stands where a deployment's would,
+in the vectors and the manifest, and the service reads it back from there.
 
 Every call reports the model that served it and its token usage, which is where
 the manifest's ingestion spend comes from.
@@ -26,6 +27,10 @@ API_KEY_ENV = "AZURE_OPENAI_API_KEY"
 API_VERSION_ENV = "AZURE_OPENAI_API_VERSION"
 TRANSLATION_DEPLOYMENT_ENV = "SPATIAL_COMPOSITION_DEPLOYMENT"
 EMBEDDING_DEPLOYMENT_ENV = "SPATIAL_EMBEDDING_DEPLOYMENT"
+# An OpenAI-compatible chat server for translation and summaries, in place of Azure.
+# The same names the service plans and composes on.
+LLM_BASE_URL_ENV = "SPATIAL_LLM_BASE_URL"
+LLM_API_KEY_ENV = "SPATIAL_LLM_API_KEY"
 # An OpenAI-compatible embedding server, in place of the Azure deployment above.
 EMBEDDING_BASE_URL_ENV = "SPATIAL_EMBEDDING_BASE_URL"
 EMBEDDING_API_KEY_ENV = "SPATIAL_EMBEDDING_API_KEY"
@@ -186,7 +191,30 @@ class OpenAIEmbeddings:
         return _embedded(answer, self.model)
 
 
+class OpenAIChat:
+    """Chat completions on an OpenAI-compatible /v1 server. The model's name is the deployment."""
+
+    def __init__(
+        self, *, base_url: str, api_key: str, sleep: Callable[[float], None] = time.sleep
+    ) -> None:
+        self._url = f"{base_url.rstrip('/')}/chat/completions"
+        self._api_key = api_key
+        self._sleep = sleep
+
+    def complete(self, model: str, messages: list[dict[str, str]]) -> dict[str, Any]:
+        return _post(
+            self._url,
+            params={},
+            headers={"Authorization": f"Bearer {self._api_key}"},
+            body={"model": model, "messages": messages},
+            what=f"chat/completions on {model}",
+            sleep=self._sleep,
+        )
+
+
 class AzureOpenAI:
+    """Azure for whatever no /v1 server was given for."""
+
     def __init__(
         self,
         *,
@@ -197,10 +225,12 @@ class AzureOpenAI:
         embedding_deployment: str,
         sleep: Callable[[float], None] = time.sleep,
         embeddings: OpenAIEmbeddings | None = None,
+        chat: OpenAIChat | None = None,
     ) -> None:
         self.translation_deployment = translation_deployment
         self.embedding_deployment = embeddings.model if embeddings else embedding_deployment
         self._embeddings = embeddings
+        self._chat_server = chat
         self._endpoint = endpoint.rstrip("/")
         self._api_key = api_key
         self._api_version = api_version
@@ -218,16 +248,11 @@ class AzureOpenAI:
 
     def _chat(self, system: str, user: str, what: str) -> Translated:
         deployment = self.translation_deployment
-        answer = self._post(
-            deployment,
-            "chat/completions",
-            {
-                "messages": [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ]
-            },
-        )
+        messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
+        if self._chat_server is not None:
+            answer = self._chat_server.complete(deployment, messages)
+        else:
+            answer = self._post(deployment, "chat/completions", {"messages": messages})
         try:
             written = answer["choices"][0]["message"]["content"]
             usage = answer["usage"]
@@ -272,8 +297,12 @@ def from_env(env: Mapping[str, str] | None = None) -> Models:
     """The real client, from the environment. Build only asks once it has a call to make."""
     env = os.environ if env is None else env
     v1 = bool(env.get(EMBEDDING_BASE_URL_ENV))
+    chat_v1 = bool(env.get(LLM_BASE_URL_ENV))
     embedding = (EMBEDDING_API_KEY_ENV, EMBEDDING_MODEL_ENV) if v1 else (EMBEDDING_DEPLOYMENT_ENV,)
-    names = (ENDPOINT_ENV, API_KEY_ENV, TRANSLATION_DEPLOYMENT_ENV, *embedding)
+    chat = (LLM_API_KEY_ENV,) if chat_v1 else ()
+    # Azure only when something still goes there.
+    azure = () if v1 and chat_v1 else (ENDPOINT_ENV, API_KEY_ENV)
+    names = (*azure, TRANSLATION_DEPLOYMENT_ENV, *chat, *embedding)
     missing = [name for name in names if not env.get(name)]
     if missing:
         raise ModelError(
@@ -292,11 +321,17 @@ def from_env(env: Mapping[str, str] | None = None) -> Models:
             model=env[EMBEDDING_MODEL_ENV],
             dimensions=size,
         )
+    chat_server = (
+        OpenAIChat(base_url=env[LLM_BASE_URL_ENV], api_key=env[LLM_API_KEY_ENV])
+        if chat_v1
+        else None
+    )
     return AzureOpenAI(
-        endpoint=env[ENDPOINT_ENV],
-        api_key=env[API_KEY_ENV],
+        endpoint=env.get(ENDPOINT_ENV, ""),
+        api_key=env.get(API_KEY_ENV, ""),
         api_version=env.get(API_VERSION_ENV) or DEFAULT_API_VERSION,
         translation_deployment=env[TRANSLATION_DEPLOYMENT_ENV],
         embedding_deployment=env.get(EMBEDDING_DEPLOYMENT_ENV, ""),
         embeddings=embeddings,
+        chat=chat_server,
     )
