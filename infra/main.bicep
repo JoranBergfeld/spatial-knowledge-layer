@@ -1,4 +1,4 @@
-// The layer's prod Foundry: one AIServices account and its three deployments
+// The layer's prod Foundry: one AIServices account and its two deployments
 // (personal-website #90). Visitor traffic only. KIT builds call the bench's
 // spatial-foundry under the same deployment names (#91), so build spend never
 // lands here without a ledger row.
@@ -16,8 +16,9 @@ param name string = 'spatial-prod-foundry'
 param location string = 'swedencentral'
 
 // Global, because that's what the site's app.budget.rates prices. Capacity is
-// in thousands of tokens per minute. The service reads the embedding's name
-// from the snapshot's manifest, so it has to be exactly text-embedding-3-small.
+// in thousands of tokens per minute. Nothing here embeds: the layer embeds
+// with google/embeddinggemma-2 on the homelab's Spark since snapshot 2026-11-21.
+// A snapshot embedded with text-embedding-3-small can no longer be served.
 // Versions upgrade on their own, same as the bench: a retired pin takes the
 // layer down, a newer default doesn't. what-if will show the version moving.
 var deployments = [
@@ -32,12 +33,6 @@ var deployments = [
     model: 'gpt-5.4-mini'
     version: '2026-03-17'
     capacity: 200
-  }
-  {
-    name: 'text-embedding-3-small' // embeds the question
-    model: 'text-embedding-3-small'
-    version: '1'
-    capacity: 120
   }
 ]
 

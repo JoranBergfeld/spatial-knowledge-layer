@@ -1023,14 +1023,17 @@ The query is embedded by the deployment the snapshot's manifest names, the one t
 embedded the chunks, with the query prompt the manifest records in front of it. When the
 service has `SPATIAL_EMBEDDING_BASE_URL`, `SPATIAL_EMBEDDING_API_KEY` and
 `SPATIAL_EMBEDDING_MODEL`, a snapshot embedded by that model has its queries embedded on
-that server. Any other snapshot's go to the Azure resource, so promoting an older
-snapshot is still a rollback. The server answers at the model's native size, and the
-service cuts the vector to the snapshot's size and normalises it again, which is the
-same vector a Matryoshka cut on the server would give. The filter runs in the index
-before anything is ranked, so a document the persona may not read cannot take a slot and
-shorten the answer. The host checks every hit against the same filter anyway. The
-semantic ranker is a switch (`SPATIAL_SEMANTIC_RANKER`), off by default. The stand-in
-index has no ranker, so there the switch changes nothing but the trace.
+that server. Any other snapshot's go to the Azure resource. That only works while the
+deployment its manifest names is there: prod's `text-embedding-3-small` was deleted
+after 2026-11-21 went live, so promoting an older snapshot gets document turns that
+answer `RetrievalUnavailable`, and going back that far means building it again. The
+server answers at the model's native size, and the service cuts the vector to the
+snapshot's size and normalises it again, which is the same vector a Matryoshka cut on
+the server would give. The filter runs in the index before anything is ranked, so a
+document the persona may not read cannot take a slot and shorten the answer. The host
+checks every hit against the same filter anyway. The semantic ranker is a switch
+(`SPATIAL_SEMANTIC_RANKER`), off by default. The stand-in index has no ranker, so there
+the switch changes nothing but the trace.
 
 Summaries are searched too and never returned. A summary that matches counts for its
 document: each of that document's passages gets the summary's rank added to its own. If

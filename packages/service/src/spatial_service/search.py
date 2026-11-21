@@ -13,8 +13,8 @@ more field on the request, and off unless the configuration turns it on.
 The query is embedded by whatever embedded the snapshot's chunks: the Azure
 deployment the manifest names, or, when the environment sets
 SPATIAL_EMBEDDING_BASE_URL and the manifest names SPATIAL_EMBEDDING_MODEL, that
-OpenAI-compatible /v1 server. A snapshot from before the switch still embeds with
-Azure, so promoting it back is still a rollback.
+OpenAI-compatible /v1 server. A snapshot from before the switch embeds with
+Azure, which only works while its deployment is there. Prod's is gone.
 
 Which index client the service gets comes from the environment, like ingestion's:
 Azure AI Search when AZURE_SEARCH_ENDPOINT is set, else the stand-in directory
