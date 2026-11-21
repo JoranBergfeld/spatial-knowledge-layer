@@ -62,6 +62,7 @@ from spatial_core.records import (
     Value,
     ValueProvenance,
 )
+from spatial_core.search import EMBEDDING_PROMPTS
 from spatial_ingest import summaries as sac
 from spatial_ingest.corpus import AnchorSpec, Corpus, Source
 from spatial_ingest.models import PROMPT_VERSION, Models
@@ -331,12 +332,16 @@ def ingest(
     today: str,
     refetch: bool = False,
     fetcher: Fetcher | None = None,
+    embedding: str | None = None,
 ) -> Ingested:
     """The corpus as documents and chunks for this snapshot.
 
     ``models`` is only called once there is a passage to translate or a chunk to
     embed that the bundle does not already hold. ``fetcher`` gets an original by
     its URL. The test bench passes one that reads OCR'd text from disk.
+    ``embedding`` is the deployment (or model) the environment would embed with.
+    A stored vector from any other is embedded again, and the model's document
+    prompt, if it has one, goes in front of every text.
     """
     directory = bundle / DIR
     originals = directory / ORIGINALS_DIR
@@ -354,9 +359,15 @@ def ingest(
         for made in _read_jsonl(bundle / TRANSLATIONS_PART, Translation)
         if made.prompt_version == PROMPT_VERSION
     }
+    # Unlike a translation, a vector from another deployment is no use: one index
+    # cannot hold two models' vectors. So a rebuild pointed at another embedder
+    # embeds everything again, and one that names none keeps what is there.
     known_vectors = {
-        vector.text_sha256: vector for vector in _read_jsonl(bundle / VECTORS_PART, Vector)
+        vector.text_sha256: vector
+        for vector in _read_jsonl(bundle / VECTORS_PART, Vector)
+        if embedding is None or vector.deployment == embedding
     }
+    prompts = EMBEDDING_PROMPTS.get(embedding) if embedding else None
     client: list[Models] = []
 
     def model() -> Models:
@@ -520,6 +531,8 @@ def ingest(
 
     for chunk in [*chunks, *summary_chunks]:
         text = embedded_text(chunk, summary_of.get(chunk.document_id))
+        if prompts is not None:
+            text = prompts.document + text
         text_hash = sha256(text)
         stored = known_vectors.get(text_hash)
         if stored is None:
@@ -580,17 +593,22 @@ def ingest(
         "offline": sum(1 for link_ in links if link_["status"] == LinkStatus.OFFLINE.value),
         "translations": translated,
         "summaries": sac.manifest(summaries),
-        "embedding": (
-            {"deployment": served_by[0][0], "model": served_by[0][1], "dimensions": sizes[0]}
-            if vectors
-            else None
-        ),
+        "embedding": (_embedding(served_by[0][0], served_by[0][1], sizes[0]) if vectors else None),
         "originals": {
             source_id: entry["sha256"] for source_id, entry in sorted(kept.items()) if entry["file"]
         },
         "spend": _spend(translations, summaries, vectors),
     }
     return Ingested(documents, chunks, translations, summaries, summary_chunks, vectors, summary)
+
+
+def _embedding(deployment: str, model: str, dimensions: int) -> dict[str, Any]:
+    """The manifest's embedding entry. The service embeds a query by it."""
+    entry: dict[str, Any] = {"deployment": deployment, "model": model, "dimensions": dimensions}
+    prompts = EMBEDDING_PROMPTS.get(deployment)
+    if prompts is not None:
+        entry["prompts"] = {"query": prompts.query, "document": prompts.document}
+    return entry
 
 
 def _ids(anchors: Sequence[Anchor], kind: AnchorKind) -> tuple[str, ...]:

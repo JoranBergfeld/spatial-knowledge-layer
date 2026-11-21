@@ -243,6 +243,7 @@ def build(
         models=model_client,
         today=datetime.datetime.now(datetime.UTC).date().isoformat(),
         refetch=refetch_documents,
+        embedding=models.configured_embedding(),
     )
     translation_rules = (models.PROMPT_VERSION,) if prose.translations else ()
     summary_rules = (summaries.PROMPT_VERSION,) if prose.summaries else ()
@@ -387,6 +388,7 @@ def build_handover(
         models=model_client,
         today=datetime.datetime.now(datetime.UTC).date().isoformat(),
         refetch=refetch_documents,
+        embedding=models.configured_embedding(),
         fetcher=ocr_text,
     )
     summary_rules = (summaries.PROMPT_VERSION,) if prose.summaries else ()

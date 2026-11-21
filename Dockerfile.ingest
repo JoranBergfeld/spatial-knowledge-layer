@@ -4,7 +4,7 @@
 #
 #     docker run --rm -v "$PWD/bundles:/bundles" \
 #         -e AZURE_OPENAI_ENDPOINT -e AZURE_OPENAI_API_KEY \
-#         -e SPATIAL_COMPOSITION_DEPLOYMENT -e SPATIAL_EMBEDDING_DEPLOYMENT \
+#         -e SPATIAL_COMPOSITION_DEPLOYMENT -e SPATIAL_EMBEDDING_BASE_URL #         -e SPATIAL_EMBEDDING_API_KEY -e SPATIAL_EMBEDDING_MODEL -e SPATIAL_EMBEDDING_DIMENSIONS \
 #         <image> build --date 2026-09-15 --out /bundles
 #     docker run --rm -v "$PWD/bundles:/bundles" -e SPATIAL_DATABASE_URL \
 #         -e AZURE_SEARCH_ENDPOINT -e AZURE_SEARCH_API_KEY \

@@ -42,6 +42,27 @@ SEMANTIC_CONFIGURATION = "chunks"
 RRF_K = 60
 
 
+@dataclass(frozen=True)
+class Prompts:
+    """What goes in front of a text before it is embedded, for a model trained to expect it.
+
+    The server does not add these, so the caller does: build in front of each
+    chunk, the service in front of each query. The manifest records both, so a
+    query is always embedded the way its snapshot's chunks were.
+    """
+
+    query: str
+    document: str
+
+
+# Keyed by model name. A model with no entry is sent the bare text (text-embedding-3-small).
+EMBEDDING_PROMPTS: dict[str, Prompts] = {
+    "google/embeddinggemma-2": Prompts(
+        query="task: search result | query: ", document="title: none | text: "
+    ),
+}
+
+
 class IndexEntry(BaseModel):
     """A chunk and the embedding of its text."""
 
@@ -73,6 +94,10 @@ class IndexRef:
     name: str
     # None when the manifest names none. Then a query is keywords only.
     embedding_deployment: str | None = None
+    # What goes in front of the query before it is embedded. The manifest's, empty for none.
+    query_prompt: str = ""
+    # The size of the index's vectors. A longer query vector is cut to it (Matryoshka).
+    dimensions: int | None = None
 
 
 @dataclass(frozen=True)

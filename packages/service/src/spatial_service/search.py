@@ -10,6 +10,12 @@ RRF itself, when a request carries both. The filter goes in the same request, so
 it cuts the chunks down before anything is ranked. The semantic ranker is one
 more field on the request, and off unless the configuration turns it on.
 
+The query is embedded by whatever embedded the snapshot's chunks: the Azure
+deployment the manifest names, or, when the environment sets
+SPATIAL_EMBEDDING_BASE_URL and the manifest names SPATIAL_EMBEDDING_MODEL, that
+OpenAI-compatible /v1 server. A snapshot from before the switch still embeds with
+Azure, so promoting it back is still a rollback.
+
 Which index client the service gets comes from the environment, like ingestion's:
 Azure AI Search when AZURE_SEARCH_ENDPOINT is set, else the stand-in directory
 named by SPATIAL_SEARCH_DIR, else the tables in the service's own database.
@@ -42,11 +48,15 @@ from spatial_core.search import (
     SearchQueries,
 )
 from spatial_core.stores import SEARCH_SCHEMA
-from spatial_service.retrieval import Embedded, RetrievalUnavailable
+from spatial_service.retrieval import Embedded, Embedder, RetrievalUnavailable
 
 ENDPOINT_ENV = "AZURE_SEARCH_ENDPOINT"
 API_KEY_ENV = "AZURE_SEARCH_API_KEY"
 API_VERSION = "2024-07-01"
+# The same names build reads (spatial_ingest.models), for the same server.
+EMBEDDING_BASE_URL_ENV = "SPATIAL_EMBEDDING_BASE_URL"
+EMBEDDING_API_KEY_ENV = "SPATIAL_EMBEDDING_API_KEY"
+EMBEDDING_MODEL_ENV = "SPATIAL_EMBEDDING_MODEL"
 VECTOR_FIELD = "vector"
 # How many neighbours the vector half hands to the fusion.
 _NEIGHBOURS = 50
@@ -284,6 +294,78 @@ class AzureEmbedder:
             )
         except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as error:
             raise RetrievalUnavailable(f"embedding on {deployment} failed: {error!r}") from error
+
+
+class OpenAIEmbedder:
+    """Embeds a query on an OpenAI-compatible /v1 server. The deployment is the model's name.
+
+    It asks for the model's native size. The retriever cuts the vector to the
+    index's, which for a Matryoshka model is the same vector the server would cut.
+    """
+
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        api_key: str,
+        timeout_seconds: float = 30,
+        transport: httpx.BaseTransport | None = None,
+    ) -> None:
+        self._client = httpx.Client(
+            base_url=base_url.rstrip("/"),
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=timeout_seconds,
+            transport=transport,
+        )
+
+    def embed(self, deployment: str, text: str) -> Embedded:
+        try:
+            response = self._client.post("/embeddings", json={"model": deployment, "input": [text]})
+            response.raise_for_status()
+            answer = response.json()
+            return Embedded(
+                vector=tuple(float(value) for value in answer["data"][0]["embedding"]),
+                deployment=deployment,
+                input_tokens=int(answer["usage"]["prompt_tokens"]),
+            )
+        except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as error:
+            raise RetrievalUnavailable(f"embedding on {deployment} failed: {error!r}") from error
+
+
+class RoutedEmbedder:
+    """One embedder for named deployments, another for the rest."""
+
+    def __init__(self, routes: Mapping[str, Embedder], otherwise: Embedder) -> None:
+        self._routes = dict(routes)
+        self._otherwise = otherwise
+
+    def embed(self, deployment: str, text: str) -> Embedded:
+        return self._routes.get(deployment, self._otherwise).embed(deployment, text)
+
+
+def embedder_from_env(
+    env: Mapping[str, str],
+    *,
+    endpoint: str,
+    api_key: str,
+    api_version: str,
+    timeout_seconds: float = 30,
+) -> Embedder:
+    """Azure for every deployment, unless the environment names a /v1 server for one model."""
+    azure = AzureEmbedder(
+        endpoint=endpoint, api_key=api_key, api_version=api_version, timeout_seconds=timeout_seconds
+    )
+    if not env.get(EMBEDDING_BASE_URL_ENV):
+        return azure
+    missing = [name for name in (EMBEDDING_API_KEY_ENV, EMBEDDING_MODEL_ENV) if not env.get(name)]
+    if missing:
+        raise ValueError(f"{EMBEDDING_BASE_URL_ENV} is set, so set {', '.join(missing)} too")
+    v1 = OpenAIEmbedder(
+        base_url=env[EMBEDDING_BASE_URL_ENV],
+        api_key=env[EMBEDDING_API_KEY_ENV],
+        timeout_seconds=timeout_seconds,
+    )
+    return RoutedEmbedder({env[EMBEDDING_MODEL_ENV]: v1}, azure)
 
 
 def from_env(env: Mapping[str, str], database_url: str) -> SearchQueries:

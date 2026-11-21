@@ -46,6 +46,7 @@ scores a fact. The fusion above is over document search results only.
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass, replace
 from typing import Protocol
@@ -184,6 +185,19 @@ class Documents(Protocol):
     def retrieve(self, venue: Venue, anchors: Anchors, query: str) -> Retrieval: ...
 
 
+def _cut(embedded: Embedded, dimensions: int | None) -> Embedded:
+    """The vector cut to the index's size and normalised again: Matryoshka's cut.
+
+    A vector already that size is left alone, and so is one shorter, which the
+    index refuses on its own.
+    """
+    if dimensions is None or len(embedded.vector) <= dimensions:
+        return embedded
+    head = embedded.vector[:dimensions]
+    norm = math.sqrt(sum(value * value for value in head)) or 1.0
+    return replace(embedded, vector=tuple(value / norm for value in head))
+
+
 class Retriever:
     """The retrieval tool, bound by the host to an index and an embedding client."""
 
@@ -216,7 +230,8 @@ class Retriever:
             return result
         embedded = None
         if self.embedder is not None and ref.embedding_deployment is not None:
-            embedded = self.embedder.embed(ref.embedding_deployment, query)
+            embedded = self.embedder.embed(ref.embedding_deployment, ref.query_prompt + query)
+            embedded = _cut(embedded, ref.dimensions)
         asked = Query(
             text=query,
             filter=chosen,

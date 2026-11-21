@@ -169,8 +169,26 @@ AZURE_OPENAI_API_KEY             its key
 AZURE_OPENAI_API_VERSION         optional, 2024-10-21 by default
 SPATIAL_COMPOSITION_DEPLOYMENT   translates and summarises. The same deployment that
                                  composes answers
-SPATIAL_EMBEDDING_DEPLOYMENT     embeds the chunks. The RAG pipeline's, for now
+SPATIAL_EMBEDDING_DEPLOYMENT     embeds the chunks on Azure, when no /v1 server does
+SPATIAL_EMBEDDING_BASE_URL       optional: an OpenAI-compatible /v1 server that embeds
+                                 instead, the Spark's (http://192.168.5.6:8103/v1)
+SPATIAL_EMBEDDING_API_KEY        its Bearer key
+SPATIAL_EMBEDDING_MODEL          the model it serves, google/embeddinggemma-2
+SPATIAL_EMBEDDING_DIMENSIONS     optional: a Matryoshka cut the server makes, 512.
+                                 Unset is the model's own size
 ```
+
+The chunks are embedded with `google/embeddinggemma-2` on the homelab's DGX Spark, at
+512 of its 768 dimensions: the homelab's bench scored 512 the same as 768. vLLM does not
+add the model's prompts, so build puts `title: none | text: ` in front of every text and
+the service puts `task: search result | query: ` in front of every query. Both are in
+`EMBEDDING_PROMPTS` in `packages/core`, and the manifest's `documents.embedding` records
+them with the model and the size. A stored vector is matched by the hash of the text
+with its prompt, and only if the embedder that made it is the one configured now. So
+pointing build at another embedder embeds everything again, and there is no
+`vectors.jsonl` to delete by hand. The Spark only lets LXC 217 and the website reach
+8103, so a build on a workstation goes through an SSH tunnel to the Spark and sets the
+base URL to `http://127.0.0.1:8103/v1`.
 
 | Rule | What it does |
 | -- | -- |
@@ -251,10 +269,11 @@ uv run ingest promote --date 2026-09-08   # roll back: the same command, the pre
 Load also writes the document chunks and summaries to a search index, one per snapshot,
 named after the venue and the date (`spatial-kit-campus-sued-20260915`). By default that
 index is a table in the same database, `search."spatial-kit-campus-sued-20260915"`, with
-a `vector(1536)` column for `text-embedding-3-small` and an English `tsvector` of title
-and text. Load checks pgvector is there and fails the snapshot if not. It grants the
-table to `spatial_reader` itself, since the database sets no default privileges. The
-environment can send the index elsewhere:
+a `vector` column of the size the manifest records (512 for embeddinggemma, 1536 for
+`text-embedding-3-small`) and an English `tsvector` of title and text. Load checks
+pgvector is there and fails the snapshot if not. It grants the table to `spatial_reader`
+itself, since the database sets no default privileges. The environment can send the
+index elsewhere:
 
 ```
 AZURE_SEARCH_ENDPOINT   the Azure AI Search service, which wins over everything else
@@ -1001,11 +1020,17 @@ does not exist for a visitor.
 
 The search is hybrid: keywords and the query's embedding, fused with RRF by the index.
 The query is embedded by the deployment the snapshot's manifest names, the one that
-embedded the chunks. The filter runs in the index before anything is ranked, so a
-document the persona may not read cannot take a slot and shorten the answer. The host
-checks every hit against the same filter anyway. The semantic ranker is a switch
-(`SPATIAL_SEMANTIC_RANKER`), off by default. The stand-in index has no ranker, so there
-the switch changes nothing but the trace.
+embedded the chunks, with the query prompt the manifest records in front of it. When the
+service has `SPATIAL_EMBEDDING_BASE_URL`, `SPATIAL_EMBEDDING_API_KEY` and
+`SPATIAL_EMBEDDING_MODEL`, a snapshot embedded by that model has its queries embedded on
+that server. Any other snapshot's go to the Azure resource, so promoting an older
+snapshot is still a rollback. The server answers at the model's native size, and the
+service cuts the vector to the snapshot's size and normalises it again, which is the
+same vector a Matryoshka cut on the server would give. The filter runs in the index
+before anything is ranked, so a document the persona may not read cannot take a slot and
+shorten the answer. The host checks every hit against the same filter anyway. The
+semantic ranker is a switch (`SPATIAL_SEMANTIC_RANKER`), off by default. The stand-in
+index has no ranker, so there the switch changes nothing but the trace.
 
 Summaries are searched too and never returned. A summary that matches counts for its
 document: each of that document's passages gets the summary's rank added to its own. If

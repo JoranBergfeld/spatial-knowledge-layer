@@ -103,7 +103,11 @@ def serve_site() -> Iterator[Site]:
 
 @dataclass
 class OpenAI:
-    """A stand-in Azure OpenAI resource: it translates from a table and embeds by hash."""
+    """A stand-in Azure OpenAI resource: it translates from a table and embeds by hash.
+
+    It also answers /v1/embeddings the way vLLM does, with a Bearer key and the
+    model in the body. Those calls are recorded under the model's name.
+    """
 
     url: str = ""
     status: int = 200
@@ -134,6 +138,21 @@ def serve_openai() -> Iterator[OpenAI]:
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self) -> None:
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            if self.path == "/v1/embeddings":
+                if state.status != 200 or not self.headers.get("Authorization", "").startswith(
+                    "Bearer "
+                ):
+                    _reply(self, state.status if state.status != 200 else 401, b"{}", "x/json")
+                    return
+                state.calls.append((body["model"], "embeddings", body))
+                (text,) = body["input"]
+                answer = {
+                    "model": body["model"],
+                    "data": [{"index": 0, "embedding": prose.embedding(text)}],
+                    "usage": {"prompt_tokens": len(text.split())},
+                }
+                _reply(self, 200, json.dumps(answer).encode(), "application/json")
+                return
             found = route.match(self.path)
             if state.status != 200 or not found or not self.headers.get("api-key"):
                 _reply(

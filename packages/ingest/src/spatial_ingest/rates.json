@@ -13,6 +13,12 @@
       "deployment": "text-embedding-3-small",
       "usd_per_million_input": 0.02,
       "checked": "2026-10-05"
+    },
+    {
+      "deployment": "google/embeddinggemma-2",
+      "usd_per_million_input": 0,
+      "checked": "2026-11-21",
+      "source": "self-hosted on the homelab's DGX Spark: no per-token price"
     }
   ]
 }
