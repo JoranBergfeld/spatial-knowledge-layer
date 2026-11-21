@@ -16,11 +16,16 @@
 Configuration is from the environment:
 
     SPATIAL_SERVICE_DATABASE_URL     a login that is a member of spatial_reader, and no more
-    AZURE_OPENAI_ENDPOINT            the Azure OpenAI resource
+    SPATIAL_LLM_BASE_URL             optional: an OpenAI-compatible /v1 server that plans and
+                                     composes, the Spark's, with SPATIAL_LLM_API_KEY. Then
+                                     the two deployments below are model names on it, and
+                                     may be the same one. Unset, both are on Azure.
+    AZURE_OPENAI_ENDPOINT            the Azure OpenAI resource; needed when no /v1 server
+                                     plans, and for snapshots embedded on Azure
     AZURE_OPENAI_API_KEY             its key
     AZURE_OPENAI_API_VERSION         optional, 2024-10-21 by default
     SPATIAL_PLANNING_DEPLOYMENT      the deployment that plans
-    SPATIAL_COMPOSITION_DEPLOYMENT   the deployment that composes; a different one
+    SPATIAL_COMPOSITION_DEPLOYMENT   the deployment that composes; a different one on Azure
     SPATIAL_LLM_TIMEOUT_SECONDS      optional, 30 by default
     SPATIAL_TREE_NODE_CAP            optional: how many spaces of the collapsed tree the
                                      planner is shown, 200 by default
@@ -66,6 +71,8 @@ from spatial_service.turn_models import Turn, TurnKind, TurnRefused, TurnRequest
 from spatial_service.venue_facts import VenueFacts
 
 SEMANTIC_RANKER_ENV = "SPATIAL_SEMANTIC_RANKER"
+LLM_BASE_URL_ENV = "SPATIAL_LLM_BASE_URL"
+LLM_API_KEY_ENV = "SPATIAL_LLM_API_KEY"
 _ON = ("on", "true", "1", "yes")
 
 
@@ -84,51 +91,68 @@ class Settings:
     timeout_seconds: float
     tree_node_cap: int = NODE_CAP
     semantic_ranker: bool = False
+    # An OpenAI-compatible /v1 server for planning and composition, in place of Azure.
+    llm_base_url: str | None = None
+    llm_api_key: str = ""
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] = os.environ) -> Settings:
-        missing = [
-            name
-            for name in (
-                "SPATIAL_SERVICE_DATABASE_URL",
-                "AZURE_OPENAI_ENDPOINT",
-                "AZURE_OPENAI_API_KEY",
-                "SPATIAL_PLANNING_DEPLOYMENT",
-                "SPATIAL_COMPOSITION_DEPLOYMENT",
-            )
-            if not env.get(name)
+        llm_base_url = env.get(LLM_BASE_URL_ENV) or None
+        required = [
+            "SPATIAL_SERVICE_DATABASE_URL",
+            "SPATIAL_PLANNING_DEPLOYMENT",
+            "SPATIAL_COMPOSITION_DEPLOYMENT",
         ]
+        required += (
+            [LLM_API_KEY_ENV] if llm_base_url else ["AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_API_KEY"]
+        )
+        missing = [name for name in required if not env.get(name)]
         if missing:
             raise ConfigError(f"set {', '.join(missing)}")
         settings = cls(
             database_url=env["SPATIAL_SERVICE_DATABASE_URL"],
-            endpoint=env["AZURE_OPENAI_ENDPOINT"],
-            api_key=env["AZURE_OPENAI_API_KEY"],
+            endpoint=env.get("AZURE_OPENAI_ENDPOINT", ""),
+            api_key=env.get("AZURE_OPENAI_API_KEY", ""),
             api_version=env.get("AZURE_OPENAI_API_VERSION", "2024-10-21"),
             planning_deployment=env["SPATIAL_PLANNING_DEPLOYMENT"],
             composition_deployment=env["SPATIAL_COMPOSITION_DEPLOYMENT"],
             timeout_seconds=float(env.get("SPATIAL_LLM_TIMEOUT_SECONDS", "30")),
             tree_node_cap=int(env.get("SPATIAL_TREE_NODE_CAP", str(NODE_CAP))),
             semantic_ranker=env.get(SEMANTIC_RANKER_ENV, "off").strip().lower() in _ON,
+            llm_base_url=llm_base_url,
+            llm_api_key=env.get(LLM_API_KEY_ENV, ""),
         )
-        if settings.planning_deployment == settings.composition_deployment:
-            raise ConfigError("planning and composition need separate deployments")
+        # On Azure each is a deployment with its own quota. A /v1 server hosts models, not
+        # roles, so one model there may do both.
+        same = settings.planning_deployment == settings.composition_deployment
+        if same and not settings.llm_base_url:
+            raise ConfigError("planning and composition need separate deployments on Azure")
         return settings
 
 
-def azure_llm(settings: Settings) -> Llm:
+def chat_llm(settings: Settings) -> Llm:
+    """Planning and composition on the /v1 server when one is named, on Azure otherwise."""
     # Imported here so tests that stub the model never load the OpenAI stack.
     from agent_framework.openai import OpenAIChatCompletionClient
-    from openai import AsyncAzureOpenAI
+    from openai import AsyncAzureOpenAI, AsyncOpenAI
 
     def deployment(name: str) -> Deployment:
-        client = AsyncAzureOpenAI(
-            azure_endpoint=settings.endpoint,
-            api_key=settings.api_key,
-            api_version=settings.api_version,
-            timeout=settings.timeout_seconds,
-            max_retries=1,
-        )
+        client: AsyncOpenAI
+        if settings.llm_base_url:
+            client = AsyncOpenAI(
+                base_url=settings.llm_base_url,
+                api_key=settings.llm_api_key,
+                timeout=settings.timeout_seconds,
+                max_retries=1,
+            )
+        else:
+            client = AsyncAzureOpenAI(
+                azure_endpoint=settings.endpoint,
+                api_key=settings.api_key,
+                api_version=settings.api_version,
+                timeout=settings.timeout_seconds,
+                max_retries=1,
+            )
         return Deployment(name, OpenAIChatCompletionClient(model=name, async_client=client))
 
     return Llm(
@@ -251,7 +275,7 @@ def main() -> None:
         uvicorn.run(
             create_app(
                 store,
-                azure_llm(settings),
+                chat_llm(settings),
                 recorder,
                 tree_node_cap=settings.tree_node_cap,
                 documents=documents_from_env(settings),

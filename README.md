@@ -462,11 +462,14 @@ It reads its configuration from the environment:
 
 ```
 SPATIAL_SERVICE_DATABASE_URL     a login in spatial_reader; the service refuses one that can write
-AZURE_OPENAI_ENDPOINT            the Azure OpenAI resource
+SPATIAL_LLM_BASE_URL             optional: an OpenAI-compatible /v1 server that plans and composes,
+                                 the Spark's (http://192.168.5.6:8101/v1), with SPATIAL_LLM_API_KEY
+AZURE_OPENAI_ENDPOINT            the Azure OpenAI resource, when no /v1 server plans
 AZURE_OPENAI_API_KEY             its key
 AZURE_OPENAI_API_VERSION         optional, 2024-10-21 by default
-SPATIAL_PLANNING_DEPLOYMENT      the deployment that plans
-SPATIAL_COMPOSITION_DEPLOYMENT   the deployment that composes, which must be a different one
+SPATIAL_PLANNING_DEPLOYMENT      the deployment that plans, or the model's name on the /v1 server
+SPATIAL_COMPOSITION_DEPLOYMENT   the deployment that composes: a different one on Azure, while a
+                                 /v1 server's one model may do both
 SPATIAL_LLM_TIMEOUT_SECONDS      optional, 30 by default
 SPATIAL_TREE_NODE_CAP            optional, 300 by default: how much of the tree the planner sees
 OTEL_EXPORTER_OTLP_ENDPOINT      optional; where metrics are pushed. Unset, none are
@@ -480,6 +483,11 @@ SPATIAL_SERVICE_PORT             optional, 8000 by default
 
 With no search index named, the service searches the `search` tables in its own
 database, through the same reader login.
+
+With `SPATIAL_LLM_BASE_URL` set, every planning, recovery and composition call goes
+there and Azure is not asked. There is no fallback: a server that is down makes the turn
+`unavailable`. Azure is still where queries are embedded for a snapshot whose manifest
+names an Azure deployment, if the endpoint is set.
 
 The image is `ghcr.io/joranbergfeld/spatial-knowledge-layer-service`, built from
 `Dockerfile.service` and pushed on every push to main. It holds core and the service,
