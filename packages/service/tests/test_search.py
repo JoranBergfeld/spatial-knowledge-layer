@@ -8,16 +8,25 @@ agrees is not something a test here can say.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from typing import Any
 
 import httpx
 import pytest
 
+import fixture
 import papers
 from spatial_core.records import ChunkRole, Persona
-from spatial_core.search import Filter, Query
-from spatial_service.retrieval import RetrievalUnavailable
-from spatial_service.search import AzureEmbedder, AzureSearch, odata
+from spatial_core.search import Filter, IndexRef, Query
+from spatial_service.retrieval import Anchors, Embedded, RetrievalUnavailable, Retriever
+from spatial_service.search import (
+    AzureEmbedder,
+    AzureSearch,
+    OpenAIEmbedder,
+    RoutedEmbedder,
+    embedder_from_env,
+    odata,
+)
 
 FILTER = Filter(
     clearance_classes=(Persona.VISITOR, Persona.STAFF),
@@ -125,3 +134,79 @@ def test_a_query_is_embedded_by_the_deployment_named() -> None:
         "text-embedding-3-small",
         3,
     )
+
+
+def test_a_query_is_embedded_on_a_v1_server_by_model_name() -> None:
+    seen: list[httpx.Request] = []
+    answer = {"data": [{"embedding": [0.6, 0.8]}], "usage": {"prompt_tokens": 4}}
+    embedder = OpenAIEmbedder(
+        base_url="http://spark.example:8103/v1/", api_key="k", transport=serving(answer, seen)
+    )
+
+    embedded = embedder.embed("google/embeddinggemma-2", "task: search result | query: lamp")
+
+    [request] = seen
+    assert request.url.path == "/v1/embeddings"
+    assert request.headers["Authorization"] == "Bearer k"
+    assert json.loads(request.content) == {
+        "model": "google/embeddinggemma-2",
+        "input": ["task: search result | query: lamp"],
+    }
+    assert (embedded.vector, embedded.deployment) == ((0.6, 0.8), "google/embeddinggemma-2")
+
+
+def test_only_the_v1_model_goes_to_the_v1_server_so_an_older_snapshot_still_embeds_on_azure() -> (
+    None
+):
+    env = {
+        "SPATIAL_EMBEDDING_BASE_URL": "http://spark.example:8103/v1",
+        "SPATIAL_EMBEDDING_API_KEY": "k",
+        "SPATIAL_EMBEDDING_MODEL": "google/embeddinggemma-2",
+    }
+    azure = papers.Embedder()
+    v1 = papers.Embedder()
+    routed = RoutedEmbedder({"google/embeddinggemma-2": v1}, azure)
+
+    routed.embed("google/embeddinggemma-2", "lamp")
+    routed.embed("text-embedding-3-small", "lamp")
+
+    assert v1.asked == [("google/embeddinggemma-2", "lamp")]
+    assert azure.asked == [("text-embedding-3-small", "lamp")]
+    azure_only = embedder_from_env({}, endpoint="https://o.example", api_key="k", api_version="v")
+    assert isinstance(azure_only, AzureEmbedder)
+    both = embedder_from_env(env, endpoint="https://o.example", api_key="k", api_version="v")
+    assert isinstance(both, RoutedEmbedder)
+    with pytest.raises(ValueError, match="SPATIAL_EMBEDDING_MODEL"):
+        embedder_from_env(
+            {k: v for k, v in env.items() if k != "SPATIAL_EMBEDDING_MODEL"},
+            endpoint="https://o.example",
+            api_key="k",
+            api_version="v",
+        )
+
+
+class Longer(papers.Embedder):
+    """A model whose native vector is twice the index's: the index holds a Matryoshka cut."""
+
+    def embed(self, deployment: str, text: str) -> Embedded:
+        full = super().embed(deployment, text)
+        return replace(full, vector=tuple(2 * x for x in full.vector) + (9.0,) * papers.DIMENSIONS)
+
+
+def test_the_query_gets_the_snapshots_prompt_and_is_cut_to_the_index_size() -> None:
+    store = papers.store()
+    store.index = IndexRef(
+        papers.INDEX, papers.EMBEDDING, query_prompt="task: q | ", dimensions=papers.DIMENSIONS
+    )
+    venue = store.venue(fixture.SNAPSHOT, Persona.VISITOR)
+    embedder = Longer()
+    index = papers.Recording(papers.index())
+    anchors = Anchors(by="places", scope=None, space_ids=frozenset(venue.spaces))
+
+    Retriever(index, embedder).retrieve(venue, anchors, "lamp")
+
+    assert embedder.asked == [(papers.EMBEDDING, "task: q | lamp")]
+    [query] = index.queries
+    assert query.text == "lamp"
+    assert query.vector is not None
+    assert query.vector == pytest.approx(papers.vector("task: q | lamp"))

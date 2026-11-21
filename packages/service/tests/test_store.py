@@ -196,7 +196,11 @@ def _bundle(root: Path) -> Path:
         "clearance": CLEARANCE,
         "documents": {
             "chunks_by_clearance_class": by_class(passages),
-            "embedding": {"deployment": papers.EMBEDDING, "dimensions": papers.DIMENSIONS},
+            "embedding": {
+                "deployment": papers.EMBEDDING,
+                "dimensions": papers.DIMENSIONS,
+                "prompts": {"query": "task: q | ", "document": "task: d | "},
+            },
             "summaries": {"documents": len(summarised), "by_clearance_class": by_class(summarised)},
         },
     }
@@ -249,9 +253,12 @@ def test_a_manual_is_retrieved_from_the_index_the_snapshot_names(
 ) -> None:
     _, reader_url = stores
     store = PostgresStore(reader_url)
-    # The index load wrote, found by the name and the deployment the control table holds.
+    # The index load wrote, found by the name and the embedding the control table holds.
     assert store.venue(fixture.SNAPSHOT, Persona(persona)).index == IndexRef(
-        "spatial-mini-20260915", papers.EMBEDDING
+        "spatial-mini-20260915",
+        papers.EMBEDDING,
+        query_prompt="task: q | ",
+        dimensions=papers.DIMENSIONS,
     )
     loaded = LocalIndex(Path(os.environ[SEARCH_DIR_ENV]))
     plan = papers.manual("isolate the supply before servicing", "Audimax")

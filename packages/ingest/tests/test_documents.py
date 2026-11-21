@@ -591,3 +591,42 @@ def test_the_published_kit_corpus_is_its_lecture_hall_pages_keyed_by_building() 
 
 def test_a_venue_without_a_published_corpus_has_none() -> None:
     assert default_corpus("mini-campus") is None
+
+
+GEMMA = "google/embeddinggemma-2"
+
+
+def test_pointing_build_at_another_embedder_embeds_everything_again_with_its_prompt(
+    bundle: Path,
+    out: Path,
+    venue_file: Path,
+    corpus_file: Path,
+    openai: OpenAI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    before = len(read_jsonl(bundle / "documents" / "vectors.jsonl"))
+    monkeypatch.setenv(models.EMBEDDING_BASE_URL_ENV, f"{openai.url}/v1")
+    monkeypatch.setenv(models.EMBEDDING_API_KEY_ENV, "spark-key")
+    monkeypatch.setenv(models.EMBEDDING_MODEL_ENV, GEMMA)
+    monkeypatch.setenv(models.EMBEDDING_DIMENSIONS_ENV, "512")
+
+    # No vectors.jsonl to delete by hand: the old ones are another model's.
+    assert build(venue_file, corpus_file, out) == 0
+
+    vectors = read_jsonl(bundle / "documents" / "vectors.jsonl")
+    sent = [body for deployment, op, body in openai.calls if deployment == GEMMA]
+    assert len(vectors) == before == len(sent)
+    assert {v["deployment"] for v in vectors} == {GEMMA}
+    assert all(body["input"][0].startswith("title: none | text: ") for body in sent)
+    assert {body["dimensions"] for body in sent} == {512}
+    assert manifest(bundle)["documents"]["embedding"] == {
+        "deployment": GEMMA,
+        "model": GEMMA,
+        "dimensions": prose.DIMENSIONS,
+        "prompts": {"query": "task: search result | query: ", "document": "title: none | text: "},
+    }
+
+    # And once they are its own, a rebuild embeds nothing.
+    calls = len(openai.calls)
+    assert build(venue_file, corpus_file, out) == 0
+    assert len(openai.calls) == calls

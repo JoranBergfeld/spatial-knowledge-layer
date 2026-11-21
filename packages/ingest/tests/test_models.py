@@ -110,3 +110,54 @@ def test_a_refusal_fails_at_once(monkeypatch: pytest.MonkeyPatch, code: int) -> 
         client(waits).summarise("Summarise.", "text")
     assert calls[0] == 1
     assert waits == []
+
+
+def test_a_v1_server_embeds_in_place_of_the_azure_deployment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sent: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
+
+    def post(
+        url: str, *, headers: dict[str, Any], json: dict[str, Any], **_: Any
+    ) -> httpx.Response:
+        sent.append((url, headers, json))
+        answer = {"data": [{"embedding": [0.6, 0.8]}], "usage": {"prompt_tokens": 2}}
+        return httpx.Response(200, json=answer, request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(models.httpx, "post", post)
+    env = {
+        models.ENDPOINT_ENV: "https://example.invalid",
+        models.API_KEY_ENV: "azure-key",
+        models.TRANSLATION_DEPLOYMENT_ENV: "compose",
+        models.EMBEDDING_BASE_URL_ENV: "http://spark:8103/v1/",
+        models.EMBEDDING_API_KEY_ENV: "spark-key",
+        models.EMBEDDING_MODEL_ENV: "google/embeddinggemma-2",
+        models.EMBEDDING_DIMENSIONS_ENV: "512",
+    }
+    client = models.from_env(env)
+
+    embedded = client.embed("a passage")
+
+    assert client.embedding_deployment == "google/embeddinggemma-2"
+    assert models.configured_embedding(env) == "google/embeddinggemma-2"
+    assert embedded.deployment == embedded.model == "google/embeddinggemma-2"
+    assert embedded.vector == (0.6, 0.8)
+    (url, headers, body) = sent[0]
+    assert url == "http://spark:8103/v1/embeddings"
+    assert headers == {"Authorization": "Bearer spark-key"}
+    assert body == {"model": "google/embeddinggemma-2", "input": ["a passage"], "dimensions": 512}
+
+
+def test_a_v1_server_needs_its_key_and_model_not_an_azure_embedding_deployment() -> None:
+    env = {
+        models.ENDPOINT_ENV: "https://example.invalid",
+        models.API_KEY_ENV: "azure-key",
+        models.TRANSLATION_DEPLOYMENT_ENV: "compose",
+        models.EMBEDDING_BASE_URL_ENV: "http://spark:8103/v1",
+    }
+    with pytest.raises(
+        models.ModelError, match="SPATIAL_EMBEDDING_API_KEY, SPATIAL_EMBEDDING_MODEL"
+    ):
+        models.from_env(env)
+    assert models.configured_embedding({models.EMBEDDING_DEPLOYMENT_ENV: "small"}) == "small"
+    assert models.configured_embedding({}) is None

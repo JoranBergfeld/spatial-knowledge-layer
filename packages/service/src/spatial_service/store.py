@@ -255,6 +255,8 @@ class PostgresStore:
             loaded = conn.execute(
                 "SELECT status, search_index,"
                 " manifest #>> '{documents,embedding,deployment}' AS embedding_deployment,"
+                " manifest #>> '{documents,embedding,prompts,query}' AS query_prompt,"
+                " (manifest #>> '{documents,embedding,dimensions}')::int AS dimensions,"
                 " manifest -> 'default_origin' ->> 'edge' AS default_origin"
                 " FROM control.snapshots WHERE snapshot = %s",
                 (snapshot,),
@@ -282,7 +284,12 @@ class PostgresStore:
             asset_types={kind.id: kind for kind in types},
             tiers=tuple(row["tier"] for row in tier_rows),
             # A snapshot loaded before documents were has no index, and retrieves nothing.
-            index=IndexRef(loaded["search_index"], loaded["embedding_deployment"])
+            index=IndexRef(
+                loaded["search_index"],
+                loaded["embedding_deployment"],
+                query_prompt=loaded["query_prompt"] or "",
+                dimensions=loaded["dimensions"],
+            )
             if loaded["search_index"]
             else None,
             service_events=by_asset(ServiceEvent.model_validate(row) for row in event_rows),

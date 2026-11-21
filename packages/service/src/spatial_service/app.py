@@ -26,6 +26,10 @@ Configuration is from the environment:
                                      planner is shown, 200 by default
     OTEL_EXPORTER_OTLP_ENDPOINT      optional; where metrics are pushed (metrics.py).
                                      Unset, none are.
+    SPATIAL_EMBEDDING_BASE_URL       optional: an OpenAI-compatible /v1 server that embeds
+                                     queries for snapshots whose chunks SPATIAL_EMBEDDING_MODEL
+                                     embedded, with SPATIAL_EMBEDDING_API_KEY. Any other
+                                     snapshot's queries go to the Azure resource
     AZURE_SEARCH_ENDPOINT            optional: the Azure AI Search service the snapshots'
                                      indexes are in, with AZURE_SEARCH_API_KEY
     SPATIAL_SEARCH_DIR               optional: the stand-in index directory, when no
@@ -139,12 +143,16 @@ def documents_from_env(settings: Settings, env: Mapping[str, str] = os.environ) 
         index = search.from_env(env, settings.database_url)
     except ValueError as error:
         raise ConfigError(str(error)) from error
-    embedder = search.AzureEmbedder(
-        endpoint=settings.endpoint,
-        api_key=settings.api_key,
-        api_version=settings.api_version,
-        timeout_seconds=settings.timeout_seconds,
-    )
+    try:
+        embedder = search.embedder_from_env(
+            env,
+            endpoint=settings.endpoint,
+            api_key=settings.api_key,
+            api_version=settings.api_version,
+            timeout_seconds=settings.timeout_seconds,
+        )
+    except ValueError as error:
+        raise ConfigError(str(error)) from error
     return Retriever(index, embedder, semantic_ranker=settings.semantic_ranker)
 
 

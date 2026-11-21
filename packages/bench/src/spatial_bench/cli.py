@@ -210,6 +210,13 @@ def wiring_from_env(compare_ranker: bool) -> Wiring:
     try:
         settings = Settings.from_env()
         index = search.from_env(os.environ, settings.database_url)
+        embedder = search.embedder_from_env(
+            os.environ,
+            endpoint=settings.endpoint,
+            api_key=settings.api_key,
+            api_version=settings.api_version,
+            timeout_seconds=settings.timeout_seconds,
+        )
     except (ConfigError, ValueError) as error:
         raise RunError(str(error)) from error
     if not os.environ.get(MODEL_DIR_ENV):
@@ -218,12 +225,6 @@ def wiring_from_env(compare_ranker: bool) -> Wiring:
         raise RunError(
             "--compare-ranker needs an Azure index, and the ranker off for the run itself"
         )
-    embedder = search.AzureEmbedder(
-        endpoint=settings.endpoint,
-        api_key=settings.api_key,
-        api_version=settings.api_version,
-        timeout_seconds=settings.timeout_seconds,
-    )
     documents = Retriever(index, embedder, semantic_ranker=settings.semantic_ranker)
     reranked = Retriever(index, embedder, semantic_ranker=True) if compare_ranker else None
     return Wiring(
